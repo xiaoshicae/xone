@@ -65,7 +65,12 @@ func ExtractRealIP(addr string) (string, error) {
 			continue
 		}
 
-		if ip == nil || ip.IsUnspecified() || ip.IsMulticast() {
+		// Skip non-IPv4 addresses
+		if ip.To4() == nil {
+			continue
+		}
+
+		if ip.IsUnspecified() || ip.IsMulticast() {
 			continue
 		}
 

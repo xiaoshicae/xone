@@ -25,9 +25,9 @@
     * application{-profiles}.yml 合并到 application.yml 覆盖原则
         * Server配置按二级key覆盖
         * 其它按一级key覆盖
-  
+
 * 配置文件路径查找原则:
-    * 查找优先级: 启动参数 > 环境变量 > ./application.yml > ./conf/application.yml > ./config/application.yml
+    * 查找优先级: 启动参数 > 环境变量 > ./application.yml > ./conf/application.yml > ./config/application.yml > ./../conf/application.yml > ./../config/application.yml
     * 各查找方式举例:
         * 启动参数方式：
             ```shell

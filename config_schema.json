@@ -1,0 +1,268 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema",
+  "$id": "https://github.com/xiaoshicae/xone",
+  "title": "XOne配置",
+  "type": "object",
+  "properties": {
+    "Server": {
+      "type": "object",
+      "description": "服务配置",
+      "properties": {
+        "Name": {
+          "type": "string",
+          "description": "服务名"
+        },
+        "Version": {
+          "type": "string",
+          "description": "服务版本号，默认v0.0.1"
+        },
+        "Profiles": {
+          "type": "object",
+          "description": "环境相关配置",
+          "properties": {
+            "Active": {
+              "type": "string",
+              "description": "指定启用的环境"
+            }
+          },
+          "required": [
+            "Active"
+          ]
+        },
+        "Gin": {
+          "type": "object",
+          "description": "gin相关配置",
+          "properties": {
+            "Host": {
+              "type": "string",
+              "description": "服务监听的host，默认0.0.0.0"
+            },
+            "Port": {
+              "type": "integer",
+              "description": "服务监听的端口，默认8000"
+            },
+            "UseHttp2": {
+              "type": "boolean",
+              "description": "是否使用http2协议，默认false"
+            },
+            "GinSwagger": {
+              "type": "object",
+              "description": "swagger相关配置",
+              "properties": {
+                "Host": {
+                  "type": "string",
+                  "description": "提供api服务的host"
+                },
+                "BasePath": {
+                  "type": "string",
+                  "description": "api公共前缀"
+                },
+                "Title": {
+                  "type": "string",
+                  "description": "api管理后台的title"
+                },
+                "Description": {
+                  "type": "string",
+                  "description": "api管理后台的描述信息"
+                },
+                "Schemes": {
+                  "type": "array",
+                  "description": "api支持的协议，默认[https, http]",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "required": []
+    },
+    "XLog": {
+      "type": "object",
+      "description": "日志配置",
+      "properties": {
+        "Level": {
+          "type": "string",
+          "description": "日志级别，默认info"
+        },
+        "Name": {
+          "type": "string",
+          "description": "日志文件名称，默认app"
+        },
+        "Path": {
+          "type": "string",
+          "description": "日志文件夹路径，默认./log"
+        },
+        "Console": {
+          "type": "boolean",
+          "description": "日志内容是否需要在控制台打印，默认false"
+        },
+        "ConsoleFormatIsRaw": {
+          "type": "boolean",
+          "description": "在控制台打印的日志是否为原始格式(即底层的json格式)，为false时，打印level+time+filename+func+traceid+内容，默认false"
+        },
+        "MaxAge": {
+          "type": "string",
+          "description": "日志保存最大时间，默认7d"
+        },
+        "RotateTime": {
+          "type": "string",
+          "description": "日志切割时长，默认1d"
+        },
+        "Timezone": {
+          "type": "string",
+          "description": "日志时间的时区，默认Asia/Shanghai"
+        }
+      }
+    },
+    "XTrace": {
+      "type": "object",
+      "description": "链路追踪配置",
+      "properties": {
+        "Enable": {
+          "type": "boolean",
+          "description": "Trace是否开启，默认true"
+        },
+        "Console": {
+          "type": "boolean",
+          "description": "是否要在控制台打印trace内容，默认false"
+        }
+      }
+    },
+    "XHttp": {
+      "type": "object",
+      "description": "HTTP客户端配置",
+      "properties": {
+        "Timeout": {
+          "type": "string",
+          "description": "http请求超时时间，默认60s"
+        }
+      }
+    },
+    "XGorm": {
+      "type": [
+        "object",
+        "array"
+      ],
+      "description": "数据库配置(支持MySQL和PostgreSQL)",
+      "items": {
+        "$ref": "#/definitions/GormConfig"
+      },
+      "properties": {
+        "Driver": {
+          "$ref": "#/definitions/GormConfig/properties/Driver"
+        },
+        "DSN": {
+          "$ref": "#/definitions/GormConfig/properties/DSN"
+        },
+        "DialTimeout": {
+          "$ref": "#/definitions/GormConfig/properties/DialTimeout"
+        },
+        "ReadTimeout": {
+          "$ref": "#/definitions/GormConfig/properties/ReadTimeout"
+        },
+        "WriteTimeout": {
+          "$ref": "#/definitions/GormConfig/properties/WriteTimeout"
+        },
+        "MaxOpenConns": {
+          "$ref": "#/definitions/GormConfig/properties/MaxOpenConns"
+        },
+        "MaxIdleConns": {
+          "$ref": "#/definitions/GormConfig/properties/MaxIdleConns"
+        },
+        "MaxLifetime": {
+          "$ref": "#/definitions/GormConfig/properties/MaxLifetime"
+        },
+        "MaxIdleTime": {
+          "$ref": "#/definitions/GormConfig/properties/MaxIdleTime"
+        },
+        "EnableLog": {
+          "$ref": "#/definitions/GormConfig/properties/EnableLog"
+        },
+        "SlowThreshold": {
+          "$ref": "#/definitions/GormConfig/properties/SlowThreshold"
+        },
+        "IgnoreRecordNotFoundErrorLog": {
+          "$ref": "#/definitions/GormConfig/properties/IgnoreRecordNotFoundErrorLog"
+        },
+        "Name": {
+          "$ref": "#/definitions/GormConfig/properties/Name"
+        }
+      },
+      "required": [
+        "DSN"
+      ]
+    }
+  },
+  "required": [
+    "Server"
+  ],
+  "definitions": {
+    "GormConfig": {
+      "type": "object",
+      "properties": {
+        "Driver": {
+          "type": "string",
+          "enum": [
+            "mysql",
+            "postgres"
+          ],
+          "description": "数据库驱动类型，默认postgres"
+        },
+        "DSN": {
+          "type": "string",
+          "description": "数据库连接字符串"
+        },
+        "DialTimeout": {
+          "type": "string",
+          "description": "建连超时时间，默认500ms"
+        },
+        "ReadTimeout": {
+          "type": "string",
+          "description": "读超时(仅MySQL有效)，默认3s"
+        },
+        "WriteTimeout": {
+          "type": "string",
+          "description": "写超时(仅MySQL有效)，默认5s"
+        },
+        "MaxOpenConns": {
+          "type": "integer",
+          "description": "最大连接数，默认50"
+        },
+        "MaxIdleConns": {
+          "type": "integer",
+          "description": "最大空闲连接数，默认等于MaxOpenConns"
+        },
+        "MaxLifetime": {
+          "type": "string",
+          "description": "连接最大存活时间，默认5m"
+        },
+        "MaxIdleTime": {
+          "type": "string",
+          "description": "空闲连接的最长存活时间，默认等于MaxLifetime"
+        },
+        "EnableLog": {
+          "type": "boolean",
+          "description": "是否开启日志(开启后SQL日志将记录到应用的log文件中)，默认false"
+        },
+        "SlowThreshold": {
+          "type": "string",
+          "description": "慢查询日志阈值(如果开启日志，慢查询会记录到日志)，默认3s"
+        },
+        "IgnoreRecordNotFoundErrorLog": {
+          "type": "boolean",
+          "description": "是否忽略未查询到结果的错误日志记录，默认false"
+        },
+        "Name": {
+          "type": "string",
+          "description": "用于区分多数据库配置时的唯一标识(多数据库时必填)"
+        }
+      },
+      "required": [
+        "DSN"
+      ]
+    }
+  }
+}

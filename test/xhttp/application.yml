@@ -1,0 +1,6 @@
+
+XLog:
+  Console: true
+
+XHttp:
+  Timeout: "6s"

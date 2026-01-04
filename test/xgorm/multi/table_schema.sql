@@ -1,0 +1,3 @@
+-- PostgreSQL 表结构
+-- 多客户端测试与 single 测试共用同一个数据库的 users 表
+-- 表结构请参考 test/xgorm/single/table_schema.sql

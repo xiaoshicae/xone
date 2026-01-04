@@ -1,0 +1,12 @@
+Server:
+  Name: "xgorm-single-test"
+
+XLog:
+  Console: true
+
+XGorm:
+  Driver: "postgres"
+  DSN: "postgresql://root:root@localhost:5432/testdb?sslmode=disable"
+  EnableLog: true
+  SlowThreshold: "1ms"
+  IgnoreRecordNotFoundErrorLog: false

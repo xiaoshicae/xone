@@ -1,0 +1,9 @@
+Server:
+  AppId: "x.y.z"
+
+XLog:
+  Path: ./data/log
+  Name: abc
+  Level: "DEBUG"
+  Console: true
+  ConsoleFormatIsRaw: true

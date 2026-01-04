@@ -1,0 +1,19 @@
+Server:
+  Name: "xgorm-multi-test"
+
+XLog:
+  Console: true
+
+XGorm:
+  - Name: "primary"
+    Driver: "postgres"
+    DSN: "postgresql://root:root@localhost:5432/testdb?sslmode=disable"
+    EnableLog: true
+    SlowThreshold: "1ms"
+    IgnoreRecordNotFoundErrorLog: false
+  - Name: "secondary"
+    Driver: "postgres"
+    DSN: "postgresql://root:root@localhost:5432/testdb?sslmode=disable"
+    EnableLog: true
+    SlowThreshold: "100ms"
+    IgnoreRecordNotFoundErrorLog: true

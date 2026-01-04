@@ -1,0 +1,22 @@
+log/
+*.log
+*.log.*
+cover.out
+cover.html
+/test/tmp/
+
+### VS Code ###
+.vscode/
+
+### idea ###
+.idea/
+*.iws
+*.iml
+*.ipr
+
+### Mac OS ###
+.DS_Store
+
+# cc
+.claude/
+CLAUDE.md

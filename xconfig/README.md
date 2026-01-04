@@ -43,7 +43,7 @@
 
   ```yaml
   Server:
-    AppID: "a.b.c"     # 服务唯一id(required)，log/trace都会需要这个配置，云数项目请使用【星空中的应用名称】
+    Name: "a.b.c"      # 服务名(required)，log/trace都会需要这个配置
     Version: "v2.0.0"  # 服务版本号(optional default "v0.0.1")，trace上报，swagger版本显示等需要使用该配置
     
     Profiles:          # 环境相关配置(optional default nil)

@@ -13,10 +13,14 @@ const (
 	ymlConfigLocationInCurrentDir       = "./application.yml"
 	ymlConfigLocationInCurrentConfDir   = "./conf/application.yml"
 	ymlConfigLocationInCurrentConfigDir = "./config/application.yml"
+	ymlConfigLocationInParentConfDir    = "./../conf/application.yml"
+	ymlConfigLocationInParentConfigDir  = "./../config/application.yml"
 
 	yamlConfigLocationInCurrentDir       = "./application.yaml"
 	yamlConfigLocationInCurrentConfDir   = "./conf/application.yaml"
 	yamlConfigLocationInCurrentConfigDir = "./config/application.yaml"
+	yamlConfigLocationInParentConfDir    = "./../conf/application.yaml"
+	yamlConfigLocationInParentConfigDir  = "./../config/application.yaml"
 )
 
 func detectConfigLocation() string {
@@ -69,5 +73,18 @@ func getLocationFromCurrentDir() string {
 		return yamlConfigLocationInCurrentConfigDir
 	}
 
+	if xutil.FileExist(ymlConfigLocationInParentConfDir) {
+		return ymlConfigLocationInParentConfDir
+	}
+	if xutil.FileExist(yamlConfigLocationInParentConfDir) {
+		return yamlConfigLocationInParentConfDir
+	}
+
+	if xutil.FileExist(ymlConfigLocationInParentConfigDir) {
+		return ymlConfigLocationInParentConfigDir
+	}
+	if xutil.FileExist(yamlConfigLocationInParentConfigDir) {
+		return yamlConfigLocationInParentConfigDir
+	}
 	return ""
 }

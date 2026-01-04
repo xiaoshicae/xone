@@ -24,6 +24,12 @@ type ginServer struct {
 }
 
 func newGinServer(engine *gin.Engine) *ginServer {
+	if xutil.EnableDebug() {
+		gin.SetMode(gin.DebugMode)
+	} else {
+		gin.SetMode(gin.ReleaseMode)
+	}
+
 	ginConfig := xconfig.GetGinConfig()
 	if ginConfig.UseHttp2 {
 		engine.UseH2C = true

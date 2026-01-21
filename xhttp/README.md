@@ -14,6 +14,9 @@ XHttp:
   MaxIdleConns: 100          # 最大空闲连接数 (optional, default 100)
   MaxIdleConnsPerHost: 10    # 每个 host 最大空闲连接数 (optional, default 10)
   IdleConnTimeout: "90s"     # 空闲连接超时时间 (optional, default "90s")
+  RetryCount: 3              # 重试次数 (optional, default 0，不重试)
+  RetryWaitTime: "100ms"     # 重试等待时间 (optional, default "100ms")
+  RetryMaxWaitTime: "2s"     # 最大重试等待时间 (optional, default "2s")
 ```
 
 ### 3. 使用 demo

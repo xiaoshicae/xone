@@ -48,7 +48,17 @@ func initHttpClient() error {
 		}
 	}
 
-	setDefaultClient(resty.NewWithClient(rawHttpClient))
+	restyClient := resty.NewWithClient(rawHttpClient)
+
+	// 配置重试
+	if c.RetryCount > 0 {
+		restyClient.
+			SetRetryCount(c.RetryCount).
+			SetRetryWaitTime(cast.ToDuration(c.RetryWaitTime)).
+			SetRetryMaxWaitTime(cast.ToDuration(c.RetryMaxWaitTime))
+	}
+
+	setDefaultClient(restyClient)
 	setRawHttpClient(rawHttpClient)
 
 	return nil

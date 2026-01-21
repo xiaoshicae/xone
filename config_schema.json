@@ -150,6 +150,18 @@
         "IdleConnTimeout": {
           "type": "string",
           "description": "空闲连接超时时间，默认90s"
+        },
+        "RetryCount": {
+          "type": "integer",
+          "description": "重试次数，默认0（不重试）"
+        },
+        "RetryWaitTime": {
+          "type": "string",
+          "description": "重试等待时间，默认100ms"
+        },
+        "RetryMaxWaitTime": {
+          "type": "string",
+          "description": "最大重试等待时间，默认2s"
         }
       }
     },

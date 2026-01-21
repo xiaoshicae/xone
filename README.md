@@ -55,19 +55,19 @@ XHttp:
 package main
 
 import (
-    "github.com/gin-gonic/gin"
-    "github.com/xiaoshicae/xone"
+	"github.com/gin-gonic/gin"
+	"github.com/xiaoshicae/xone"
 )
 
 func main() {
-    engine := gin.Default()
+	engine := gin.Default()
 
-    engine.GET("/ping", func(c *gin.Context) {
-        c.JSON(200, gin.H{"message": "pong"})
-    })
+	engine.GET("/ping", func(c *gin.Context) {
+		c.JSON(200, gin.H{"message": "pong"})
+	})
 
-    // 启动服务，自动初始化所有模块
-    xone.RunGin(engine)
+	// 启动服务，自动初始化所有模块
+	xone.RunGin(engine)
 }
 ```
 
@@ -77,40 +77,40 @@ func main() {
 package handler
 
 import (
-    "github.com/gin-gonic/gin"
-    "github.com/xiaoshicae/xone/xgorm"
-    "github.com/xiaoshicae/xone/xhttp"
-    "github.com/xiaoshicae/xone/xconfig"
-    "github.com/xiaoshicae/xone/xlog"
+	"github.com/gin-gonic/gin"
+	"github.com/xiaoshicae/xone/xgorm"
+	"github.com/xiaoshicae/xone/xhttp"
+	"github.com/xiaoshicae/xone/xconfig"
+	"github.com/xiaoshicae/xone/xlog"
 )
 
 func Handler(c *gin.Context) {
-    ctx := c.Request.Context()
+	ctx := c.Request.Context()
 
-    // 数据库操作（推荐使用 CWithCtx 传递 context）
-    var user User
-    xgorm.CWithCtx(ctx).First(&user, 1)
+	// 数据库操作（推荐使用 CWithCtx 传递 context）
+	var user User
+	xgorm.CWithCtx(ctx).First(&user, 1)
 
-    // HTTP 请求（推荐使用 RWithCtx 传递 context）
-    resp, _ := xhttp.RWithCtx(ctx).Get("https://api.example.com/data")
+	// HTTP 请求（推荐使用 RWithCtx 传递 context）
+	resp, _ := xhttp.RWithCtx(ctx).Get("https://api.example.com/data")
 
-    // 日志记录
-    xlog.Info(ctx, "request handled, user_id=%d", user.ID)
+	// 日志记录
+	xlog.Info(ctx, "request handled, user_id=%d", user.ID)
 
-    // 读取自定义配置
-    customValue := xconfig.GetString("MyConfig.Key")
+	// 读取自定义配置
+	customValue := xconfig.GetString("MyConfig.Key")
 }
 ```
 
 ## 模块清单
 
-| 模块 | 底层库 | 文档 | Log | Trace | 说明 |
-|------|--------|------|-----|-------|------|
-| xconfig | [viper](https://github.com/spf13/viper) | [README](./xconfig/README.md) | - | - | 配置管理 |
-| xlog | [logrus](https://github.com/sirupsen/logrus) | [README](./xlog/README.md) | - | - | 日志记录 |
-| xtrace | [opentelemetry](https://github.com/open-telemetry/opentelemetry-go) | [README](./xtrace/README.md) | - | - | 链路追踪 |
-| xgorm | [gorm](https://gorm.io/) | [README](./xgorm/README.md) | ✅ | ✅ | 数据库(MySQL/PostgreSQL) |
-| xhttp | [go-resty](https://github.com/go-resty/resty) | [README](./xhttp/README.md) | - | ✅ | HTTP 客户端 |
+| 模块      | 底层库                                                                 | 文档                            | Log | Trace | 说明                    |
+|---------|---------------------------------------------------------------------|-------------------------------|-----|-------|-----------------------|
+| xconfig | [viper](https://github.com/spf13/viper)                             | [README](./xconfig/README.md) | -   | -     | 配置管理                  |
+| xlog    | [logrus](https://github.com/sirupsen/logrus)                        | [README](./xlog/README.md)    | -   | -     | 日志记录                  |
+| xtrace  | [opentelemetry](https://github.com/open-telemetry/opentelemetry-go) | [README](./xtrace/README.md)  | -   | -     | 链路追踪                  |
+| xgorm   | [gorm](https://gorm.io/)                                            | [README](./xgorm/README.md)   | ✅   | ✅     | 数据库(MySQL/PostgreSQL) |
+| xhttp   | [go-resty](https://github.com/go-resty/resty)                       | [README](./xhttp/README.md)   | -   | ✅     | HTTP 客户端              |
 
 ## 多数据库配置
 
@@ -143,47 +143,47 @@ defaultDB := xgorm.CWithCtx(ctx)
 package main
 
 import (
-    "github.com/gin-gonic/gin"
-    "github.com/xiaoshicae/xone"
-    "github.com/xiaoshicae/xone/xhook"
+	"github.com/gin-gonic/gin"
+	"github.com/xiaoshicae/xone"
+	"github.com/xiaoshicae/xone/xhook"
 )
 
 func init() {
-    // 注册启动前钩子
-    xhook.BeforeStart(func() error {
-        // 自定义初始化逻辑
-        return nil
-    })
+	// 注册启动前钩子
+	xhook.BeforeStart(func() error {
+		// 自定义初始化逻辑
+		return nil
+	})
 
-    // 注册停止前钩子
-    xhook.BeforeStop(func() error {
-        // 自定义清理逻辑
-        return nil
-    })
+	// 注册停止前钩子
+	xhook.BeforeStop(func() error {
+		// 自定义清理逻辑
+		return nil
+	})
 }
 
 func main() {
-    // 方式一：Gin Web 服务
-    xone.RunGin(gin.Default())
+	// 方式一：Gin Web 服务
+	xone.RunGin(gin.Default())
 
-    // 方式二：自定义 Server（需实现 xone.Server 接口）
-    xone.RunServer(myServer)
+	// 方式二：自定义 Server（需实现 xone.Server 接口）
+	xone.RunServer(myServer)
 
-    // 方式三：阻塞服务（适用于 consumer、job 等）
-    xone.RunBlockingServer()
+	// 方式三：阻塞服务（适用于 consumer、job 等）
+	xone.RunBlockingServer()
 
-    // 方式四：单次执行（适用于调试）
-    xone.R()
+	// 方式四：单次执行（适用于调试）
+	xone.R()
 }
 ```
 
 ## 环境变量
 
-| 环境变量 | 说明 | 示例 |
-|----------|------|------|
-| `SERVER_ENABLE_DEBUG` | 启用 XOne 调试日志 | `true` |
-| `SERVER_PROFILES_ACTIVE` | 指定激活的配置环境 | `dev`, `prod` |
-| `SERVER_CONFIG_LOCATION` | 指定配置文件路径 | `/app/config.yml` |
+| 环境变量                     | 说明           | 示例                |
+|--------------------------|--------------|-------------------|
+| `SERVER_ENABLE_DEBUG`    | 启用 XOne 调试日志 | `true`            |
+| `SERVER_PROFILES_ACTIVE` | 指定激活的配置环境    | `dev`, `prod`     |
+| `SERVER_CONFIG_LOCATION` | 指定配置文件路径     | `/app/config.yml` |
 
 配置文件支持环境变量占位符：
 
@@ -199,6 +199,7 @@ XGorm:
 **GoLand**: Settings → Languages & Frameworks → Schemas and DTDs → JSON Schema Mappings
 
 添加映射：
+
 - Schema: `${GOPATH}/pkg/mod/github.com/xiaoshicae/xone@{version}/config_schema.json`
 - File pattern: `application*.yml`
 
@@ -211,4 +212,5 @@ XGorm:
 - **v0.0.5** (2026-01-04) - 删除gin支持debug mode
 - **v0.0.6** (2026-01-21) - xhttp模块优化
 - **v0.0.7** (2026-01-21) - 修复xconfig bug
+- **v0.0.8** (2026-01-21) - xhttp支持重试
 

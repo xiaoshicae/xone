@@ -18,6 +18,18 @@ type Config struct {
 	// IdleConnTimeout 空闲连接超时时间
 	// optional default "90s"
 	IdleConnTimeout string `mapstructure:"IdleConnTimeout"`
+
+	// RetryCount 重试次数
+	// optional default 0 (不重试)
+	RetryCount int `mapstructure:"RetryCount"`
+
+	// RetryWaitTime 重试等待时间
+	// optional default "100ms"
+	RetryWaitTime string `mapstructure:"RetryWaitTime"`
+
+	// RetryMaxWaitTime 最大重试等待时间
+	// optional default "2s"
+	RetryMaxWaitTime string `mapstructure:"RetryMaxWaitTime"`
 }
 
 func configMergeDefault(c *Config) *Config {
@@ -35,6 +47,13 @@ func configMergeDefault(c *Config) *Config {
 	}
 	if c.IdleConnTimeout == "" {
 		c.IdleConnTimeout = "90s"
+	}
+	// RetryCount 默认 0，不需要特殊处理
+	if c.RetryWaitTime == "" {
+		c.RetryWaitTime = "100ms"
+	}
+	if c.RetryMaxWaitTime == "" {
+		c.RetryMaxWaitTime = "2s"
 	}
 	return c
 }

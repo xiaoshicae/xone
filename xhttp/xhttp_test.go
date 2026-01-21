@@ -15,6 +15,9 @@ func TestXHttpConfig(t *testing.T) {
 			MaxIdleConns:        100,
 			MaxIdleConnsPerHost: 10,
 			IdleConnTimeout:     "90s",
+			RetryCount:          0,
+			RetryWaitTime:       "100ms",
+			RetryMaxWaitTime:    "2s",
 		})
 	})
 
@@ -28,6 +31,9 @@ func TestXHttpConfig(t *testing.T) {
 			MaxIdleConns:        100,
 			MaxIdleConnsPerHost: 10,
 			IdleConnTimeout:     "90s",
+			RetryCount:          0,
+			RetryWaitTime:       "100ms",
+			RetryMaxWaitTime:    "2s",
 		})
 	})
 }

@@ -4,13 +4,12 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/go-resty/resty/v2"
+	"github.com/spf13/cast"
 	"github.com/xiaoshicae/xone/xconfig"
 	"github.com/xiaoshicae/xone/xhook"
 	"github.com/xiaoshicae/xone/xtrace"
 	"github.com/xiaoshicae/xone/xutil"
-
-	"github.com/go-resty/resty/v2"
-	"github.com/spf13/cast"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
@@ -25,6 +24,12 @@ func initHttpClient() error {
 	}
 	xutil.InfoIfEnableDebug("XOne initHttpClient got config: %s", xutil.ToJsonString(c))
 
+	// 基于 DefaultTransport 克隆，保留 TLS、HTTP/2、Dial 等默认配置
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.MaxIdleConns = c.MaxIdleConns
+	transport.MaxIdleConnsPerHost = c.MaxIdleConnsPerHost
+	transport.IdleConnTimeout = cast.ToDuration(c.IdleConnTimeout)
+
 	var rawHttpClient *http.Client
 	if xtrace.EnableTrace() {
 		opts := []otelhttp.Option{
@@ -32,12 +37,19 @@ func initHttpClient() error {
 				return r.Method + " " + r.URL.Path
 			}),
 		}
-		rawHttpClient = &http.Client{Transport: otelhttp.NewTransport(http.DefaultTransport, opts...), Timeout: cast.ToDuration(c.Timeout)}
+		rawHttpClient = &http.Client{
+			Transport: otelhttp.NewTransport(transport, opts...),
+			Timeout:   cast.ToDuration(c.Timeout),
+		}
 	} else {
-		rawHttpClient = &http.Client{Timeout: cast.ToDuration(c.Timeout)}
+		rawHttpClient = &http.Client{
+			Transport: transport,
+			Timeout:   cast.ToDuration(c.Timeout),
+		}
 	}
 
 	setDefaultClient(resty.NewWithClient(rawHttpClient))
+	setRawHttpClient(rawHttpClient)
 
 	return nil
 }

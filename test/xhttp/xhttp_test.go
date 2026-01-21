@@ -14,11 +14,18 @@ import (
 )
 
 func TestXHttp(t *testing.T) {
-	//t.Skip("真实环境测试，如果client能连通，可以注释掉该Skip进行测试")
+	// t.Skip("真实环境测试，如果client能连通，可以注释掉该Skip进行测试")
 
 	if err := xone.R(); err != nil {
 		panic(err)
 	}
+
+	// 测试 RawClient 获取原生 http.Client
+	rawClient := xhttp.RawClient()
+	if rawClient == nil {
+		t.Fatal("RawClient should not be nil after xone.R()")
+	}
+	t.Logf("RawClient Timeout: %v", rawClient.Timeout)
 
 	ctx := trace.ContextWithSpan(context.Background(), &MySpan{})
 	tId := xutil.GetTraceIDFromCtx(ctx)
@@ -62,4 +69,40 @@ func (*MySpan) SpanContext() trace.SpanContext {
 	})
 
 	return sc
+}
+
+// TestRawClient 测试 RawClient 用于流式请求场景
+func TestRawClient(t *testing.T) {
+	// t.Skip("真实环境测试，如果client能连通，可以注释掉该Skip进行测试")
+
+	if err := xone.R(); err != nil {
+		panic(err)
+	}
+
+	rawClient := xhttp.RawClient()
+	if rawClient == nil {
+		t.Fatal("RawClient should not be nil")
+	}
+
+	// 验证 RawClient 配置了超时
+	if rawClient.Timeout == 0 {
+		t.Error("RawClient should have timeout configured")
+	}
+	t.Logf("RawClient Timeout: %v", rawClient.Timeout)
+
+	// 验证 Transport 配置
+	if rawClient.Transport != nil {
+		t.Log("RawClient Transport is configured")
+	}
+
+	// 测试使用 RawClient 发起请求（网络不稳定时跳过）
+	resp, err := rawClient.Get("https://httpbin.org/get")
+	if err != nil {
+		t.Logf("RawClient request failed (network issue, skipped): %v", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	t.Logf("RawClient Response Status: %s", resp.Status)
+	t.Logf("RawClient Response Proto: %s", resp.Proto)
 }

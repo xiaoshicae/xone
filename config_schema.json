@@ -137,7 +137,19 @@
       "properties": {
         "Timeout": {
           "type": "string",
-          "description": "http请求超时时间，默认60s"
+          "description": "HTTP 请求超时时间，默认60s"
+        },
+        "MaxIdleConns": {
+          "type": "integer",
+          "description": "最大空闲连接数，默认100"
+        },
+        "MaxIdleConnsPerHost": {
+          "type": "integer",
+          "description": "每个 host 最大空闲连接数，默认10"
+        },
+        "IdleConnTimeout": {
+          "type": "string",
+          "description": "空闲连接超时时间，默认90s"
         }
       }
     },

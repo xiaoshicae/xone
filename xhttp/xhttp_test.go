@@ -11,7 +11,10 @@ func TestXHttpConfig(t *testing.T) {
 	mockey.PatchConvey("TestXHttpConfig-configMergeDefault-Nil", t, func() {
 		config := configMergeDefault(nil)
 		c.So(config, c.ShouldResemble, &Config{
-			Timeout: "60s",
+			Timeout:             "60s",
+			MaxIdleConns:        100,
+			MaxIdleConnsPerHost: 10,
+			IdleConnTimeout:     "90s",
 		})
 	})
 
@@ -21,7 +24,10 @@ func TestXHttpConfig(t *testing.T) {
 		}
 		config = configMergeDefault(config)
 		c.So(config, c.ShouldResemble, &Config{
-			Timeout: "1",
+			Timeout:             "1",
+			MaxIdleConns:        100,
+			MaxIdleConnsPerHost: 10,
+			IdleConnTimeout:     "90s",
 		})
 	})
 }

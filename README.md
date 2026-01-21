@@ -45,6 +45,8 @@ XGorm:
 
 XHttp:
   Timeout: "30s"
+  MaxIdleConns: 100
+  MaxIdleConnsPerHost: 10
 ```
 
 ### 3. 启动服务
@@ -89,8 +91,8 @@ func Handler(c *gin.Context) {
     var user User
     xgorm.CWithCtx(ctx).First(&user, 1)
 
-    // HTTP 请求
-    resp, _ := xhttp.C().R().SetContext(ctx).Get("https://api.example.com/data")
+    // HTTP 请求（推荐使用 RWithCtx 传递 context）
+    resp, _ := xhttp.RWithCtx(ctx).Get("https://api.example.com/data")
 
     // 日志记录
     xlog.Info(ctx, "request handled, user_id=%d", user.ID)

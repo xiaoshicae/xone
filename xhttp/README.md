@@ -1,41 +1,50 @@
-## XHttp模块
+## XHttp 模块
 
 ### 1. 模块简介
 
-* 对go-resty(https://github.com/go-resty/resty)进行了封装，版本参见go.mod文件。
+* 对 [go-resty](https://github.com/go-resty/resty) 进行了封装，版本参见 go.mod 文件。
+* 支持链路追踪（OpenTelemetry）
+* 提供原生 `http.Client` 用于流式请求场景（如 SSE）
 
 ### 2. 配置参数
 
 ```yaml
 XHttp:
-  Timeout: "3s" # http请求超时时间(optional default "60s")
+  Timeout: "60s"             # HTTP 请求超时时间 (optional, default "60s")
+  MaxIdleConns: 100          # 最大空闲连接数 (optional, default 100)
+  MaxIdleConnsPerHost: 10    # 每个 host 最大空闲连接数 (optional, default 10)
+  IdleConnTimeout: "90s"     # 空闲连接超时时间 (optional, default "90s")
 ```
 
-### 3. 使用demo
+### 3. 使用 demo
 
 * 配置:
 
 ```yaml
 XHttp:
-    Timeout: "10s"
+  Timeout: "10s"
+  MaxIdleConns: 200
+  MaxIdleConnsPerHost: 20
 ```
 
-* 获取client并使用，详细请参考[go-resty](https://github.com/go-resty/resty):
+* 获取 resty client 并使用，详细请参考 [go-resty](https://github.com/go-resty/resty):
 
 ```go
 package main
 
 import (
+  "context"
   "fmt"
   "github.com/xiaoshicae/xone/xhttp"
 )
-  
+
 func main() {
-  // 通过C()获取client，不推荐该方法，推荐使用 xhttp.RWithCtx(ctx) 保证traceId传递到下游
-  client := xhttp.C()
-  resp, err := client.R().Get("https://httpbin.org/get")
-  
-  // 处理response
+  ctx := context.Background()
+
+  // 推荐：使用 RWithCtx 保证 traceId 传递到下游
+  resp, err := xhttp.RWithCtx(ctx).Get("https://httpbin.org/get")
+
+  // 处理 response
   fmt.Println("Response Info:")
   fmt.Println("  Error      :", err)
   fmt.Println("  Status Code:", resp.StatusCode())
@@ -44,8 +53,39 @@ func main() {
   fmt.Println("  Time       :", resp.Time())
   fmt.Println("  Received At:", resp.ReceivedAt())
   fmt.Println("  Body       :\n", resp)
- 
-  // 推荐使用该方法保证traceId传递到下游
-  resp, err := xhttp.RWithCtx(ctx).Get("https://httpbin.org/get")
+
+  // 也可以通过 C() 获取 resty client（不推荐，建议使用 RWithCtx）
+  client := xhttp.C()
+  resp, err = client.R().SetContext(ctx).Get("https://httpbin.org/get")
+}
+```
+
+* 使用原生 `http.Client`（适用于 SSE 流式请求等场景）:
+
+```go
+package main
+
+import (
+  "bufio"
+  "fmt"
+  "github.com/xiaoshicae/xone/xhttp"
+)
+
+func main() {
+  // 获取原生 http.Client，用于需要直接操作 response body 的场景
+  // 注意：必须在 xone 启动后调用
+  rawClient := xhttp.RawClient()
+
+  resp, err := rawClient.Get("https://api.example.com/sse")
+  if err != nil {
+    panic(err)
+  }
+  defer resp.Body.Close()
+
+  // 流式读取（如 SSE）
+  scanner := bufio.NewScanner(resp.Body)
+  for scanner.Scan() {
+    fmt.Println(scanner.Text())
+  }
 }
 ```

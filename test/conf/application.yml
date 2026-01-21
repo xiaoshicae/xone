@@ -4,3 +4,45 @@ A:
     D: ${x}
     E: "${y}"
     F: "${a.b.f}"
+
+Server:
+  Name: "eigenai.llmtrainer.gateway"  # 服务名称(required)，log/trace都会需要这个配置
+  Version: "v0.0.1"                   # 服务版本号，trace上报，swagger版本显示等需要使用该配置
+  Gin:
+    Port: 9000
+
+XLog:
+  Console: true                # 打印到屏幕，aws cloud watch 会自动收集日志
+  ConsoleFormatIsRaw: true     # 原始的json格式打印
+  MaxAge: "3d"
+
+# LLM 路由网关配置
+LLMTrainerGateway:
+  Backend:
+    URL: ${GATEWAY_BACKEND_URL:-http://127.0.0.1:8000}
+    APIKey: debug-7f3c2b1a9e4d6f80c1a2b3c4d5e6f708
+    RequestTimeout: "30s"
+
+  Syncer:
+    Interval: "5s"
+    InitialWait: "10s"
+    RequestTimeout: "10s"
+    ModelInfoPath: "/api/internal/models"
+    UserInfoPath: "/api/internal/users"
+
+  Proxy:
+    Timeout: "120s"
+    StreamTimeout: "300s"
+    MaxIdleConns: 100
+
+  Billing:
+    WorkerCount: 4
+    QueueSize: 10000
+    BatchSize: 100
+    FlushInterval: "5s"
+    RetryAttempts: 3
+
+  # S3 上传配置（用于 tiv2v 视频持久化）
+  S3:
+    Region: ${AWS_REGION:-us-east-1}
+    Bucket: ${S3_BUCKET:-}  # 留空则跳过 S3 上传

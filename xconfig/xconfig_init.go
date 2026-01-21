@@ -174,6 +174,9 @@ func getTopLevelAndServerSecondLevelConfigs(vp *viper.Viper) map[string]interfac
 func expandEnvPlaceholders(vp *viper.Viper) {
 	re := regexp.MustCompile(`\$\{([^}:]+)(?::-([^}]*))?\}`)
 
+	// 收集所有需要展开的 key-value
+	expansions := make(map[string]string)
+
 	for _, key := range vp.AllKeys() {
 		val := vp.GetString(key)
 		if val == "" {
@@ -192,7 +195,39 @@ func expandEnvPlaceholders(vp *viper.Viper) {
 		})
 
 		if expanded != val {
-			vp.Set(key, expanded)
+			expansions[key] = expanded
 		}
 	}
+
+	// 通过修改 AllSettings 返回的 map 来保持嵌套结构
+	if len(expansions) > 0 {
+		allSettings := vp.AllSettings()
+		for key, val := range expansions {
+			setNestedValue(allSettings, key, val)
+		}
+		// 重新加载所有配置
+		for k, v := range allSettings {
+			vp.Set(k, v)
+		}
+	}
+}
+
+// setNestedValue 在嵌套 map 中设置值，保持结构完整
+func setNestedValue(m map[string]interface{}, key string, value interface{}) {
+	keys := strings.Split(key, ".")
+	current := m
+
+	for i := 0; i < len(keys)-1; i++ {
+		k := keys[i]
+		if next, ok := current[k].(map[string]interface{}); ok {
+			current = next
+		} else {
+			// 如果中间路径不存在，创建新的 map
+			newMap := make(map[string]interface{})
+			current[k] = newMap
+			current = newMap
+		}
+	}
+
+	current[keys[len(keys)-1]] = value
 }

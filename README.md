@@ -205,21 +205,14 @@ XGorm:
 
 ## 更新日志
 
-- **v0.0.1** (2026-01-04) - 初始版本
-- **v0.0.2** (2026-01-04) - 优化IP获取
-- **v0.0.3** (2026-01-04) - config新增parent目录检测
-- **v0.0.4** (2026-01-04) - gin支持debug mode
-- **v0.0.5** (2026-01-04) - 删除gin支持debug mode
-- **v0.0.6** (2026-01-21) - xhttp模块优化
-- **v0.0.7** (2026-01-21) - 修复xconfig bug
-- **v0.0.8** (2026-01-21) - xhttp支持重试
-- **v0.0.9** (2026-01-24) - xhook模块优化：延迟排序、新增SetStopTimeout、超时处理优化
-- **v0.0.10** (2026-01-24) - 多模块优化
+- **v1.0.0** (2026-01-24) - 正式版本发布
+  - 全模块代码优化：性能提升、并发安全、代码重构
+  - xhook: 延迟排序、新增 SetStopTimeout API
   - xconfig: 正则预编译、路径检测重构
-  - xlog: 内存预分配、缓存优化、代码重构
-  - xtrace: 并发保护、新增GetTracer/SetShutdownTimeout API
-  - xutil: 统一错误处理、sync.Once保护
-  - xhttp: 并发保护、警告日志、统一使用xutil.ToDuration
-  - xgorm: 修复GetDriver默认值、并发保护、日志优化
-  - xone: blockingServer Stop()重复调用保护
+  - xlog: 内存预分配、缓存优化
+  - xtrace: 并发保护、新增 GetTracer/SetShutdownTimeout API
+  - xhttp: 并发保护、警告日志、支持 "d" 时间格式
+  - xgorm: 修复 GetDriver 默认值、并发保护、日志优化
+  - xutil: 统一错误处理、sync.Once 保护
+  - 添加 Claude Code 项目配置
 

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -88,7 +89,7 @@ func initXLogByConfig(c *Config) error {
 		SuffixToIgnore:     []string{findFrameIgnoreFileName},
 		ServerName:         xconfig.GetServerName(),
 		IP:                 localIP,
-		Pid:                os.Getpid(),
+		PidStr:             strconv.Itoa(os.Getpid()), // 初始化时转换，避免每次日志都转换
 		Console:            c.Console,
 		ConsoleFormatIsRaw: c.ConsoleFormatIsRaw,
 		Writer:             os.Stdout,
@@ -119,21 +120,19 @@ func getConfig() (*Config, error) {
 	return c, nil
 }
 
+// levelMapping 日志级别映射，避免使用魔术数字
+var levelMapping = map[string][]logrus.Level{
+	"debug": {logrus.FatalLevel, logrus.ErrorLevel, logrus.WarnLevel, logrus.InfoLevel, logrus.DebugLevel},
+	"info":  {logrus.FatalLevel, logrus.ErrorLevel, logrus.WarnLevel, logrus.InfoLevel},
+	"warn":  {logrus.FatalLevel, logrus.ErrorLevel, logrus.WarnLevel},
+	"error": {logrus.FatalLevel, logrus.ErrorLevel},
+	"fatal": {logrus.FatalLevel},
+}
+
 func resolveLevels(l string) []logrus.Level {
-	levels := make([]logrus.Level, 0)
-	switch strings.ToLower(l) {
-	case "debug":
-		levels = logrus.AllLevels[1:6] // [fatal, error, warn, info, debug]
-	case "info":
-		levels = logrus.AllLevels[1:5] // [fatal, error, warn, info]
-	case "warn":
-		levels = logrus.AllLevels[1:4] // [fatal, error, warn]
-	case "error":
-		levels = logrus.AllLevels[1:3] // [fatal, error]
-	case "fatal":
-		levels = logrus.AllLevels[1:2] // [fatal]
-	default:
-		levels = logrus.AllLevels[1:5] // default info 级别: [fatal, error, warn, info]
+	if levels, ok := levelMapping[strings.ToLower(l)]; ok {
+		return levels
 	}
-	return levels
+	// 默认 info 级别
+	return levelMapping["info"]
 }

@@ -9,19 +9,21 @@ import (
 const (
 	configLocationArgKey = "server.config.location"
 	configLocationEnvKey = "SERVER_CONFIG_LOCATION"
-
-	ymlConfigLocationInCurrentDir       = "./application.yml"
-	ymlConfigLocationInCurrentConfDir   = "./conf/application.yml"
-	ymlConfigLocationInCurrentConfigDir = "./config/application.yml"
-	ymlConfigLocationInParentConfDir    = "./../conf/application.yml"
-	ymlConfigLocationInParentConfigDir  = "./../config/application.yml"
-
-	yamlConfigLocationInCurrentDir       = "./application.yaml"
-	yamlConfigLocationInCurrentConfDir   = "./conf/application.yaml"
-	yamlConfigLocationInCurrentConfigDir = "./config/application.yaml"
-	yamlConfigLocationInParentConfDir    = "./../conf/application.yaml"
-	yamlConfigLocationInParentConfigDir  = "./../config/application.yaml"
 )
+
+// configLocationPaths 配置文件搜索路径列表，按优先级排序
+var configLocationPaths = []string{
+	"./application.yml",
+	"./application.yaml",
+	"./conf/application.yml",
+	"./conf/application.yaml",
+	"./config/application.yml",
+	"./config/application.yaml",
+	"./../conf/application.yml",
+	"./../conf/application.yaml",
+	"./../config/application.yml",
+	"./../config/application.yaml",
+}
 
 func detectConfigLocation() string {
 	if loc := getLocationFromArg(); loc != "" {
@@ -52,39 +54,10 @@ func getLocationFromENV() string {
 }
 
 func getLocationFromCurrentDir() string {
-	if xutil.FileExist(ymlConfigLocationInCurrentDir) {
-		return ymlConfigLocationInCurrentDir
-	}
-	if xutil.FileExist(yamlConfigLocationInCurrentDir) {
-		return yamlConfigLocationInCurrentDir
-	}
-
-	if xutil.FileExist(ymlConfigLocationInCurrentConfDir) {
-		return ymlConfigLocationInCurrentConfDir
-	}
-	if xutil.FileExist(yamlConfigLocationInCurrentConfDir) {
-		return yamlConfigLocationInCurrentConfDir
-	}
-
-	if xutil.FileExist(ymlConfigLocationInCurrentConfigDir) {
-		return ymlConfigLocationInCurrentConfigDir
-	}
-	if xutil.FileExist(ymlConfigLocationInCurrentConfigDir) {
-		return yamlConfigLocationInCurrentConfigDir
-	}
-
-	if xutil.FileExist(ymlConfigLocationInParentConfDir) {
-		return ymlConfigLocationInParentConfDir
-	}
-	if xutil.FileExist(yamlConfigLocationInParentConfDir) {
-		return yamlConfigLocationInParentConfDir
-	}
-
-	if xutil.FileExist(ymlConfigLocationInParentConfigDir) {
-		return ymlConfigLocationInParentConfigDir
-	}
-	if xutil.FileExist(yamlConfigLocationInParentConfigDir) {
-		return yamlConfigLocationInParentConfigDir
+	for _, loc := range configLocationPaths {
+		if xutil.FileExist(loc) {
+			return loc
+		}
 	}
 	return ""
 }

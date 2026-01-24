@@ -58,6 +58,8 @@ func TestEnableTrace(t *testing.T) {
 
 func TestShutdownXTraceIdempotent(t *testing.T) {
 	PatchConvey("TestShutdownXTraceIdempotent", t, func() {
+		// 重置状态
+		shutdownExecuted.Store(false)
 		calls := 0
 		xTraceShutdownFunc = func() error {
 			calls++

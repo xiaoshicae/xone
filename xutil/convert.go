@@ -50,8 +50,8 @@ func strToDuration(duration string) time.Duration {
 		}
 		dayDuration, err := cast.ToIntE(day)
 		if err != nil {
-			// 解析失败时记录日志并返回 0
-			ErrorIfEnableDebug("strToDuration parse day failed, day=[%s], err=[%v]", day, err)
+			// 天数解析失败时记录日志，尝试解析剩余部分
+			ErrorIfEnableDebug("strToDuration parse day failed, day=[%s], err=[%v], fallback to parse left=[%s]", day, err, left)
 			return cast.ToDuration(left)
 		}
 		return time.Duration(dayDuration)*24*time.Hour + cast.ToDuration(left)

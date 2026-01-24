@@ -5,7 +5,6 @@ import (
 	"net/http"
 
 	"github.com/go-resty/resty/v2"
-	"github.com/spf13/cast"
 	"github.com/xiaoshicae/xone/xconfig"
 	"github.com/xiaoshicae/xone/xhook"
 	"github.com/xiaoshicae/xone/xtrace"
@@ -28,24 +27,22 @@ func initHttpClient() error {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.MaxIdleConns = c.MaxIdleConns
 	transport.MaxIdleConnsPerHost = c.MaxIdleConnsPerHost
-	transport.IdleConnTimeout = cast.ToDuration(c.IdleConnTimeout)
+	transport.IdleConnTimeout = xutil.ToDuration(c.IdleConnTimeout)
 
-	var rawHttpClient *http.Client
+	// 根据是否启用 trace 选择 Transport
+	var finalTransport http.RoundTripper = transport
 	if xtrace.EnableTrace() {
 		opts := []otelhttp.Option{
 			otelhttp.WithSpanNameFormatter(func(_ string, r *http.Request) string {
 				return r.Method + " " + r.URL.Path
 			}),
 		}
-		rawHttpClient = &http.Client{
-			Transport: otelhttp.NewTransport(transport, opts...),
-			Timeout:   cast.ToDuration(c.Timeout),
-		}
-	} else {
-		rawHttpClient = &http.Client{
-			Transport: transport,
-			Timeout:   cast.ToDuration(c.Timeout),
-		}
+		finalTransport = otelhttp.NewTransport(transport, opts...)
+	}
+
+	rawHttpClient := &http.Client{
+		Transport: finalTransport,
+		Timeout:   xutil.ToDuration(c.Timeout),
 	}
 
 	restyClient := resty.NewWithClient(rawHttpClient)
@@ -54,8 +51,8 @@ func initHttpClient() error {
 	if c.RetryCount > 0 {
 		restyClient.
 			SetRetryCount(c.RetryCount).
-			SetRetryWaitTime(cast.ToDuration(c.RetryWaitTime)).
-			SetRetryMaxWaitTime(cast.ToDuration(c.RetryMaxWaitTime))
+			SetRetryWaitTime(xutil.ToDuration(c.RetryWaitTime)).
+			SetRetryMaxWaitTime(xutil.ToDuration(c.RetryMaxWaitTime))
 	}
 
 	setDefaultClient(restyClient)

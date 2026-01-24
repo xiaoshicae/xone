@@ -7,17 +7,22 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+	"sync"
 
 	"github.com/sirupsen/logrus"
 )
 
 // 日志相关的方法，注意这里的日志主要用来做XOne debug用，因此只会打印在屏幕上
 
-var logger *logrus.Logger
+var (
+	logger     *logrus.Logger
+	initOnce   sync.Once // 确保初始化只执行一次
+	regexOnce  sync.Once // 确保正则编译只执行一次
+)
 
 func init() {
-	initLogger()
-	initCallerIgnoreFileName()
+	initOnce.Do(initLogger)
+	regexOnce.Do(initCallerIgnoreFileName)
 }
 
 func ErrorIfEnableDebug(msg string, args ...interface{}) {
@@ -122,6 +127,7 @@ func initLogger() {
 
 // initCallerIgnoreFileName 初始化获取caller忽略的文件名
 func initCallerIgnoreFileName() {
+	defaultSuffixedRegList = make([]*regexp.Regexp, 0, len(defaultSuffixesRegPatternList))
 	for _, pattern := range defaultSuffixesRegPatternList {
 		defaultSuffixedRegList = append(defaultSuffixedRegList, regexp.MustCompile(pattern))
 	}

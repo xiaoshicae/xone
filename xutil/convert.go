@@ -44,8 +44,16 @@ func ToDuration(i interface{}) time.Duration {
 
 func strToDuration(duration string) time.Duration {
 	if strings.Contains(duration, "d") {
-		day, left, _ := strings.Cut(duration, "d")
-		dayDuration, _ := cast.ToIntE(day)
+		day, left, found := strings.Cut(duration, "d")
+		if !found {
+			return cast.ToDuration(duration)
+		}
+		dayDuration, err := cast.ToIntE(day)
+		if err != nil {
+			// 解析失败时记录日志并返回 0
+			ErrorIfEnableDebug("strToDuration parse day failed, day=[%s], err=[%v]", day, err)
+			return cast.ToDuration(left)
+		}
 		return time.Duration(dayDuration)*24*time.Hour + cast.ToDuration(left)
 	}
 	return cast.ToDuration(duration)

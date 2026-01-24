@@ -22,11 +22,7 @@ func ExtractRealIP(addr string) (string, error) {
 		candidate = strings.TrimPrefix(candidate, "[")
 		candidate = strings.TrimSuffix(candidate, "]")
 
-		a := net.ParseIP(candidate)
-		if a == nil {
-			return "", fmt.Errorf("ip addr %s is invalid", addr)
-		}
-		return a.String(), nil
+		return validateIP(candidate, addr)
 	}
 
 	iFaces, err := net.Interfaces()
@@ -34,9 +30,10 @@ func ExtractRealIP(addr string) (string, error) {
 		return "", fmt.Errorf("failed to get interfaces, error: %v", err)
 	}
 
-	//nolint:prealloc
-	var addrs []net.Addr
-	var loAddrs []net.Addr
+	// 预分配容量
+	addrs := make([]net.Addr, 0, len(iFaces)*2)
+	loAddrs := make([]net.Addr, 0, len(iFaces))
+
 	for _, iface := range iFaces {
 		ifaceAddrs, err := iface.Addrs()
 		if err != nil {
@@ -87,23 +84,24 @@ func ExtractRealIP(addr string) (string, error) {
 
 	// return private ip
 	if len(ipAddr) > 0 {
-		a := net.ParseIP(ipAddr)
-		if a == nil {
-			return "", fmt.Errorf("ip addr %s is invalid", ipAddr)
-		}
-		return a.String(), nil
+		return validateIP(ipAddr, ipAddr)
 	}
 
 	// return public or virtual ip
 	if len(publicIP) > 0 {
-		a := net.ParseIP(publicIP)
-		if a == nil {
-			return "", fmt.Errorf("ip addr %s is invalid", publicIP)
-		}
-		return a.String(), nil
+		return validateIP(publicIP, publicIP)
 	}
 
 	return "", fmt.Errorf("no IP address found, and explicit IP not provided")
+}
+
+// validateIP 验证并解析 IP 地址，减少重复代码
+func validateIP(candidate, original string) (string, error) {
+	a := net.ParseIP(candidate)
+	if a == nil {
+		return "", fmt.Errorf("ip addr %s is invalid", original)
+	}
+	return a.String(), nil
 }
 
 func isPrivateIP(ip net.IP) bool {

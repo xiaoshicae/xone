@@ -3,6 +3,7 @@ package xconfig
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/xiaoshicae/xone/xutil"
@@ -52,12 +53,15 @@ func getProfilesActiveFromViperConfig(vp *viper.Viper) string {
 	return vp.GetString(profilesActiveConfigKey)
 }
 
+// toProfilesActiveConfigLocation 根据基础配置文件路径和激活的环境，构建环境配置文件路径
+// 例如: ./conf/application.yml + dev -> ./conf/application-dev.yml
 func toProfilesActiveConfigLocation(configLocation string, pa string) (string, error) {
-	items := strings.Split(configLocation, ".")
-	if len(items) < 2 {
-		return "", fmt.Errorf("config file name is invalid")
+	ext := filepath.Ext(configLocation)
+	if ext == "" {
+		return "", fmt.Errorf("config file name is invalid, no extension found")
 	}
-	dir := strings.Join(items[:len(items)-1], ".")
-	typ := items[len(items)-1]
-	return fmt.Sprintf("%s-%s.%s", dir, pa, typ), nil
+
+	// 去掉扩展名，添加环境后缀，再加回扩展名
+	nameWithoutExt := strings.TrimSuffix(configLocation, ext)
+	return fmt.Sprintf("%s-%s%s", nameWithoutExt, pa, ext), nil
 }

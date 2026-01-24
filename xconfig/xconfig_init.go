@@ -16,6 +16,9 @@ import (
 
 var vip *viper.Viper
 
+// 预编译正则表达式，避免重复编译
+var envPlaceholderRegex = regexp.MustCompile(`\$\{([^}:]+)(?::-([^}]*))?\}`)
+
 func init() {
 	xhook.BeforeStart(initXConfig, xhook.Order(1))
 }
@@ -172,8 +175,6 @@ func getTopLevelAndServerSecondLevelConfigs(vp *viper.Viper) map[string]interfac
 //   - ${VAR} - 从环境变量读取 VAR
 //   - ${VAR:-default} - 从环境变量读取 VAR，如果不存在则使用 default
 func expandEnvPlaceholders(vp *viper.Viper) {
-	re := regexp.MustCompile(`\$\{([^}:]+)(?::-([^}]*))?\}`)
-
 	// 收集所有需要展开的 key-value
 	expansions := make(map[string]string)
 
@@ -183,8 +184,8 @@ func expandEnvPlaceholders(vp *viper.Viper) {
 			continue
 		}
 
-		expanded := re.ReplaceAllStringFunc(val, func(match string) string {
-			matches := re.FindStringSubmatch(match)
+		expanded := envPlaceholderRegex.ReplaceAllStringFunc(val, func(match string) string {
+			matches := envPlaceholderRegex.FindStringSubmatch(match)
 			envKey := matches[1]
 			defaultVal := matches[2]
 

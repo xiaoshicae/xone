@@ -1,9 +1,12 @@
 package xhttp
 
 import (
+	"context"
+	"net/http"
 	"testing"
 
 	"github.com/bytedance/mockey"
+	"github.com/go-resty/resty/v2"
 	c "github.com/smartystreets/goconvey/convey"
 )
 
@@ -44,5 +47,54 @@ func TestXHttpClient(t *testing.T) {
 			client := C()
 			c.So(client, c.ShouldNotBeNil)
 		})
+	})
+}
+
+func TestRWithCtx(t *testing.T) {
+	mockey.PatchConvey("TestRWithCtx", t, func() {
+		ctx := context.Background()
+		req := RWithCtx(ctx)
+		c.So(req, c.ShouldNotBeNil)
+	})
+}
+
+func TestRawClient(t *testing.T) {
+	mockey.PatchConvey("TestRawClient-NotSet", t, func() {
+		// Reset rawHttpClient to nil
+		rawHttpClient = nil
+		client := RawClient()
+		c.So(client, c.ShouldNotBeNil)
+		c.So(client, c.ShouldEqual, http.DefaultClient)
+	})
+
+	mockey.PatchConvey("TestRawClient-Set", t, func() {
+		customClient := &http.Client{}
+		setRawHttpClient(customClient)
+		client := RawClient()
+		c.So(client, c.ShouldNotBeNil)
+		c.So(client, c.ShouldEqual, customClient)
+		// Clean up
+		rawHttpClient = nil
+	})
+}
+
+func TestSetDefaultClient(t *testing.T) {
+	mockey.PatchConvey("TestSetDefaultClient", t, func() {
+		original := defaultClient
+		newClient := resty.New()
+		setDefaultClient(newClient)
+		c.So(C(), c.ShouldEqual, newClient)
+		// Restore
+		defaultClient = original
+	})
+}
+
+func TestSetRawHttpClient(t *testing.T) {
+	mockey.PatchConvey("TestSetRawHttpClient", t, func() {
+		customClient := &http.Client{}
+		setRawHttpClient(customClient)
+		c.So(rawHttpClient, c.ShouldEqual, customClient)
+		// Clean up
+		rawHttpClient = nil
 	})
 }

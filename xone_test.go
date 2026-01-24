@@ -10,6 +10,7 @@ import (
 	"github.com/xiaoshicae/xone/xhook"
 
 	"github.com/gin-gonic/gin"
+	"github.com/swaggo/swag"
 
 	. "github.com/bytedance/mockey"
 	. "github.com/smartystreets/goconvey/convey"
@@ -189,5 +190,115 @@ func TestBlockingServer(t *testing.T) {
 	PatchConvey("TestBlockingServer", t, func() {
 		s := &blockingServer{}
 		_ = RunServer(s)
+	})
+}
+
+func TestBlockingServerRunAndStop(t *testing.T) {
+	PatchConvey("TestBlockingServerRunAndStop", t, func() {
+		s := &blockingServer{}
+
+		// Start Run in goroutine since it blocks
+		done := make(chan error)
+		go func() {
+			done <- s.Run()
+		}()
+
+		// Give it a moment to start
+		time.Sleep(10 * time.Millisecond)
+
+		// Call Stop
+		err := s.Stop()
+		So(err, ShouldBeNil)
+
+		// Run should complete
+		select {
+		case err := <-done:
+			So(err, ShouldBeNil)
+		case <-time.After(time.Second):
+			t.Fatal("Run did not complete after Stop")
+		}
+
+		// Calling Stop again should be safe (idempotent)
+		err = s.Stop()
+		So(err, ShouldBeNil)
+	})
+}
+
+func TestInvokeEngineInjectFunc(t *testing.T) {
+	PatchConvey("TestInvokeEngineInjectFunc-WithSwaggerFunc", t, func() {
+		engine := gin.New()
+		called := false
+		engine.FuncMap = map[string]any{
+			SwaggerInfoFuncKey: func() *swag.Spec {
+				called = true
+				return &swag.Spec{}
+			},
+		}
+		Mock(xconfig.GetGinSwaggerConfig).Return(&xconfig.GinSwagger{}).Build()
+		Mock(xconfig.GetServerVersion).Return("v1.0.0").Build()
+
+		invokeEngineInjectFunc(engine)
+		So(called, ShouldBeTrue)
+	})
+
+	PatchConvey("TestInvokeEngineInjectFunc-WithPrintBannerFunc", t, func() {
+		engine := gin.New()
+		called := false
+		engine.FuncMap = map[string]any{
+			PrintBannerFuncKey: func() {
+				called = true
+			},
+		}
+
+		invokeEngineInjectFunc(engine)
+		So(called, ShouldBeTrue)
+	})
+
+	PatchConvey("TestInvokeEngineInjectFunc-SwaggerFuncReturnsNil", t, func() {
+		engine := gin.New()
+		called := false
+		engine.FuncMap = map[string]any{
+			SwaggerInfoFuncKey: func() *swag.Spec {
+				called = true
+				return nil
+			},
+		}
+
+		invokeEngineInjectFunc(engine)
+		So(called, ShouldBeTrue)
+	})
+
+	PatchConvey("TestInvokeEngineInjectFunc-WrongFuncType", t, func() {
+		engine := gin.New()
+		engine.FuncMap = map[string]any{
+			SwaggerInfoFuncKey: "not a function",
+			PrintBannerFuncKey: 123,
+		}
+
+		// Should not panic
+		invokeEngineInjectFunc(engine)
+	})
+}
+
+func TestSetGinSwaggerInfo(t *testing.T) {
+	PatchConvey("TestSetGinSwaggerInfo", t, func() {
+		Mock(xconfig.GetGinSwaggerConfig).Return(&xconfig.GinSwagger{
+			Host:        "localhost",
+			BasePath:    "/api",
+			Title:       "Test API",
+			Description: "Test Description",
+			Schemes:     []string{"https"},
+		}).Build()
+		Mock(xconfig.GetServerVersion).Return("v2.0.0").Build()
+
+		spec := &swag.Spec{}
+		setGinSwaggerInfo(spec)
+
+		So(spec.Version, ShouldEqual, "v2.0.0")
+		So(spec.Host, ShouldEqual, "localhost")
+		So(spec.BasePath, ShouldEqual, "/api")
+		So(spec.Title, ShouldEqual, "Test API")
+		So(spec.Description, ShouldEqual, "Test Description")
+		So(spec.Schemes, ShouldResemble, []string{"https"})
 	})
 }

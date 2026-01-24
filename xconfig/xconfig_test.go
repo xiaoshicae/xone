@@ -3,6 +3,7 @@ package xconfig
 import (
 	"os"
 	"testing"
+	"time"
 
 	"github.com/xiaoshicae/xone/xutil"
 
@@ -448,5 +449,188 @@ func TestGetLocationFromArgWithArg(t *testing.T) {
 		location := getLocationFromArg()
 		t.Log("location: ", location)
 		So(location, ShouldEqual, "/a/b/application.yml")
+	})
+}
+
+func TestCheckParam(t *testing.T) {
+	PatchConvey("TestCheckParam", t, func() {
+		PatchConvey("TestCheckParam-EmptyKey", func() {
+			err := checkParam("", nil)
+			So(err, ShouldNotBeNil)
+			So(err.Error(), ShouldContainSubstring, "key is empty")
+		})
+
+		PatchConvey("TestCheckParam-NilConf", func() {
+			err := checkParam("key", nil)
+			So(err, ShouldNotBeNil)
+			So(err.Error(), ShouldContainSubstring, "conf is nil")
+		})
+
+		PatchConvey("TestCheckParam-NotPtrConf", func() {
+			conf := struct{}{}
+			err := checkParam("key", conf)
+			So(err, ShouldNotBeNil)
+			So(err.Error(), ShouldContainSubstring, "conf is not ptr")
+		})
+
+		PatchConvey("TestCheckParam-Valid", func() {
+			conf := &struct{}{}
+			err := checkParam("key", conf)
+			So(err, ShouldBeNil)
+		})
+	})
+}
+
+func TestGetViperConfig(t *testing.T) {
+	PatchConvey("TestGetViperConfig-Nil", t, func() {
+		vip = nil
+		config := getViperConfig()
+		So(config, ShouldNotBeNil)
+	})
+
+	PatchConvey("TestGetViperConfig-NotNil", t, func() {
+		vip = viper.New()
+		vip.Set("test", "value")
+		config := getViperConfig()
+		So(config, ShouldNotBeNil)
+		So(config.GetString("test"), ShouldEqual, "value")
+	})
+}
+
+func TestUtilFunctions(t *testing.T) {
+	PatchConvey("TestUtilFunctions", t, func() {
+		vip = viper.New()
+		vip.Set("string_key", "string_value")
+		vip.Set("bool_key", true)
+		vip.Set("int_key", 42)
+		vip.Set("int32_key", int32(32))
+		vip.Set("int64_key", int64(64))
+		vip.Set("float64_key", 3.14)
+		vip.Set("duration_key", "1s")
+		vip.Set("string_slice_key", []string{"a", "b"})
+		vip.Set("int_slice_key", []int{1, 2, 3})
+
+		PatchConvey("TestGetConfig", func() {
+			result := GetConfig("string_key")
+			So(result, ShouldEqual, "string_value")
+		})
+
+		PatchConvey("TestContainKey", func() {
+			So(ContainKey("string_key"), ShouldBeTrue)
+			So(ContainKey("nonexistent"), ShouldBeFalse)
+		})
+
+		PatchConvey("TestGetString", func() {
+			So(GetString("string_key"), ShouldEqual, "string_value")
+		})
+
+		PatchConvey("TestGetBool", func() {
+			So(GetBool("bool_key"), ShouldBeTrue)
+		})
+
+		PatchConvey("TestGetInt", func() {
+			So(GetInt("int_key"), ShouldEqual, 42)
+		})
+
+		PatchConvey("TestGetInt32", func() {
+			So(GetInt32("int32_key"), ShouldEqual, int32(32))
+		})
+
+		PatchConvey("TestGetInt64", func() {
+			So(GetInt64("int64_key"), ShouldEqual, int64(64))
+		})
+
+		PatchConvey("TestGetFloat64", func() {
+			So(GetFloat64("float64_key"), ShouldEqual, 3.14)
+		})
+
+		PatchConvey("TestGetDuration", func() {
+			So(GetDuration("duration_key"), ShouldEqual, time.Second)
+		})
+
+		PatchConvey("TestGetStringSlice", func() {
+			So(GetStringSlice("string_slice_key"), ShouldResemble, []string{"a", "b"})
+		})
+
+		PatchConvey("TestGetIntSlice", func() {
+			So(GetIntSlice("int_slice_key"), ShouldResemble, []int{1, 2, 3})
+		})
+	})
+}
+
+func TestServerConfigFunctions(t *testing.T) {
+	PatchConvey("TestServerConfigFunctions", t, func() {
+		PatchConvey("TestGetServerName-Default", func() {
+			vip = viper.New()
+			name := GetServerName()
+			So(name, ShouldEqual, defaultServerName)
+		})
+
+		PatchConvey("TestGetServerName-Custom", func() {
+			vip = viper.New()
+			vip.Set("Server.Name", "custom-server")
+			name := GetServerName()
+			So(name, ShouldEqual, "custom-server")
+		})
+
+		PatchConvey("TestGetRawServerName", func() {
+			vip = viper.New()
+			vip.Set("Server.Name", "raw-server")
+			name := GetRawServerName()
+			So(name, ShouldEqual, "raw-server")
+		})
+
+		PatchConvey("TestGetServerVersion-Default", func() {
+			vip = viper.New()
+			version := GetServerVersion()
+			So(version, ShouldEqual, defaultServerVersion)
+		})
+
+		PatchConvey("TestGetServerVersion-Custom", func() {
+			vip = viper.New()
+			vip.Set("Server.Version", "v1.0.0")
+			version := GetServerVersion()
+			So(version, ShouldEqual, "v1.0.0")
+		})
+	})
+}
+
+func TestGinConfigFunctions(t *testing.T) {
+	PatchConvey("TestGinConfigFunctions", t, func() {
+		PatchConvey("TestGetGinConfig", func() {
+			vip = viper.New()
+			config := GetGinConfig()
+			So(config, ShouldNotBeNil)
+			So(config.Host, ShouldEqual, "0.0.0.0")
+			So(config.Port, ShouldEqual, 8000)
+		})
+
+		PatchConvey("TestGetGinSwaggerConfig", func() {
+			vip = viper.New()
+			config := GetGinSwaggerConfig()
+			So(config, ShouldNotBeNil)
+			So(config.Schemes, ShouldResemble, []string{"https", "http"})
+		})
+	})
+}
+
+func TestUnmarshalConfig(t *testing.T) {
+	PatchConvey("TestUnmarshalConfig", t, func() {
+		PatchConvey("TestUnmarshalConfig-InvalidKey", func() {
+			var conf struct{}
+			err := UnmarshalConfig("", &conf)
+			So(err, ShouldNotBeNil)
+		})
+
+		PatchConvey("TestUnmarshalConfig-Valid", func() {
+			vip = viper.New()
+			vip.Set("test.key", "value")
+			conf := struct {
+				Key string `mapstructure:"key"`
+			}{}
+			err := UnmarshalConfig("test", &conf)
+			So(err, ShouldBeNil)
+			So(conf.Key, ShouldEqual, "value")
+		})
 	})
 }

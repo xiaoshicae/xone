@@ -214,4 +214,12 @@ XGorm:
 - **v0.0.7** (2026-01-21) - 修复xconfig bug
 - **v0.0.8** (2026-01-21) - xhttp支持重试
 - **v0.0.9** (2026-01-24) - xhook模块优化：延迟排序、新增SetStopTimeout、超时处理优化
+- **v0.0.10** (2026-01-24) - 多模块优化
+  - xconfig: 正则预编译、路径检测重构
+  - xlog: 内存预分配、缓存优化、代码重构
+  - xtrace: 并发保护、新增GetTracer/SetShutdownTimeout API
+  - xutil: 统一错误处理、sync.Once保护
+  - xhttp: 并发保护、警告日志、统一使用xutil.ToDuration
+  - xgorm: 修复GetDriver默认值、并发保护、日志优化
+  - xone: blockingServer Stop()重复调用保护
 

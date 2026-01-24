@@ -2,15 +2,16 @@
 
 ### 1. 模块简介
 
-* 对 [go-resty](https://github.com/go-resty/resty) 进行了封装，版本参见 go.mod 文件。
+* 对 [go-resty](https://github.com/go-resty/resty) 进行了封装，版本参见 go.mod 文件
 * 支持链路追踪（OpenTelemetry）
 * 提供原生 `http.Client` 用于流式请求场景（如 SSE）
+* 线程安全的客户端访问
 
 ### 2. 配置参数
 
 ```yaml
 XHttp:
-  Timeout: "60s"             # HTTP 请求超时时间 (optional, default "60s")
+  Timeout: "60s"             # HTTP 请求超时时间 (optional, default "60s")，支持 "d" 格式如 "1d"
   MaxIdleConns: 100          # 最大空闲连接数 (optional, default 100)
   MaxIdleConnsPerHost: 10    # 每个 host 最大空闲连接数 (optional, default 10)
   IdleConnTimeout: "90s"     # 空闲连接超时时间 (optional, default "90s")
@@ -76,7 +77,7 @@ import (
 
 func main() {
   // 获取原生 http.Client，用于需要直接操作 response body 的场景
-  // 注意：必须在 xone 启动后调用
+  // 注意：必须在 xone 启动后调用，否则会打印警告日志并返回 http.DefaultClient
   rawClient := xhttp.RawClient()
 
   resp, err := rawClient.Get("https://api.example.com/sse")
@@ -92,3 +93,10 @@ func main() {
   }
 }
 ```
+
+### 4. 注意事项
+
+- 所有 API 都是线程安全的
+- `RawClient()` 在 xone 未启动时会返回 `http.DefaultClient` 并打印警告日志
+- 推荐使用 `RWithCtx(ctx)` 以确保链路追踪信息正确传递
+- 时间配置支持 "d"（天）格式，如 `"1d12h"` 表示 1 天 12 小时

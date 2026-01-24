@@ -1,6 +1,7 @@
 package xhook
 
 import (
+	"context"
 	"errors"
 	"strconv"
 	"strings"
@@ -37,12 +38,18 @@ func PanicFunc() error {
 	return nil
 }
 
+// resetHooks 重置所有 hooks 状态，用于测试
+func resetHooks() {
+	beforeStartHooks = beforeStartHooks[:0]
+	beforeStartHooksSorted = true
+	beforeStopHooks = beforeStopHooks[:0]
+	beforeStopHooksSorted = true
+}
+
 func TestXHookBeforeStart(t *testing.T) {
 	PatchConvey("TestXHookBeforeStart-Panic", t, func() {
-		beforeStartHooks = beforeStartHooks[:0]
-		defer func() {
-			beforeStartHooks = beforeStartHooks[:0]
-		}()
+		resetHooks()
+		defer resetHooks()
 
 		var h HookFunc
 		So(func() { BeforeStart(h) }, ShouldPanicWith, "XOne BeforeStart hook can not be nil")
@@ -55,10 +62,8 @@ func TestXHookBeforeStart(t *testing.T) {
 	})
 
 	PatchConvey("TestXHookBeforeStart-Sort", t, func() {
-		beforeStartHooks = beforeStartHooks[:0]
-		defer func() {
-			beforeStartHooks = beforeStartHooks[:0]
-		}()
+		resetHooks()
+		defer resetHooks()
 		maxHookNum = 10
 
 		h1 := func() error { println("h1"); return errors.New("h1") }
@@ -67,7 +72,9 @@ func TestXHookBeforeStart(t *testing.T) {
 		BeforeStart(h1, Order(1))
 		BeforeStart(h3, Order(3))
 		BeforeStart(h2, Order(2))
-		for i, h := range beforeStartHooks {
+		// 使用 getSortedHooks 获取排序后的副本进行测试
+		hooks := getSortedHooks(&beforeStartHooks, &beforeStartHooksSorted)
+		for i, h := range hooks {
 			err := h.HookFunc()
 			So(err.Error(), ShouldEqual, "h"+strconv.Itoa(i+1))
 		}
@@ -76,10 +83,8 @@ func TestXHookBeforeStart(t *testing.T) {
 
 func TestXHookBeforeStop(t *testing.T) {
 	PatchConvey("TestXHookBeforeStop-Panic", t, func() {
-		beforeStopHooks = beforeStopHooks[:0]
-		defer func() {
-			beforeStopHooks = beforeStopHooks[:0]
-		}()
+		resetHooks()
+		defer resetHooks()
 
 		var h HookFunc
 		So(func() { BeforeStop(h) }, ShouldPanicWith, "XOne BeforeStop hook can not be nil")
@@ -92,10 +97,8 @@ func TestXHookBeforeStop(t *testing.T) {
 	})
 
 	PatchConvey("TestXHookBeforeStop-Sort", t, func() {
-		beforeStopHooks = beforeStopHooks[:0]
-		defer func() {
-			beforeStopHooks = beforeStopHooks[:0]
-		}()
+		resetHooks()
+		defer resetHooks()
 		maxHookNum = 10
 
 		h1 := func() error { println("h1"); return errors.New("h1") }
@@ -104,7 +107,9 @@ func TestXHookBeforeStop(t *testing.T) {
 		BeforeStop(h1, Order(1))
 		BeforeStop(h3, Order(3))
 		BeforeStop(h2, Order(2))
-		for i, h := range beforeStopHooks {
+		// 使用 getSortedHooks 获取排序后的副本进行测试
+		hooks := getSortedHooks(&beforeStopHooks, &beforeStopHooksSorted)
+		for i, h := range hooks {
 			err := h.HookFunc()
 			So(err.Error(), ShouldEqual, "h"+strconv.Itoa(i+1))
 		}
@@ -113,10 +118,8 @@ func TestXHookBeforeStop(t *testing.T) {
 
 func TestInvokeBeforeStartHook(t *testing.T) {
 	PatchConvey("TestInvokeBeforeStartHook-Err", t, func() {
-		beforeStartHooks = beforeStartHooks[:0]
-		defer func() {
-			beforeStartHooks = beforeStartHooks[:0]
-		}()
+		resetHooks()
+		defer resetHooks()
 		f := func() error {
 			return errors.New("BeforeStart-Invoke-Err")
 		}
@@ -127,10 +130,8 @@ func TestInvokeBeforeStartHook(t *testing.T) {
 	})
 
 	PatchConvey("TestInvokeBeforeStartHook-PanicErr", t, func() {
-		beforeStartHooks = beforeStartHooks[:0]
-		defer func() {
-			beforeStartHooks = beforeStartHooks[:0]
-		}()
+		resetHooks()
+		defer resetHooks()
 		f := func() error {
 			panic("BeforeStart-Invoke-Panic")
 		}
@@ -141,10 +142,8 @@ func TestInvokeBeforeStartHook(t *testing.T) {
 	})
 
 	PatchConvey("TestInvokeBeforeStartHook-Success", t, func() {
-		beforeStartHooks = beforeStartHooks[:0]
-		defer func() {
-			beforeStartHooks = beforeStartHooks[:0]
-		}()
+		resetHooks()
+		defer resetHooks()
 		f1 := func() error {
 			return errors.New("BeforeStart-Invoke-Err")
 		}
@@ -164,10 +163,8 @@ func TestInvokeBeforeStartHook(t *testing.T) {
 
 func TestInvokeBeforeStopHook(t *testing.T) {
 	PatchConvey("TestXHookBeforeStop-Err", t, func() {
-		beforeStopHooks = beforeStopHooks[:0]
-		defer func() {
-			beforeStopHooks = beforeStopHooks[:0]
-		}()
+		resetHooks()
+		defer resetHooks()
 		f := func() error {
 			return errors.New("BeforeStop-Invoke-Err")
 		}
@@ -178,10 +175,8 @@ func TestInvokeBeforeStopHook(t *testing.T) {
 	})
 
 	PatchConvey("TestInvokeBeforeStopHook-PanicErr", t, func() {
-		beforeStopHooks = beforeStopHooks[:0]
-		defer func() {
-			beforeStopHooks = beforeStopHooks[:0]
-		}()
+		resetHooks()
+		defer resetHooks()
 		f := func() error {
 			panic("BeforeStop-Invoke-Panic")
 		}
@@ -192,10 +187,8 @@ func TestInvokeBeforeStopHook(t *testing.T) {
 	})
 
 	PatchConvey("TestInvokeBeforeStopHook-Success", t, func() {
-		beforeStopHooks = beforeStopHooks[:0]
-		defer func() {
-			beforeStopHooks = beforeStopHooks[:0]
-		}()
+		resetHooks()
+		defer resetHooks()
 		f1 := func() error {
 			return errors.New("BeforeStop-Invoke-Err")
 		}
@@ -215,10 +208,8 @@ func TestInvokeBeforeStopHook(t *testing.T) {
 	})
 
 	PatchConvey("TestInvokeBeforeStopHook-MergeErr", t, func() {
-		beforeStopHooks = beforeStopHooks[:0]
-		defer func() {
-			beforeStopHooks = beforeStopHooks[:0]
-		}()
+		resetHooks()
+		defer resetHooks()
 		f1 := func() error {
 			return errors.New("BeforeStop-Invoke-Err")
 		}
@@ -232,8 +223,10 @@ func TestInvokeBeforeStopHook(t *testing.T) {
 		BeforeStop(f2)
 		BeforeStop(f3)
 		stopErrChan := make(chan error, 1)
+		ctx := context.Background()
+		hooks := getSortedHooks(&beforeStopHooks, &beforeStopHooksSorted)
 		go func() {
-			invokeBeforeStopHook(beforeStopHooks, stopErrChan)
+			invokeBeforeStopHook(ctx, hooks, stopErrChan)
 		}()
 		err := <-stopErrChan
 		So(err.Error(), ShouldContainSubstring, "BeforeStop-Invoke-Err")
@@ -241,10 +234,10 @@ func TestInvokeBeforeStopHook(t *testing.T) {
 	})
 
 	PatchConvey("TestInvokeBeforeStopHook-Timeout", t, func() {
-		beforeStopHooks = beforeStopHooks[:0]
+		resetHooks()
 		defaultStopTimeout = 1 * time.Second
 		defer func() {
-			beforeStopHooks = beforeStopHooks[:0]
+			resetHooks()
 			defaultStopTimeout = 30 * time.Second
 		}()
 		f := func() error {
@@ -253,9 +246,31 @@ func TestInvokeBeforeStopHook(t *testing.T) {
 		}
 		BeforeStop(f)
 		err := InvokeBeforeStopHook()
-		So(err.Error(), ShouldEqual, "XOne invoke before stop hook failed, due to timeout")
+		So(err.Error(), ShouldContainSubstring, "XOne invoke before stop hook failed")
+		So(err.Error(), ShouldContainSubstring, "timeout")
 	})
 }
+
+func TestSetStopTimeout(t *testing.T) {
+	PatchConvey("TestSetStopTimeout", t, func() {
+		originalTimeout := defaultStopTimeout
+		defer func() {
+			defaultStopTimeout = originalTimeout
+		}()
+
+		// 测试设置有效超时时间
+		SetStopTimeout(5 * time.Second)
+		So(defaultStopTimeout, ShouldEqual, 5*time.Second)
+
+		// 测试设置无效超时时间（<=0 应该被忽略）
+		SetStopTimeout(0)
+		So(defaultStopTimeout, ShouldEqual, 5*time.Second)
+
+		SetStopTimeout(-1 * time.Second)
+		So(defaultStopTimeout, ShouldEqual, 5*time.Second)
+	})
+}
+
 func IntFunc1() error {
 	return nil
 }

@@ -205,6 +205,13 @@ XGorm:
 
 ## 更新日志
 
+- **v1.0.1** (2026-01-24) - Bug 修复与测试增强
+  - xtrace: 修复 sync.Once 重置并发问题，改用 atomic.Bool
+  - xconfig: 添加正则匹配结果边界检查，防止 panic
+  - xgorm: 使用 errors.Join() 合并多个关闭错误
+  - xutil: 修正 strToDuration 错误日志描述
+  - 测试覆盖率大幅提升（xhttp 98%, xconfig 92%, xlog 85%, xtrace 82%）
+
 - **v1.0.0** (2026-01-24) - 正式版本发布
   - 全模块代码优化：性能提升、并发安全、代码重构
   - xhook: 延迟排序、新增 SetStopTimeout API

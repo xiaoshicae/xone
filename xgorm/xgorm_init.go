@@ -2,6 +2,7 @@ package xgorm
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -88,7 +89,7 @@ func closeXGorm() error {
 
 	// 用于去重，避免同一个 *gorm.DB 被关闭多次（multi模式下default指向第一个named client）
 	closed := make(map[*gorm.DB]struct{})
-	var lastErr error
+	var errs []error
 
 	for _, client := range clientMap {
 		if _, ok := closed[client]; ok {
@@ -98,14 +99,14 @@ func closeXGorm() error {
 
 		db, err := client.DB()
 		if err != nil {
-			lastErr = err
+			errs = append(errs, fmt.Errorf("get underlying db failed: %w", err))
 			continue
 		}
 		if err := db.Close(); err != nil {
-			lastErr = err
+			errs = append(errs, fmt.Errorf("close db failed: %w", err))
 		}
 	}
-	return lastErr
+	return errors.Join(errs...)
 }
 
 func get(name ...string) *gorm.DB {

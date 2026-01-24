@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/xiaoshicae/xone/xconfig"
@@ -22,7 +23,7 @@ var defaultShutdownTimeout = 5 * time.Second
 
 var (
 	xTraceShutdownFunc func() error
-	shutdownOnce       sync.Once // 确保 shutdown 只执行一次
+	shutdownExecuted   atomic.Bool // 确保 shutdown 只执行一次
 	shutdownMu         sync.Mutex
 )
 
@@ -104,8 +105,8 @@ func initXTraceByConfig(c *Config, serviceName, serviceVersion string) error {
 		defer cancel()
 		return tp.Shutdown(ctx)
 	}
-	// 重置 shutdownOnce，允许新的 shutdown
-	shutdownOnce = sync.Once{}
+	// 重置 shutdown 标志，允许新的 shutdown
+	shutdownExecuted.Store(false)
 	shutdownMu.Unlock()
 
 	return nil
@@ -121,16 +122,18 @@ func getConfig() (*Config, error) {
 }
 
 func shutdownXTrace() error {
-	var err error
-	shutdownOnce.Do(func() {
-		shutdownMu.Lock()
-		fn := xTraceShutdownFunc
-		xTraceShutdownFunc = nil
-		shutdownMu.Unlock()
+	// 使用 CAS 确保只执行一次
+	if !shutdownExecuted.CompareAndSwap(false, true) {
+		return nil
+	}
 
-		if fn != nil {
-			err = fn()
-		}
-	})
-	return err
+	shutdownMu.Lock()
+	fn := xTraceShutdownFunc
+	xTraceShutdownFunc = nil
+	shutdownMu.Unlock()
+
+	if fn != nil {
+		return fn()
+	}
+	return nil
 }

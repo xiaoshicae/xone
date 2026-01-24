@@ -186,8 +186,15 @@ func expandEnvPlaceholders(vp *viper.Viper) {
 
 		expanded := envPlaceholderRegex.ReplaceAllStringFunc(val, func(match string) string {
 			matches := envPlaceholderRegex.FindStringSubmatch(match)
+			// 边界检查：确保正则匹配成功且有足够的捕获组
+			if len(matches) < 2 {
+				return match // 匹配失败，返回原值
+			}
 			envKey := matches[1]
-			defaultVal := matches[2]
+			defaultVal := ""
+			if len(matches) >= 3 {
+				defaultVal = matches[2]
+			}
 
 			if envVal := os.Getenv(envKey); envVal != "" {
 				return envVal

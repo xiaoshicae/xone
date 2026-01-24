@@ -17,6 +17,14 @@ import (
 
 const (
 	defaultWaitStopDuration = 30 * time.Second
+
+	// SwaggerInfoFuncKey 用于在 gin.Engine.FuncMap 中注入 Swagger 信息获取函数
+	// 函数签名: func() *swag.Spec
+	SwaggerInfoFuncKey = "__swagger_info__func__"
+
+	// PrintBannerFuncKey 用于在 gin.Engine.FuncMap 中注入启动 Banner 打印函数
+	// 函数签名: func()
+	PrintBannerFuncKey = "__print_banner__func__"
 )
 
 type ginServer struct {
@@ -58,7 +66,7 @@ func (s *ginServer) Stop() error {
 }
 
 func invokeEngineInjectFunc(engine *gin.Engine) {
-	if f := engine.FuncMap["__swagger_info__func__"]; f != nil {
+	if f := engine.FuncMap[SwaggerInfoFuncKey]; f != nil {
 		if ff, ok := f.(func() *swag.Spec); ok {
 			if swaggerInfo := ff(); swaggerInfo != nil {
 				setGinSwaggerInfo(swaggerInfo)
@@ -66,7 +74,7 @@ func invokeEngineInjectFunc(engine *gin.Engine) {
 		}
 	}
 
-	if f := engine.FuncMap["__print_banner__func__"]; f != nil {
+	if f := engine.FuncMap[PrintBannerFuncKey]; f != nil {
 		if ff, ok := f.(func()); ok {
 			ff()
 		}

@@ -2,6 +2,7 @@ package xtrace
 
 import (
 	"context"
+	"errors"
 	"log"
 	"testing"
 	"time"
@@ -94,6 +95,57 @@ func TestGetTracer(t *testing.T) {
 	PatchConvey("TestGetTracer", t, func() {
 		tracer := GetTracer("test-tracer")
 		So(tracer, ShouldNotBeNil)
+	})
+}
+
+func TestGetConfigXTrace(t *testing.T) {
+	PatchConvey("TestGetConfig-UnmarshalFail", t, func() {
+		Mock(xconfig.UnmarshalConfig).Return(errors.New("unmarshal failed")).Build()
+
+		config, err := getConfig()
+		So(err, ShouldNotBeNil)
+		So(config, ShouldBeNil)
+	})
+
+	PatchConvey("TestGetConfig-Success", t, func() {
+		Mock(xconfig.UnmarshalConfig).Return(nil).Build()
+
+		config, err := getConfig()
+		So(err, ShouldBeNil)
+		So(config, ShouldNotBeNil)
+		So(*config.Enable, ShouldBeTrue) // 默认值
+	})
+}
+
+func TestInitXTrace(t *testing.T) {
+	PatchConvey("TestInitXTrace-GetConfigFail", t, func() {
+		Mock(getConfig).Return(nil, errors.New("config failed")).Build()
+
+		err := initXTrace()
+		So(err, ShouldNotBeNil)
+		So(err.Error(), ShouldContainSubstring, "getConfig failed")
+	})
+
+	PatchConvey("TestInitXTrace-Disabled", t, func() {
+		enableFalse := false
+		Mock(getConfig).Return(&Config{Enable: &enableFalse}, nil).Build()
+
+		err := initXTrace()
+		So(err, ShouldBeNil)
+	})
+}
+
+func TestInitXTraceByConfig(t *testing.T) {
+	PatchConvey("TestInitXTraceByConfig-Success", t, func() {
+		config := &Config{Console: false}
+		err := initXTraceByConfig(config, "test-service", "v1.0.0")
+		So(err, ShouldBeNil)
+	})
+
+	PatchConvey("TestInitXTraceByConfig-WithConsole", t, func() {
+		config := &Config{Console: true}
+		err := initXTraceByConfig(config, "test-service", "v1.0.0")
+		So(err, ShouldBeNil)
 	})
 }
 

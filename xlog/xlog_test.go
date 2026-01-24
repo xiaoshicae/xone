@@ -2,13 +2,17 @@ package xlog
 
 import (
 	"context"
+	"errors"
+	"os"
 	"runtime"
 	"testing"
 	"time"
 
 	"github.com/xiaoshicae/xone/xconfig"
+	"github.com/xiaoshicae/xone/xutil"
 
 	"github.com/bytedance/mockey"
+	rotatelogs "github.com/lestrrat-go/file-rotatelogs"
 	"github.com/sirupsen/logrus"
 	c "github.com/smartystreets/goconvey/convey"
 )
@@ -526,5 +530,55 @@ func TestTimeFormatter(t *testing.T) {
 			c.So(err, c.ShouldBeNil)
 			c.So(len(bytes), c.ShouldBeGreaterThan, 0)
 		})
+	})
+}
+
+func TestInitXLogByConfig(t *testing.T) {
+	mockey.PatchConvey("TestInitXLogByConfig-DirNotExist-MkdirFail", t, func() {
+		mockey.Mock(xutil.DirExist).Return(false).Build()
+		mockey.Mock(os.MkdirAll).Return(errors.New("mkdir failed")).Build()
+
+		config := &Config{
+			Path: "/test/path",
+		}
+		err := initXLogByConfig(config)
+		c.So(err, c.ShouldNotBeNil)
+		c.So(err.Error(), c.ShouldContainSubstring, "os.MkdirAll failed")
+	})
+
+	mockey.PatchConvey("TestInitXLogByConfig-RotatelogsFail", t, func() {
+		mockey.Mock(xutil.DirExist).Return(true).Build()
+		mockey.Mock(rotatelogs.New).Return(nil, errors.New("rotatelogs failed")).Build()
+
+		config := &Config{
+			Path:       "/test/path",
+			Name:       "test",
+			MaxAge:     "7d",
+			RotateTime: "1d",
+		}
+		err := initXLogByConfig(config)
+		c.So(err, c.ShouldNotBeNil)
+		c.So(err.Error(), c.ShouldContainSubstring, "rotatelogs.New failed")
+	})
+}
+
+func TestGetConfig(t *testing.T) {
+	mockey.PatchConvey("TestGetConfig-UnmarshalFail", t, func() {
+		mockey.Mock(xconfig.UnmarshalConfig).Return(errors.New("unmarshal failed")).Build()
+
+		config, err := getConfig()
+		c.So(err, c.ShouldNotBeNil)
+		c.So(config, c.ShouldBeNil)
+	})
+
+	mockey.PatchConvey("TestGetConfig-Success", t, func() {
+		mockey.Mock(xconfig.UnmarshalConfig).Return(nil).Build()
+
+		config, err := getConfig()
+		c.So(err, c.ShouldBeNil)
+		c.So(config, c.ShouldNotBeNil)
+		// 验证默认值已合并
+		c.So(config.Level, c.ShouldEqual, "info")
+		c.So(config.Name, c.ShouldEqual, "app")
 	})
 }

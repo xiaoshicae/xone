@@ -634,3 +634,124 @@ func TestUnmarshalConfig(t *testing.T) {
 		})
 	})
 }
+
+func TestDetectConfigLocation(t *testing.T) {
+	PatchConvey("TestDetectConfigLocation-FromArg", t, func() {
+		Mock(getLocationFromArg).Return("/from/arg.yml").Build()
+		location := detectConfigLocation()
+		So(location, ShouldEqual, "/from/arg.yml")
+	})
+
+	PatchConvey("TestDetectConfigLocation-FromENV", t, func() {
+		Mock(getLocationFromArg).Return("").Build()
+		Mock(getLocationFromENV).Return("/from/env.yml").Build()
+		location := detectConfigLocation()
+		So(location, ShouldEqual, "/from/env.yml")
+	})
+
+	PatchConvey("TestDetectConfigLocation-FromCurrentDir", t, func() {
+		Mock(getLocationFromArg).Return("").Build()
+		Mock(getLocationFromENV).Return("").Build()
+		Mock(getLocationFromCurrentDir).Return("./application.yml").Build()
+		location := detectConfigLocation()
+		So(location, ShouldEqual, "./application.yml")
+	})
+}
+
+func TestDetectProfilesActive(t *testing.T) {
+	PatchConvey("TestDetectProfilesActive-FromArg", t, func() {
+		Mock(getProfilesActiveFromArg).Return("dev").Build()
+		profile := detectProfilesActive(nil)
+		So(profile, ShouldEqual, "dev")
+	})
+
+	PatchConvey("TestDetectProfilesActive-FromENV", t, func() {
+		Mock(getProfilesActiveFromArg).Return("").Build()
+		Mock(getProfilesActiveFromENV).Return("prod").Build()
+		profile := detectProfilesActive(nil)
+		So(profile, ShouldEqual, "prod")
+	})
+
+	PatchConvey("TestDetectProfilesActive-FromViperConfig", t, func() {
+		Mock(getProfilesActiveFromArg).Return("").Build()
+		Mock(getProfilesActiveFromENV).Return("").Build()
+
+		vp := viper.New()
+		vp.Set("Server.profiles.active", "test")
+		profile := detectProfilesActive(vp)
+		So(profile, ShouldEqual, "test")
+	})
+}
+
+func TestSetNestedValue(t *testing.T) {
+	PatchConvey("TestSetNestedValue", t, func() {
+		PatchConvey("TestSetNestedValue-SimpleKey", func() {
+			m := make(map[string]interface{})
+			setNestedValue(m, "key", "value")
+			So(m["key"], ShouldEqual, "value")
+		})
+
+		PatchConvey("TestSetNestedValue-NestedKey", func() {
+			m := make(map[string]interface{})
+			setNestedValue(m, "a.b.c", "value")
+			a := m["a"].(map[string]interface{})
+			b := a["b"].(map[string]interface{})
+			So(b["c"], ShouldEqual, "value")
+		})
+
+		PatchConvey("TestSetNestedValue-ExistingNested", func() {
+			m := map[string]interface{}{
+				"a": map[string]interface{}{
+					"existing": "value",
+				},
+			}
+			setNestedValue(m, "a.new", "newvalue")
+			a := m["a"].(map[string]interface{})
+			So(a["existing"], ShouldEqual, "value")
+			So(a["new"], ShouldEqual, "newvalue")
+		})
+	})
+}
+
+func TestExpandEnvPlaceholders(t *testing.T) {
+	PatchConvey("TestExpandEnvPlaceholders", t, func() {
+		PatchConvey("TestExpandEnvPlaceholders-WithEnvVar", func() {
+			os.Setenv("TEST_VAR", "test_value")
+			defer os.Unsetenv("TEST_VAR")
+
+			vp := viper.New()
+			vp.Set("key", "${TEST_VAR}")
+			expandEnvPlaceholders(vp)
+			So(vp.GetString("key"), ShouldEqual, "test_value")
+		})
+
+		PatchConvey("TestExpandEnvPlaceholders-WithDefault", func() {
+			vp := viper.New()
+			vp.Set("key", "${NONEXISTENT_VAR:-default_value}")
+			expandEnvPlaceholders(vp)
+			So(vp.GetString("key"), ShouldEqual, "default_value")
+		})
+
+		PatchConvey("TestExpandEnvPlaceholders-NoPlaceholder", func() {
+			vp := viper.New()
+			vp.Set("key", "plain_value")
+			expandEnvPlaceholders(vp)
+			So(vp.GetString("key"), ShouldEqual, "plain_value")
+		})
+
+		PatchConvey("TestExpandEnvPlaceholders-EmptyValue", func() {
+			vp := viper.New()
+			vp.Set("key", "")
+			expandEnvPlaceholders(vp)
+			So(vp.GetString("key"), ShouldEqual, "")
+		})
+	})
+}
+
+func TestLoadLocalConfig(t *testing.T) {
+	PatchConvey("TestLoadLocalConfig-FileNotFound", t, func() {
+		vp, err := loadLocalConfig("/nonexistent/path.yml")
+		So(err, ShouldNotBeNil)
+		So(vp, ShouldBeNil)
+	})
+}

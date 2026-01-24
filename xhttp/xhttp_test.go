@@ -2,8 +2,12 @@ package xhttp
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"testing"
+
+	"github.com/xiaoshicae/xone/xconfig"
+	"github.com/xiaoshicae/xone/xtrace"
 
 	"github.com/bytedance/mockey"
 	"github.com/go-resty/resty/v2"
@@ -96,5 +100,78 @@ func TestSetRawHttpClient(t *testing.T) {
 		c.So(rawHttpClient, c.ShouldEqual, customClient)
 		// Clean up
 		rawHttpClient = nil
+	})
+}
+
+func TestGetConfigXHttp(t *testing.T) {
+	mockey.PatchConvey("TestGetConfig-UnmarshalFail", t, func() {
+		mockey.Mock(xconfig.UnmarshalConfig).Return(errors.New("unmarshal failed")).Build()
+
+		config, err := getConfig()
+		c.So(err, c.ShouldNotBeNil)
+		c.So(config, c.ShouldBeNil)
+	})
+
+	mockey.PatchConvey("TestGetConfig-Success", t, func() {
+		mockey.Mock(xconfig.UnmarshalConfig).Return(nil).Build()
+
+		config, err := getConfig()
+		c.So(err, c.ShouldBeNil)
+		c.So(config, c.ShouldNotBeNil)
+		c.So(config.Timeout, c.ShouldEqual, "60s") // 默认值
+	})
+}
+
+func TestInitHttpClient(t *testing.T) {
+	mockey.PatchConvey("TestInitHttpClient-GetConfigFail", t, func() {
+		mockey.Mock(getConfig).Return(nil, errors.New("config failed")).Build()
+
+		err := initHttpClient()
+		c.So(err, c.ShouldNotBeNil)
+		c.So(err.Error(), c.ShouldContainSubstring, "getConfig failed")
+	})
+
+	mockey.PatchConvey("TestInitHttpClient-Success-NoTrace", t, func() {
+		mockey.Mock(getConfig).Return(&Config{
+			Timeout:             "60s",
+			MaxIdleConns:        100,
+			MaxIdleConnsPerHost: 10,
+			IdleConnTimeout:     "90s",
+			RetryCount:          0,
+		}, nil).Build()
+		mockey.Mock(xtrace.EnableTrace).Return(false).Build()
+
+		err := initHttpClient()
+		c.So(err, c.ShouldBeNil)
+	})
+
+	mockey.PatchConvey("TestInitHttpClient-Success-WithTrace", t, func() {
+		mockey.Mock(getConfig).Return(&Config{
+			Timeout:             "60s",
+			MaxIdleConns:        100,
+			MaxIdleConnsPerHost: 10,
+			IdleConnTimeout:     "90s",
+			RetryCount:          0,
+		}, nil).Build()
+		mockey.Mock(xtrace.EnableTrace).Return(true).Build()
+
+		err := initHttpClient()
+		c.So(err, c.ShouldBeNil)
+	})
+
+	mockey.PatchConvey("TestInitHttpClient-Success-WithRetry", t, func() {
+		mockey.Mock(getConfig).Return(&Config{
+			Timeout:             "60s",
+			MaxIdleConns:        100,
+			MaxIdleConnsPerHost: 10,
+			IdleConnTimeout:     "90s",
+			RetryCount:          3,
+			RetryWaitTime:       "100ms",
+			RetryMaxWaitTime:    "2s",
+		}, nil).Build()
+		mockey.Mock(xtrace.EnableTrace).Return(false).Build()
+
+		err := initHttpClient()
+		c.So(err, c.ShouldBeNil)
 	})
 }

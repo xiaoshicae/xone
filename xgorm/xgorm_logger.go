@@ -8,16 +8,24 @@ import (
 	"time"
 
 	"github.com/xiaoshicae/xone/xlog"
+	"github.com/xiaoshicae/xone/xutil"
 
-	"github.com/spf13/cast"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
 
+// logLevelMapping 日志级别映射
+var logLevelMapping = map[string]logger.LogLevel{
+	"info":    logger.Info,
+	"warn":    logger.Warn,
+	"warning": logger.Warn,
+	"error":   logger.Error,
+}
+
 func newGormLogger(c *Config) *gormLogger {
 	return &gormLogger{
 		logLevel:                  resolveLoglevel(xlog.XLogLevel()),
-		slowThreshold:             cast.ToDuration(c.SlowThreshold),
+		slowThreshold:             xutil.ToDuration(c.SlowThreshold),
 		ignoreRecordNotFoundError: c.IgnoreRecordNotFoundErrorLog,
 	}
 }
@@ -52,39 +60,27 @@ func (l *gormLogger) Trace(ctx context.Context, begin time.Time, fc func() (sql 
 	switch {
 	case err != nil && l.logLevel >= logger.Error && (!errors.Is(err, gorm.ErrRecordNotFound) || !l.ignoreRecordNotFoundError):
 		sql, rows := fc()
-		if rows == -1 {
-			xlog.Error(ctx, "latency: %s, rowsAffected: %v, sql: %s, err: %v", costMS, "-", sql, err)
-		} else {
-			xlog.Error(ctx, "latency: %s, rowsAffected: %v, sql: %s, err: %v", costMS, rows, sql, err)
-		}
+		xlog.Error(ctx, "latency: %s, rowsAffected: %v, sql: %s, err: %v", costMS, formatRows(rows), sql, err)
 	case cost > l.slowThreshold && l.slowThreshold != 0 && l.logLevel >= logger.Warn:
 		sql, rows := fc()
-		slowLog := fmt.Sprintf("SLOW SQL >= %v", l.slowThreshold)
-		if rows == -1 {
-			xlog.Warn(ctx, "%s, latency: %s, rowsAffected: %v, sql: %s", slowLog, costMS, "-", sql)
-		} else {
-			xlog.Warn(ctx, "%s, latency: %s, rowsAffected: %v, sql: %s", slowLog, costMS, rows, sql)
-		}
+		xlog.Warn(ctx, "SLOW SQL >= %v, latency: %s, rowsAffected: %v, sql: %s", l.slowThreshold, costMS, formatRows(rows), sql)
 	case l.logLevel == logger.Info:
 		sql, rows := fc()
-		if rows == -1 {
-			xlog.Info(ctx, "latency: %s, rowsAffected: %v, sql: %s", costMS, "-", sql)
-		} else {
-			xlog.Info(ctx, "latency: %s, rowsAffected: %v, sql: %s", costMS, rows, sql)
-		}
+		xlog.Info(ctx, "latency: %s, rowsAffected: %v, sql: %s", costMS, formatRows(rows), sql)
 	}
 }
 
-func resolveLoglevel(l string) logger.LogLevel {
-	l = strings.ToLower(l)
-	switch l {
-	case "info":
-		return logger.Info
-	case "warn", "warning":
-		return logger.Warn
-	case "error":
-		return logger.Error
-	default:
-		return logger.Info
+// formatRows 格式化行数显示，-1 表示未知
+func formatRows(rows int64) interface{} {
+	if rows == -1 {
+		return "-"
 	}
+	return rows
+}
+
+func resolveLoglevel(l string) logger.LogLevel {
+	if level, ok := logLevelMapping[strings.ToLower(l)]; ok {
+		return level
+	}
+	return logger.Info
 }

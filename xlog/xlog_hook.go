@@ -15,10 +15,22 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+// 常量统一定义
+const (
+	// Context key
+	timeFormatedCtxKey = "__time_formated__"
+
+	// 控制台颜色
+	colorRed    = 31
+	colorYellow = 33
+	colorBlue   = 36
+	colorGray   = 37
+)
+
 type xLogHook struct {
 	IP                 string
 	ServerName         string
-	Pid                int
+	PidStr             string // 缓存 Pid 字符串，避免重复转换
 	SuffixToIgnore     []string
 	Console            bool
 	ConsoleFormatIsRaw bool
@@ -35,13 +47,10 @@ func (m *xLogHook) Fire(entry *logrus.Entry) error {
 	}
 
 	entry.Data["ip"] = m.IP
-	entry.Data["pid"] = strconv.Itoa(m.Pid)
+	entry.Data["pid"] = m.PidStr
 
 	// 设置文件名和行号
-	caller := entry.Caller
-	if caller == nil {
-		caller = m.getCaller(0)
-	}
+	caller := m.ensureCaller(entry)
 	entry.Data["filename"] = path.Base(caller.File)
 	entry.Data["lineid"] = strconv.Itoa(caller.Line)
 
@@ -68,11 +77,8 @@ func (m *xLogHook) ConsolePrint(entry *logrus.Entry) error {
 		return err
 	}
 
-	// 设置文件名和行号
-	caller := entry.Caller
-	if caller == nil {
-		caller = m.getCaller(0)
-	}
+	// 获取文件名和行号
+	caller := m.ensureCaller(entry)
 	_, fileName := callerPretty(caller)
 
 	levelColor := getLogConsoleLogColor(entry.Level)
@@ -81,7 +87,9 @@ func (m *xLogHook) ConsolePrint(entry *logrus.Entry) error {
 	traceId := entry.Data["traceid"]
 	panicStack := entry.Data["panic_stack"]
 
-	msg := make([]byte, 0)
+	// 预分配容量
+	msg := make([]byte, 0, len(line)+128)
+
 	// 打印原始json格式
 	if m.ConsoleFormatIsRaw {
 		prefix := fmt.Sprintf("\x1b[%dm%s\x1b[0m[%s] ", levelColor, levelText, logTimeText)
@@ -89,20 +97,26 @@ func (m *xLogHook) ConsolePrint(entry *logrus.Entry) error {
 	} else {
 		prefix := fmt.Sprintf("\x1b[%dm%s\x1b[0m[%s] \x1b[34m%s\x1b[0m %s ", levelColor, levelText, logTimeText, fileName, traceId)
 		msg = append([]byte(prefix), []byte(entry.Message)...)
-		msg = append(msg, []byte("\n")...)
+		msg = append(msg, '\n')
 		if panicStack != nil {
 			msg = append(msg, []byte(fmt.Sprintf("%v", panicStack))...)
 		}
 	}
 
-	if _, err = m.Writer.Write(msg); err != nil {
-		return err
+	_, err = m.Writer.Write(msg)
+	return err
+}
+
+// ensureCaller 确保获取到调用者信息，避免重复代码
+func (m *xLogHook) ensureCaller(entry *logrus.Entry) *runtime.Frame {
+	if entry.Caller != nil {
+		return entry.Caller
 	}
-	return nil
+	return m.getCaller(0)
 }
 
 // getCaller retrieves the name of the first non-logrus calling function
-func (m *xLogHook) getCaller(callDepth int) (frame *runtime.Frame) {
+func (m *xLogHook) getCaller(callDepth int) *runtime.Frame {
 	return xutil.GetLogCaller(callDepth, m.SuffixToIgnore)
 }
 
@@ -110,10 +124,6 @@ type timeFormatter struct {
 	logrus.Formatter
 	Location *time.Location
 }
-
-const (
-	timeFormatedCtxKey = "__time_formated__"
-)
 
 // Format 时间format
 // 由于可能会存在多个writer，每个write都会调用该Format，可能会导致重复处理，最终导致时间正确，因此需要修正
@@ -140,28 +150,17 @@ func (t timeFormatter) Format(e *logrus.Entry) ([]byte, error) {
 	return t.Formatter.Format(e)
 }
 
-const (
-	red    = 31
-	yellow = 33
-	blue   = 36
-	gray   = 37
-)
-
 func getLogConsoleLogColor(l logrus.Level) int {
-	var levelColor int
 	switch l {
 	case logrus.DebugLevel, logrus.TraceLevel:
-		levelColor = gray
+		return colorGray
 	case logrus.WarnLevel:
-		levelColor = yellow
+		return colorYellow
 	case logrus.ErrorLevel, logrus.FatalLevel, logrus.PanicLevel:
-		levelColor = red
-	case logrus.InfoLevel:
-		levelColor = blue
+		return colorRed
 	default:
-		levelColor = blue
+		return colorBlue
 	}
-	return levelColor
 }
 
 func callerPretty(f *runtime.Frame) (string, string) {
@@ -180,13 +179,3 @@ func getXLogContainerFromCtx(ctx context.Context) map[string]interface{} {
 	}
 	return kvContainer
 }
-
-//前景色   背景色
-//30  	40	  黑色
-//31  	41	  红色
-//32  	42	  绿色
-//33  	43    黄色
-//34  	44    蓝色
-//35  	45 	  紫色
-//36  	46 	  青色
-//37  	47	  白色

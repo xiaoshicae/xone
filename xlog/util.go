@@ -28,13 +28,17 @@ func Debug(ctx context.Context, msg string, args ...interface{}) {
 }
 
 func RawLog(ctx context.Context, level logrus.Level, msg string, args ...interface{}) {
-	logArgs := make([]interface{}, 0)
-
-	opts := make([]Option, 0)
+	// 预估容量，减少内存分配
+	estimatedCap := len(args) / 2
+	if estimatedCap < 1 {
+		estimatedCap = 1
+	}
+	logArgs := make([]interface{}, 0, estimatedCap)
+	opts := make([]Option, 0, estimatedCap)
 
 	for _, arg := range args {
-		if _, ok := arg.(Option); ok {
-			opts = append(opts, arg.(Option))
+		if opt, ok := arg.(Option); ok {
+			opts = append(opts, opt)
 		} else {
 			logArgs = append(logArgs, arg)
 		}

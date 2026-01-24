@@ -3,6 +3,7 @@ package xtrace
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/xiaoshicae/xone/xconfig"
@@ -10,7 +11,6 @@ import (
 	"github.com/xiaoshicae/xone/xutil"
 
 	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/stdout/stdouttrace"
 	"go.opentelemetry.io/otel/sdk/resource"
 	"go.opentelemetry.io/otel/sdk/trace"
@@ -18,15 +18,29 @@ import (
 	oteltrace "go.opentelemetry.io/otel/trace"
 )
 
-const defaultShutdownTimeout = 5 * time.Second
+var defaultShutdownTimeout = 5 * time.Second
 
 var (
 	xTraceShutdownFunc func() error
+	shutdownOnce       sync.Once // 确保 shutdown 只执行一次
+	shutdownMu         sync.Mutex
 )
 
 func init() {
 	xhook.BeforeStart(initXTrace)
 	xhook.BeforeStop(shutdownXTrace)
+}
+
+// SetShutdownTimeout 设置 shutdown 超时时间
+func SetShutdownTimeout(timeout time.Duration) {
+	if timeout > 0 {
+		defaultShutdownTimeout = timeout
+	}
+}
+
+// GetTracer 获取 Tracer，方便用户创建自定义 Span
+func GetTracer(name string, opts ...oteltrace.TracerOption) oteltrace.Tracer {
+	return otel.Tracer(name, opts...)
 }
 
 func initXTrace() error {
@@ -50,6 +64,7 @@ func initXTrace() error {
 }
 
 func initXTraceByConfig(c *Config, serviceName, serviceVersion string) error {
+	// 只使用 semconv 标准属性，避免重复
 	r, err := resource.New(
 		context.Background(),
 		resource.WithFromEnv(),
@@ -59,8 +74,6 @@ func initXTraceByConfig(c *Config, serviceName, serviceVersion string) error {
 		resource.WithAttributes(
 			semconv.ServiceNameKey.String(serviceName),
 			semconv.ServiceVersionKey.String(serviceVersion),
-			attribute.String("serviceName", serviceName),
-			attribute.String("serviceVersion", serviceVersion),
 		),
 	)
 	if err != nil {
@@ -71,22 +84,29 @@ func initXTraceByConfig(c *Config, serviceName, serviceVersion string) error {
 		trace.WithSampler(trace.AlwaysSample()),
 		trace.WithResource(r),
 	}
+
 	if c.Console {
 		exporter, err := stdouttrace.New(stdouttrace.WithPrettyPrint())
 		if err != nil {
 			return fmt.Errorf("XOne initXTraceByConfig init exporter failed, err=[%v]", err)
 		}
-		tpOpts = append(tpOpts, trace.WithBatcher(exporter))
+		// 使用 SimpleSpanProcessor 确保每个 Span 都被导出，避免丢失
+		tpOpts = append(tpOpts, trace.WithSpanProcessor(trace.NewSimpleSpanProcessor(exporter)))
 	}
 
 	tp := trace.NewTracerProvider(tpOpts...)
 	otel.SetTracerProvider(tp)
 
+	// 使用互斥锁保护 shutdown 函数的设置
+	shutdownMu.Lock()
 	xTraceShutdownFunc = func() error {
 		ctx, cancel := context.WithTimeout(context.Background(), defaultShutdownTimeout)
 		defer cancel()
 		return tp.Shutdown(ctx)
 	}
+	// 重置 shutdownOnce，允许新的 shutdown
+	shutdownOnce = sync.Once{}
+	shutdownMu.Unlock()
 
 	return nil
 }
@@ -101,10 +121,16 @@ func getConfig() (*Config, error) {
 }
 
 func shutdownXTrace() error {
-	fn := xTraceShutdownFunc
-	xTraceShutdownFunc = nil
-	if fn == nil {
-		return nil
-	}
-	return fn()
+	var err error
+	shutdownOnce.Do(func() {
+		shutdownMu.Lock()
+		fn := xTraceShutdownFunc
+		xTraceShutdownFunc = nil
+		shutdownMu.Unlock()
+
+		if fn != nil {
+			err = fn()
+		}
+	})
+	return err
 }

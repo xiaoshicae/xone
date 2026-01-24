@@ -316,7 +316,7 @@ func TestGetMultiConfig(t *testing.T) {
 func TestGetDriver(t *testing.T) {
 	mockey.PatchConvey("TestGetDriver-Nil", t, func() {
 		config := &Config{}
-		c.So(config.GetDriver(), c.ShouldEqual, DriverMySQL)
+		c.So(config.GetDriver(), c.ShouldEqual, DriverPostgres)
 	})
 
 	mockey.PatchConvey("TestGetDriver-MySQL", t, func() {

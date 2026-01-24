@@ -101,7 +101,7 @@ func configMergeDefault(c *Config) *Config {
 // GetDriver 获取驱动类型
 func (c *Config) GetDriver() Driver {
 	if c.Driver == "" {
-		return DriverMySQL
+		return DriverPostgres
 	}
 	return Driver(c.Driver)
 }

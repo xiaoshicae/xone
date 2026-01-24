@@ -3,6 +3,7 @@ package xgorm
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/xiaoshicae/xone/xconfig"
@@ -11,7 +12,6 @@ import (
 	"github.com/xiaoshicae/xone/xutil"
 
 	stdMysql "github.com/go-sql-driver/mysql"
-	"github.com/spf13/cast"
 	"gorm.io/driver/mysql"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -20,7 +20,10 @@ import (
 
 const defaultClientName = "__default_client__"
 
-var clientMap = make(map[string]*gorm.DB)
+var (
+	clientMap = make(map[string]*gorm.DB)
+	clientMu  sync.RWMutex
+)
 
 func init() {
 	xhook.BeforeStart(initXGorm)
@@ -80,6 +83,9 @@ func initMulti() error {
 }
 
 func closeXGorm() error {
+	clientMu.Lock()
+	defer clientMu.Unlock()
+
 	// 用于去重，避免同一个 *gorm.DB 被关闭多次（multi模式下default指向第一个named client）
 	closed := make(map[*gorm.DB]struct{})
 	var lastErr error
@@ -108,15 +114,20 @@ func get(name ...string) *gorm.DB {
 		n = name[0]
 	}
 
-	client := clientMap[n]
-	return client
+	clientMu.RLock()
+	defer clientMu.RUnlock()
+	return clientMap[n]
 }
 
 func set(name string, client *gorm.DB) {
+	clientMu.Lock()
+	defer clientMu.Unlock()
 	clientMap[name] = client
 }
 
 func setDefault(client *gorm.DB) {
+	clientMu.Lock()
+	defer clientMu.Unlock()
 	clientMap[defaultClientName] = client
 }
 
@@ -143,8 +154,8 @@ func newClient(c *Config) (*gorm.DB, error) {
 	// 连接池参数配置
 	db.SetMaxOpenConns(c.MaxOpenConns)
 	db.SetMaxIdleConns(c.MaxIdleConns)
-	db.SetConnMaxLifetime(cast.ToDuration(c.MaxLifetime))
-	db.SetConnMaxIdleTime(cast.ToDuration(c.MaxIdleTime))
+	db.SetConnMaxLifetime(xutil.ToDuration(c.MaxLifetime))
+	db.SetConnMaxIdleTime(xutil.ToDuration(c.MaxIdleTime))
 
 	err = xutil.Retry(func() error { return db.PingContext(context.Background()) }, 3, time.Second)
 	if err != nil {
@@ -197,15 +208,15 @@ func resolveMySQLDSN(c *Config) (string, error) {
 	}
 
 	if mysqlConfig.ReadTimeout == 0 && c.ReadTimeout != "" {
-		mysqlConfig.ReadTimeout = cast.ToDuration(c.ReadTimeout)
+		mysqlConfig.ReadTimeout = xutil.ToDuration(c.ReadTimeout)
 	}
 
 	if mysqlConfig.WriteTimeout == 0 && c.WriteTimeout != "" {
-		mysqlConfig.WriteTimeout = cast.ToDuration(c.WriteTimeout)
+		mysqlConfig.WriteTimeout = xutil.ToDuration(c.WriteTimeout)
 	}
 
 	if mysqlConfig.Timeout == 0 && c.DialTimeout != "" {
-		mysqlConfig.Timeout = cast.ToDuration(c.DialTimeout)
+		mysqlConfig.Timeout = xutil.ToDuration(c.DialTimeout)
 	}
 
 	return mysqlConfig.FormatDSN(), nil

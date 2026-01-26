@@ -24,20 +24,26 @@ func initHttpClient() error {
 	xutil.InfoIfEnableDebug("XOne initHttpClient got config: %s", xutil.ToJsonString(c))
 
 	// 基于 DefaultTransport 克隆，保留 TLS、HTTP/2、Dial 等默认配置
-	transport := http.DefaultTransport.(*http.Transport).Clone()
-	transport.MaxIdleConns = c.MaxIdleConns
-	transport.MaxIdleConnsPerHost = c.MaxIdleConnsPerHost
-	transport.IdleConnTimeout = xutil.ToDuration(c.IdleConnTimeout)
+	baseTransport := http.DefaultTransport
+	if transport, ok := baseTransport.(*http.Transport); ok {
+		transport = transport.Clone()
+		transport.MaxIdleConns = c.MaxIdleConns
+		transport.MaxIdleConnsPerHost = c.MaxIdleConnsPerHost
+		transport.IdleConnTimeout = xutil.ToDuration(c.IdleConnTimeout)
+		baseTransport = transport
+	} else {
+		xutil.WarnIfEnableDebug("XOne initHttpClient http.DefaultTransport is %T, skip transport tuning", baseTransport)
+	}
 
 	// 根据是否启用 trace 选择 Transport
-	var finalTransport http.RoundTripper = transport
+	var finalTransport http.RoundTripper = baseTransport
 	if xtrace.EnableTrace() {
 		opts := []otelhttp.Option{
 			otelhttp.WithSpanNameFormatter(func(_ string, r *http.Request) string {
 				return r.Method + " " + r.URL.Path
 			}),
 		}
-		finalTransport = otelhttp.NewTransport(transport, opts...)
+		finalTransport = otelhttp.NewTransport(baseTransport, opts...)
 	}
 
 	rawHttpClient := &http.Client{

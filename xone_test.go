@@ -224,6 +224,27 @@ func TestBlockingServerRunAndStop(t *testing.T) {
 	})
 }
 
+func TestBlockingServerStopBeforeRun(t *testing.T) {
+	PatchConvey("TestBlockingServerStopBeforeRun", t, func() {
+		s := &blockingServer{}
+
+		err := s.Stop()
+		So(err, ShouldBeNil)
+
+		done := make(chan error, 1)
+		go func() {
+			done <- s.Run()
+		}()
+
+		select {
+		case err := <-done:
+			So(err, ShouldBeNil)
+		case <-time.After(time.Second):
+			t.Fatal("Run did not complete after Stop")
+		}
+	})
+}
+
 func TestInvokeEngineInjectFunc(t *testing.T) {
 	PatchConvey("TestInvokeEngineInjectFunc-WithSwaggerFunc", t, func() {
 		engine := gin.New()

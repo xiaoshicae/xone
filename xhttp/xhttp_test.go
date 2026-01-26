@@ -14,6 +14,12 @@ import (
 	c "github.com/smartystreets/goconvey/convey"
 )
 
+type stubRoundTripper struct{}
+
+func (s *stubRoundTripper) RoundTrip(*http.Request) (*http.Response, error) {
+	return nil, errors.New("stub transport")
+}
+
 func TestXHttpConfig(t *testing.T) {
 	mockey.PatchConvey("TestXHttpConfig-configMergeDefault-Nil", t, func() {
 		config := configMergeDefault(nil)
@@ -173,5 +179,32 @@ func TestInitHttpClient(t *testing.T) {
 
 		err := initHttpClient()
 		c.So(err, c.ShouldBeNil)
+	})
+}
+
+func TestInitHttpClientDefaultTransportFallback(t *testing.T) {
+	mockey.PatchConvey("TestInitHttpClient-DefaultTransportFallback", t, func() {
+		origTransport := http.DefaultTransport
+		stub := &stubRoundTripper{}
+		http.DefaultTransport = stub
+		prevRawClient := rawHttpClient
+		prevDefaultClient := defaultClient
+		defer func() {
+			http.DefaultTransport = origTransport
+			rawHttpClient = prevRawClient
+			defaultClient = prevDefaultClient
+		}()
+
+		mockey.Mock(getConfig).Return(&Config{
+			Timeout:             "60s",
+			MaxIdleConns:        100,
+			MaxIdleConnsPerHost: 10,
+			IdleConnTimeout:     "90s",
+		}, nil).Build()
+		mockey.Mock(xtrace.EnableTrace).Return(false).Build()
+
+		err := initHttpClient()
+		c.So(err, c.ShouldBeNil)
+		c.So(rawHttpClient.Transport, c.ShouldEqual, stub)
 	})
 }

@@ -9,7 +9,7 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-const xLogCtxKVContainerKey = "__xlog__ctx__kv__container__"
+const XLogCtxKVContainerKey = "__xlog__ctx__kv__container__"
 
 func Error(ctx context.Context, msg string, args ...interface{}) {
 	RawLog(ctx, logrus.ErrorLevel, msg, args...)
@@ -64,14 +64,14 @@ func CtxWithKV(ctx context.Context, kvs map[string]interface{}) context.Context 
 	if kvs == nil {
 		kvs = make(map[string]interface{})
 	}
-	kvContainer, ok := ctx.Value(xLogCtxKVContainerKey).(map[string]interface{})
+	kvContainer, ok := ctx.Value(XLogCtxKVContainerKey).(map[string]interface{})
 	if !ok || kvContainer == nil {
 		// 创建副本避免外部修改影响
 		newKvs := make(map[string]interface{}, len(kvs))
 		for k, v := range kvs {
 			newKvs[k] = v
 		}
-		return context.WithValue(ctx, xLogCtxKVContainerKey, newKvs)
+		return context.WithValue(ctx, XLogCtxKVContainerKey, newKvs)
 	}
 	// 合并已有的和新的kv，创建新map保证并发安全
 	newContainer := make(map[string]interface{}, len(kvContainer)+len(kvs))
@@ -81,7 +81,7 @@ func CtxWithKV(ctx context.Context, kvs map[string]interface{}) context.Context 
 	for k, v := range kvs {
 		newContainer[k] = v
 	}
-	return context.WithValue(ctx, xLogCtxKVContainerKey, newContainer)
+	return context.WithValue(ctx, XLogCtxKVContainerKey, newContainer)
 }
 
 func XLogLevel() string {

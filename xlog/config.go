@@ -14,7 +14,7 @@ type Config struct {
 	Name string `mapstructure:"Name"`
 
 	// Path 日志文件夹路径
-	// optional default "./log/"
+	// optional default "./log"
 	Path string `mapstructure:"Path"`
 
 	// Console 日志内容是否需要在控制台打印
@@ -26,7 +26,7 @@ type Config struct {
 	ConsoleFormatIsRaw bool `mapstructure:"ConsoleFormatIsRaw"`
 
 	// MaxAge 日志保存最大时间
-	// optional default "30d"
+	// optional default "7d"
 	MaxAge string `mapstructure:"MaxAge"`
 
 	// RotateTime 日志切割时长

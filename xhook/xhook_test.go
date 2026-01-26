@@ -251,6 +251,22 @@ func TestInvokeBeforeStopHook(t *testing.T) {
 	})
 }
 
+func TestInvokeBeforeStopHookTimeoutMessage(t *testing.T) {
+	PatchConvey("TestInvokeBeforeStopHookTimeoutMessage", t, func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		stopErrChan := make(chan error, 1)
+		hooks := []hook{
+			{HookFunc: func() error { return nil }, Options: defaultOptions()},
+		}
+		invokeBeforeStopHook(ctx, hooks, stopErrChan)
+		err := <-stopErrChan
+		So(err, ShouldNotBeNil)
+		So(err.Error(), ShouldContainSubstring, "completed 0/1 hooks")
+	})
+}
+
 func TestSetStopTimeout(t *testing.T) {
 	PatchConvey("TestSetStopTimeout", t, func() {
 		originalTimeout := defaultStopTimeout

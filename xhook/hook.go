@@ -135,11 +135,12 @@ func getSortedHooks(hooks *[]hook, sorted *bool) []hook {
 
 func invokeBeforeStopHook(ctx context.Context, hooks []hook, stopResultChan chan<- error) {
 	errMsgList := make([]string, 0)
+	completed := 0
 	for _, h := range hooks {
 		// 检查是否已超时，如果超时则提前退出
 		select {
 		case <-ctx.Done():
-			stopResultChan <- fmt.Errorf("interrupted due to timeout, completed %d/%d hooks", len(hooks)-len(errMsgList), len(hooks))
+			stopResultChan <- fmt.Errorf("interrupted due to timeout, completed %d/%d hooks", completed, len(hooks))
 			return
 		default:
 		}
@@ -151,6 +152,7 @@ func invokeBeforeStopHook(ctx context.Context, hooks []hook, stopResultChan chan
 		} else {
 			xutil.InfoIfEnableDebug("XOne invoke before stop hook success, func=[%v]", funcName)
 		}
+		completed++
 	}
 	if len(errMsgList) > 0 {
 		stopResultChan <- fmt.Errorf("%s", strings.Join(errMsgList, "; "))

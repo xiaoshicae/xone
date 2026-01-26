@@ -12,7 +12,7 @@
 
 ## 环境要求
 
-- Go >= 1.24.0
+- Go >= 1.24
 
 ## 快速开始
 
@@ -29,7 +29,7 @@ go get github.com/xiaoshicae/xone
 ```yaml
 Server:
   Name: "my-service"
-  Version: "v1.0.0"
+  Version: "v1.0.2"
   Profiles:
     Active: "dev"
   Gin:
@@ -205,21 +205,12 @@ XGorm:
 
 ## 更新日志
 
-- **v1.0.1** (2026-01-24) - Bug 修复与测试增强
-  - xtrace: 修复 sync.Once 重置并发问题，改用 atomic.Bool
-  - xconfig: 添加正则匹配结果边界检查，防止 panic
-  - xgorm: 使用 errors.Join() 合并多个关闭错误
-  - xutil: 修正 strToDuration 错误日志描述
-  - 测试覆盖率大幅提升（xhttp 98%, xconfig 92%, xlog 85%, xtrace 82%）
-
-- **v1.0.0** (2026-01-24) - 正式版本发布
-  - 全模块代码优化：性能提升、并发安全、代码重构
-  - xhook: 延迟排序、新增 SetStopTimeout API
-  - xconfig: 正则预编译、路径检测重构
-  - xlog: 内存预分配、缓存优化
-  - xtrace: 并发保护、新增 GetTracer/SetShutdownTimeout API
-  - xhttp: 并发保护、警告日志、支持 "d" 时间格式
-  - xgorm: 修复 GetDriver 默认值、并发保护、日志优化
-  - xutil: 统一错误处理、sync.Once 保护
-  - 添加 Claude Code 项目配置
-
+- **v1.0.2** (2026-01-26) - 稳定性修复与测试补充
+- **v0.0.1** (2026-01-04) - 初始版本
+- **v0.0.2** (2026-01-04) - 优化IP获取
+- **v0.0.3** (2026-01-04) - config新增parent目录检测
+- **v0.0.4** (2026-01-04) - gin支持debug mode
+- **v0.0.5** (2026-01-04) - 删除gin支持debug mode
+- **v0.0.6** (2026-01-21) - xhttp模块优化
+- **v0.0.7** (2026-01-21) - 修复xconfig bug
+- **v0.0.8** (2026-01-21) - xhttp支持重试

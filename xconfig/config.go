@@ -34,7 +34,7 @@ type Gin struct {
 	Host string `mapstructure:"Host"`
 
 	// Port 服务端口号
-	// optional default 8080
+	// optional default 8000
 	Port int `mapstructure:"Port"`
 
 	// UseHttp2 是否使用http2协议

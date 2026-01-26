@@ -108,7 +108,7 @@ func TestCtxWithKV(t *testing.T) {
 			ctx := context.Background()
 			newCtx := CtxWithKV(ctx, map[string]interface{}{"key": "value"})
 			c.So(newCtx, c.ShouldNotBeNil)
-			kv := newCtx.Value(xLogCtxKVContainerKey).(map[string]interface{})
+			kv := newCtx.Value(XLogCtxKVContainerKey).(map[string]interface{})
 			c.So(kv["key"], c.ShouldEqual, "value")
 		})
 
@@ -116,7 +116,7 @@ func TestCtxWithKV(t *testing.T) {
 			ctx := context.Background()
 			ctx = CtxWithKV(ctx, map[string]interface{}{"key1": "value1"})
 			ctx = CtxWithKV(ctx, map[string]interface{}{"key2": "value2"})
-			kv := ctx.Value(xLogCtxKVContainerKey).(map[string]interface{})
+			kv := ctx.Value(XLogCtxKVContainerKey).(map[string]interface{})
 			c.So(kv["key1"], c.ShouldEqual, "value1")
 			c.So(kv["key2"], c.ShouldEqual, "value2")
 		})

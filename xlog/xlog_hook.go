@@ -173,7 +173,7 @@ func callerPretty(f *runtime.Frame) (string, string) {
 }
 
 func getXLogContainerFromCtx(ctx context.Context) map[string]interface{} {
-	kvContainer, ok := ctx.Value(xLogCtxKVContainerKey).(map[string]interface{})
+	kvContainer, ok := ctx.Value(XLogCtxKVContainerKey).(map[string]interface{})
 	if !ok || kvContainer == nil {
 		return nil
 	}

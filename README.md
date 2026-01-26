@@ -29,7 +29,7 @@ go get github.com/xiaoshicae/xone
 ```yaml
 Server:
   Name: "my-service"
-  Version: "v1.0.2"
+  Version: "v1.0.3"
   Profiles:
     Active: "dev"
   Gin:
@@ -205,6 +205,7 @@ XGorm:
 
 ## 更新日志
 
+- **v1.0.3** (2026-01-26) - xtrace支持W3C Trace Context propagator
 - **v1.0.2** (2026-01-26) - 稳定性修复与测试补充
 - **v0.0.8** (2026-01-21) - xhttp支持重试
 - **v0.0.7** (2026-01-21) - 修复xconfig bug

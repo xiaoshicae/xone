@@ -13,6 +13,7 @@ import (
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/stdout/stdouttrace"
+	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/sdk/resource"
 	"go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.21.0"
@@ -97,6 +98,12 @@ func initXTraceByConfig(c *Config, serviceName, serviceVersion string) error {
 
 	tp := trace.NewTracerProvider(tpOpts...)
 	otel.SetTracerProvider(tp)
+
+	// 设置 W3C Trace Context propagator，支持从请求 header 提取/注入 trace context
+	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
+		propagation.TraceContext{},
+		propagation.Baggage{},
+	))
 
 	// 使用互斥锁保护 shutdown 函数的设置
 	shutdownMu.Lock()

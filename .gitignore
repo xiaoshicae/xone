@@ -16,3 +16,6 @@ cover.html
 
 ### Mac OS ###
 .DS_Store
+
+# cov
+coverage.out

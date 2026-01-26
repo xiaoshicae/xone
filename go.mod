@@ -1,6 +1,6 @@
 module github.com/xiaoshicae/xone
 
-go 1.24
+go 1.24.0
 
 require (
 	github.com/bytedance/mockey v1.4.0

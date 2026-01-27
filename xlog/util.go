@@ -28,6 +28,10 @@ func Debug(ctx context.Context, msg string, args ...interface{}) {
 }
 
 func RawLog(ctx context.Context, level logrus.Level, msg string, args ...interface{}) {
+	if ctx == nil {
+		return
+	}
+
 	// 预估容量，减少内存分配
 	estimatedCap := len(args) / 2
 	if estimatedCap < 1 {

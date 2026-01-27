@@ -185,6 +185,25 @@ func TestNewGinServer(t *testing.T) {
 	})
 }
 
+func TestNewGinTLSServer(t *testing.T) {
+	PatchConvey("TestNewGinTLSServer", t, func() {
+		Mock(xconfig.GetGinConfig).Return(&xconfig.Gin{UseHttp2: true, Host: "127.0.0.1", Port: 8443}).Build()
+		Mock((*http.Server).ListenAndServeTLS).Return(errors.New("for test tls")).Build()
+		Mock((*http.Server).Shutdown).Return(errors.New("for test2 tls")).Build()
+
+		server := newGinTLSServer(gin.New(), "/path/to/cert.pem", "/path/to/key.pem")
+		So(server, ShouldNotBeNil)
+		So(server.certFile, ShouldEqual, "/path/to/cert.pem")
+		So(server.keyFile, ShouldEqual, "/path/to/key.pem")
+
+		err := server.Run()
+		So(err.Error(), ShouldEqual, "for test tls")
+
+		err = server.Stop()
+		So(err.Error(), ShouldEqual, "gin server stop failed, err=[for test2 tls]")
+	})
+}
+
 func TestBlockingServer(t *testing.T) {
 	t.Skip("测试BlockingServer，需要主动打断进程")
 	PatchConvey("TestBlockingServer", t, func() {

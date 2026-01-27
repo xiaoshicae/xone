@@ -65,6 +65,52 @@ func (s *ginServer) Stop() error {
 	return nil
 }
 
+// ginTLSServer 支持 HTTPS 的 Gin 服务器
+type ginTLSServer struct {
+	srv      *http.Server
+	certFile string
+	keyFile  string
+}
+
+// newGinTLSServer 创建 HTTPS Gin 服务器实例
+func newGinTLSServer(engine *gin.Engine, certFile, keyFile string) *ginTLSServer {
+	ginConfig := xconfig.GetGinConfig()
+	if ginConfig.UseHttp2 {
+		engine.UseH2C = true
+		xutil.InfoIfEnableDebug("gin server use http2")
+	}
+
+	addr := net.JoinHostPort(ginConfig.Host, strconv.Itoa(ginConfig.Port))
+	xutil.InfoIfEnableDebug("gin server listen at: %s (TLS)", addr)
+
+	invokeEngineInjectFunc(engine)
+
+	// 包装一下engine,为后续Run()和Stop()作准备
+	srv := &http.Server{
+		Addr:    addr,
+		Handler: engine.Handler(),
+	}
+	return &ginTLSServer{
+		srv:      srv,
+		certFile: certFile,
+		keyFile:  keyFile,
+	}
+}
+
+func (s *ginTLSServer) Run() error {
+	return s.srv.ListenAndServeTLS(s.certFile, s.keyFile)
+}
+
+func (s *ginTLSServer) Stop() error {
+	ctx, cancel := context.WithTimeout(context.Background(), defaultWaitStopDuration)
+	defer cancel()
+
+	if err := s.srv.Shutdown(ctx); err != nil {
+		return fmt.Errorf("gin server stop failed, err=[%v]", err)
+	}
+	return nil
+}
+
 func invokeEngineInjectFunc(engine *gin.Engine) {
 	if f := engine.FuncMap[SwaggerInfoFuncKey]; f != nil {
 		if ff, ok := f.(func() *swag.Spec); ok {

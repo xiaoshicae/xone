@@ -166,13 +166,16 @@ func main() {
 	// 方式一：Gin Web 服务
 	xone.RunGin(gin.Default())
 
-	// 方式二：自定义 Server（需实现 xone.Server 接口）
+	// 方式二：Gin HTTPS 服务
+	xone.RunGinTLS(gin.Default(), "/path/to/cert.pem", "/path/to/key.pem")
+
+	// 方式三：自定义 Server（需实现 xone.Server 接口）
 	xone.RunServer(myServer)
 
-	// 方式三：阻塞服务（适用于 consumer、job 等）
+	// 方式四：阻塞服务（适用于 consumer、job 等）
 	xone.RunBlockingServer()
 
-	// 方式四：单次执行（适用于调试）
+	// 方式五：单次执行（适用于调试）
 	xone.R()
 }
 ```
@@ -205,6 +208,7 @@ XGorm:
 
 ## 更新日志
 
+- **v1.1.0** (2026-01-27) - feat: 新增 RunGinTLS 支持 HTTPS 启动; fix: xlog RawLog 增加 ctx nil 检查
 - **v1.0.4** (2026-01-27) - fix xconfig 环境变量展开
 - **v1.0.3** (2026-01-26) - xtrace支持W3C Trace Context propagator
 - **v1.0.2** (2026-01-26) - 稳定性修复与测试补充

@@ -26,7 +26,9 @@
 - `test`: 测试相关
 - `chore`: 构建/工具相关
 
-3. 使用 HEREDOC 格式提交：
+3. 更新REAME.md & 升级README.md中的版本号
+
+4. 使用 HEREDOC 格式提交：
 ```bash
 git commit -m "$(cat <<'EOF'
 提交信息
@@ -34,4 +36,4 @@ EOF
 )"
 ```
 
-4. 提交后运行 `git status` 确认状态
+5. 提交后运行 `git status` 确认状态

@@ -145,6 +145,44 @@ func TestGetProfilesActiveFromViperConfig(t *testing.T) {
 	})
 }
 
+func TestGetProfilesActiveWithEnvPlaceholder(t *testing.T) {
+	PatchConvey("TestGetProfilesActiveWithEnvPlaceholder", t, func() {
+		// 设置环境变量
+		os.Setenv("PROFILES_ACTIVE", "test")
+		defer os.Unsetenv("PROFILES_ACTIVE")
+
+		// 模拟配置文件中使用占位符 ${PROFILES_ACTIVE}
+		vp := viper.New()
+		vp.Set("Server.Profiles.Active", "${PROFILES_ACTIVE}")
+
+		// 展开前，getProfilesActiveFromViperConfig 返回原始占位符字符串
+		a := getProfilesActiveFromViperConfig(vp)
+		So(a, ShouldEqual, "${PROFILES_ACTIVE}")
+
+		// 调用 expandEnvPlaceholders 展开占位符
+		expandEnvPlaceholders(vp)
+
+		// 展开后，getProfilesActiveFromViperConfig 返回环境变量的值
+		a = getProfilesActiveFromViperConfig(vp)
+		So(a, ShouldEqual, "test")
+	})
+
+	PatchConvey("TestGetProfilesActiveWithEnvPlaceholderDefault", t, func() {
+		// 不设置环境变量，测试默认值
+		os.Unsetenv("PROFILES_ACTIVE_NOT_SET")
+
+		vp := viper.New()
+		vp.Set("Server.Profiles.Active", "${PROFILES_ACTIVE_NOT_SET:-dev}")
+
+		// 调用 expandEnvPlaceholders 展开占位符
+		expandEnvPlaceholders(vp)
+
+		// 应该返回默认值 dev
+		a := getProfilesActiveFromViperConfig(vp)
+		So(a, ShouldEqual, "dev")
+	})
+}
+
 func TestToProfilesActiveConfigLocation(t *testing.T) {
 	PatchConvey("TestToProfilesActiveConfigLocation", t, func() {
 		location, err := toProfilesActiveConfigLocation("x", "")

@@ -59,6 +59,9 @@ func parseConfig(configLocation string) (*viper.Viper, error) {
 		return nil, fmt.Errorf("load viper config failed, err=[%v]", err)
 	}
 
+	// 先展开基础配置中的环境变量占位符，确保 Server.Profiles.Active 等配置能正确解析
+	expandEnvPlaceholders(baseViperConfig)
+
 	if pa := detectProfilesActive(baseViperConfig); pa != "" { // 判断激活环境
 		// 构造指定环境配置文件路径
 		envConfigLocation, err := toProfilesActiveConfigLocation(configLocation, pa)
@@ -170,6 +173,26 @@ func getTopLevelAndServerSecondLevelConfigs(vp *viper.Viper) map[string]interfac
 	return configs
 }
 
+// expandEnvPlaceholder 展开单个字符串中的环境变量占位符
+// 支持 ${VAR} 和 ${VAR:-default} 格式
+func expandEnvPlaceholder(val string) string {
+	return envPlaceholderRegex.ReplaceAllStringFunc(val, func(match string) string {
+		matches := envPlaceholderRegex.FindStringSubmatch(match)
+		if len(matches) < 2 {
+			return match
+		}
+		envKey := matches[1]
+		defaultVal := ""
+		if len(matches) >= 3 {
+			defaultVal = matches[2]
+		}
+		if envVal := os.Getenv(envKey); envVal != "" {
+			return envVal
+		}
+		return defaultVal
+	})
+}
+
 // expandEnvPlaceholders 递归展开配置中的 ${VAR} 或 ${VAR:-default} 占位符
 // 支持的语法:
 //   - ${VAR} - 从环境变量读取 VAR
@@ -184,24 +207,7 @@ func expandEnvPlaceholders(vp *viper.Viper) {
 			continue
 		}
 
-		expanded := envPlaceholderRegex.ReplaceAllStringFunc(val, func(match string) string {
-			matches := envPlaceholderRegex.FindStringSubmatch(match)
-			// 边界检查：确保正则匹配成功且有足够的捕获组
-			if len(matches) < 2 {
-				return match // 匹配失败，返回原值
-			}
-			envKey := matches[1]
-			defaultVal := ""
-			if len(matches) >= 3 {
-				defaultVal = matches[2]
-			}
-
-			if envVal := os.Getenv(envKey); envVal != "" {
-				return envVal
-			}
-			return defaultVal
-		})
-
+		expanded := expandEnvPlaceholder(val)
 		if expanded != val {
 			expansions[key] = expanded
 		}

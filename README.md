@@ -29,7 +29,7 @@ go get github.com/xiaoshicae/xone
 ```yaml
 Server:
   Name: "my-service"
-  Version: "v1.0.3"
+  Version: "v1.1.1"
   Profiles:
     Active: "dev"
   Gin:
@@ -208,6 +208,7 @@ XGorm:
 
 ## 更新日志
 
+- **v1.1.1** (2026-01-29) - fix: xlog 日志定位文件名误指向 hook 文件
 - **v1.1.0** (2026-01-27) - feat: 新增 RunGinTLS 支持 HTTPS 启动; fix: xlog RawLog 增加 ctx nil 检查
 - **v1.0.4** (2026-01-27) - fix xconfig 环境变量展开
 - **v1.0.3** (2026-01-26) - xtrace支持W3C Trace Context propagator

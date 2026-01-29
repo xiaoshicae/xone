@@ -69,13 +69,17 @@ func parseConfig(configLocation string) (*viper.Viper, error) {
 			return nil, fmt.Errorf("parse profiles active config file failed, err=[%v]", err)
 		}
 
-		// 加载指定环境配置文件
-		envViperConfig, err := loadLocalConfig(envConfigLocation)
-		if err != nil {
-			return nil, fmt.Errorf("load config file failed, env_config_location=[%s], err=[%v]", envConfigLocation, err)
-		}
+		if !xutil.FileExist(envConfigLocation) {
+			xutil.WarnIfEnableDebug("XOne profiles active config file not found, ignore, env_config_location=[%s]", envConfigLocation)
+		} else {
+			// 加载指定环境配置文件
+			envViperConfig, err := loadLocalConfig(envConfigLocation)
+			if err != nil {
+				return nil, fmt.Errorf("load config file failed, env_config_location=[%s], err=[%v]", envConfigLocation, err)
+			}
 
-		baseViperConfig = mergeProfilesViperConfig(baseViperConfig, envViperConfig)
+			baseViperConfig = mergeProfilesViperConfig(baseViperConfig, envViperConfig)
+		}
 	}
 
 	if baseViperConfig.GetString(serverNameConfigKey) == "" {

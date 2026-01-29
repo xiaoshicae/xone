@@ -29,7 +29,7 @@ go get github.com/xiaoshicae/xone
 ```yaml
 Server:
   Name: "my-service"
-  Version: "v1.1.1"
+  Version: "v1.1.2"
   Profiles:
     Active: "dev"
   Gin:
@@ -208,6 +208,7 @@ XGorm:
 
 ## 更新日志
 
+- **v1.1.2** (2026-01-29) - fix: SERVER_PROFILES_ACTIVE 指定的配置文件不存在时忽略并回落到 application.yml
 - **v1.1.1** (2026-01-29) - fix: xlog 日志定位文件名误指向 hook 文件
 - **v1.1.0** (2026-01-27) - feat: 新增 RunGinTLS 支持 HTTPS 启动; fix: xlog RawLog 增加 ctx nil 检查
 - **v1.0.4** (2026-01-27) - fix xconfig 环境变量展开

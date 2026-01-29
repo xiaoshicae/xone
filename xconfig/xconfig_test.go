@@ -339,6 +339,49 @@ func TestParseConfig(t *testing.T) {
 	})
 }
 
+func TestParseConfigProfilesActiveFileMissing(t *testing.T) {
+	PatchConvey("TestParseConfig-ProfilesActiveFileMissing", t, func() {
+		vpConfig := viper.New()
+		vpConfig.Set("server", map[string]interface{}{
+			"s1": 1,
+			"s2": "2",
+			"s3": []string{"3", "33"},
+			"s4": map[string]interface{}{
+				"s41": 41,
+				"s51": "51",
+			},
+			"profiles": map[string]interface{}{
+				"active": "xxx",
+			},
+		})
+		vpConfig.Set("x", "x1")
+		vpConfig.Set("y", "y1")
+
+		Mock(loadLocalConfig).Return(vpConfig, nil).Build()
+		Mock(detectProfilesActive).Return("dev").Build()
+		Mock(xutil.FileExist).Return(false).Build()
+
+		parseConfig, err := parseConfig("/a/b.yml")
+		So(err, ShouldBeNil)
+		So(parseConfig.AllSettings(), ShouldResemble, map[string]interface{}{
+			"server": map[string]interface{}{
+				"s1": 1,
+				"s2": "2",
+				"s3": []string{"3", "33"},
+				"s4": map[string]interface{}{
+					"s41": 41,
+					"s51": "51",
+				},
+				"profiles": map[string]interface{}{
+					"active": "xxx",
+				},
+			},
+			"x": "x1",
+			"y": "y1",
+		})
+	})
+}
+
 func TestPrintFinalConfig(t *testing.T) {
 	vp := viper.New()
 	vp.Set("k", "v")

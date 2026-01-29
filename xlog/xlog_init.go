@@ -19,8 +19,11 @@ import (
 	logwriter "github.com/sirupsen/logrus/hooks/writer"
 )
 
-const (
-	findFrameIgnoreFileName = "/xlog/util.go"
+var (
+	findFrameIgnoreFileNames = []string{
+		"/xlog/util.go",
+		"/xlog/xlog_hook.go",
+	}
 )
 
 func init() {
@@ -86,7 +89,7 @@ func initXLogByConfig(c *Config) error {
 
 	// 自定义hook，进行日志format和打印到屏幕
 	logrus.AddHook(&xLogHook{
-		SuffixToIgnore:     []string{findFrameIgnoreFileName},
+		SuffixToIgnore:     findFrameIgnoreFileNames,
 		ServerName:         xconfig.GetServerName(),
 		IP:                 localIP,
 		PidStr:             strconv.Itoa(os.Getpid()), // 初始化时转换，避免每次日志都转换

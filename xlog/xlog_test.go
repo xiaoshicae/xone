@@ -562,6 +562,97 @@ func TestInitXLogByConfig(t *testing.T) {
 	})
 }
 
+func TestAsyncWriter(t *testing.T) {
+	mockey.PatchConvey("TestAsyncWriter", t, func() {
+		mockey.PatchConvey("TestAsyncWriter-WriteAndClose", func() {
+			mw := &mockWriteCloser{}
+			aw := newAsyncWriter(mw, 16)
+
+			// 写入多条数据
+			n, err := aw.Write([]byte("hello"))
+			c.So(err, c.ShouldBeNil)
+			c.So(n, c.ShouldEqual, 5)
+
+			n, err = aw.Write([]byte(" world"))
+			c.So(err, c.ShouldBeNil)
+			c.So(n, c.ShouldEqual, 6)
+
+			// 关闭后验证数据完整写入
+			err = aw.Close()
+			c.So(err, c.ShouldBeNil)
+			c.So(string(mw.written), c.ShouldEqual, "hello world")
+			c.So(mw.closed, c.ShouldBeTrue)
+		})
+
+		mockey.PatchConvey("TestAsyncWriter-DataIsolation", func() {
+			// 验证 Write 会拷贝数据，调用方修改原 buffer 不影响已写入的内容
+			mw := &mockWriteCloser{}
+			aw := newAsyncWriter(mw, 16)
+
+			buf := []byte("original")
+			_, _ = aw.Write(buf)
+
+			// 修改原 buffer
+			copy(buf, "modified")
+
+			_ = aw.Close()
+			c.So(string(mw.written), c.ShouldEqual, "original")
+		})
+
+		mockey.PatchConvey("TestAsyncWriter-CloseIdempotent", func() {
+			// 多次 Close 不应 panic
+			mw := &mockWriteCloser{}
+			aw := newAsyncWriter(mw, 16)
+
+			err := aw.Close()
+			c.So(err, c.ShouldBeNil)
+
+			// 第二次 Close 不 panic，底层 writer 只关闭一次
+			err = aw.Close()
+			c.So(err, c.ShouldBeNil)
+		})
+
+		mockey.PatchConvey("TestAsyncWriter-DefaultBufferSize", func() {
+			mw := &mockWriteCloser{}
+			aw := newAsyncWriter(mw, 0)
+			c.So(cap(aw.ch), c.ShouldEqual, defaultAsyncBufferSize)
+			_ = aw.Close()
+		})
+
+		mockey.PatchConvey("TestAsyncWriter-LargeVolume", func() {
+			// 验证大量写入不丢数据
+			mw := &mockWriteCloser{}
+			aw := newAsyncWriter(mw, 64)
+
+			total := 1000
+			msgLen := 0
+			for i := 0; i < total; i++ {
+				msg := []byte("log line\n")
+				msgLen += len(msg)
+				_, _ = aw.Write(msg)
+			}
+
+			_ = aw.Close()
+			c.So(len(mw.written), c.ShouldEqual, msgLen)
+		})
+	})
+}
+
+type mockWriteCloser struct {
+	written []byte
+	closed  bool
+}
+
+func (m *mockWriteCloser) Write(p []byte) (int, error) {
+	m.written = append(m.written, p...)
+	return len(p), nil
+}
+
+func (m *mockWriteCloser) Close() error {
+	m.closed = true
+	return nil
+}
+
 func TestGetConfig(t *testing.T) {
 	mockey.PatchConvey("TestGetConfig-UnmarshalFail", t, func() {
 		mockey.Mock(xconfig.UnmarshalConfig).Return(errors.New("unmarshal failed")).Build()

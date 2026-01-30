@@ -59,9 +59,12 @@ func initXLogByConfig(c *Config) error {
 		return fmt.Errorf("XOne initXLogByConfig invoke rotatelogs.New failed, err=[%v]", err)
 	}
 
-	// 注册关闭钩子
+	// 使用异步写入器包装，避免日志 I/O 阻塞调用方
+	asyncFileWriter := newAsyncWriter(fileWriter, defaultAsyncBufferSize)
+
+	// 注册关闭钩子（Close 会等待缓冲区写完再关闭底层 writer）
 	xhook.BeforeStop(func() error {
-		return fileWriter.Close()
+		return asyncFileWriter.Close()
 	})
 
 	// 加载时区
@@ -100,7 +103,7 @@ func initXLogByConfig(c *Config) error {
 
 	// file writer hook
 	logrus.AddHook(&logwriter.Hook{
-		Writer:    fileWriter,
+		Writer:    asyncFileWriter,
 		LogLevels: resolveLevels(c.Level),
 	})
 

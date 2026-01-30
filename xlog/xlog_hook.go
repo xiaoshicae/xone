@@ -90,10 +90,9 @@ func (m *xLogHook) ConsolePrint(entry *logrus.Entry) error {
 	// 预分配容量
 	msg := make([]byte, 0, len(line)+128)
 
-	// 打印原始json格式
+	// 打印原始json格式（纯 JSON，无前缀）
 	if m.ConsoleFormatIsRaw {
-		prefix := fmt.Sprintf("\x1b[%dm%s\x1b[0m[%s] ", levelColor, levelText, logTimeText)
-		msg = append([]byte(prefix), line...)
+		msg = append(msg, line...)
 	} else {
 		prefix := fmt.Sprintf("\x1b[%dm%s\x1b[0m[%s] \x1b[34m%s\x1b[0m %s ", levelColor, levelText, logTimeText, fileName, traceId)
 		msg = append([]byte(prefix), []byte(entry.Message)...)

@@ -29,7 +29,7 @@ go get github.com/xiaoshicae/xone
 ```yaml
 Server:
   Name: "my-service"
-  Version: "v1.1.4"
+  Version: "v1.1.5"
   Profiles:
     Active: "dev"
   Gin:
@@ -208,6 +208,7 @@ XGorm:
 
 ## 更新日志
 
+- **v1.1.5** (2026-02-02) - feat: xtrace 新增 B3 传播格式支持，兼容 W3C Trace Context
 - **v1.1.4** (2026-01-30) - fix: xlog ConsoleFormatIsRaw=true 时控制台输出纯 JSON，去除颜色前缀
 - **v1.1.3** (2026-01-30) - perf: xlog 文件写入改为异步，避免磁盘 I/O 阻塞调用方
 - **v1.1.2** (2026-01-29) - fix: SERVER_PROFILES_ACTIVE 指定的配置文件不存在时忽略并回落到 application.yml

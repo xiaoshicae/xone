@@ -11,6 +11,7 @@ import (
 	"github.com/xiaoshicae/xone/xhook"
 	"github.com/xiaoshicae/xone/xutil"
 
+	"go.opentelemetry.io/contrib/propagators/b3"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/stdout/stdouttrace"
 	"go.opentelemetry.io/otel/propagation"
@@ -99,10 +100,11 @@ func initXTraceByConfig(c *Config, serviceName, serviceVersion string) error {
 	tp := trace.NewTracerProvider(tpOpts...)
 	otel.SetTracerProvider(tp)
 
-	// 设置 W3C Trace Context propagator，支持从请求 header 提取/注入 trace context
+	// 设置 propagator，支持 W3C Trace Context 和 B3 格式
 	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
 		propagation.TraceContext{},
 		propagation.Baggage{},
+		b3.New(),
 	))
 
 	// 使用互斥锁保护 shutdown 函数的设置

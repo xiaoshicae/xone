@@ -5,6 +5,7 @@
 XTrace 是 XOne 框架的分布式追踪模块，基于 OpenTelemetry 封装，提供：
 - 自动 Trace 初始化和生命周期管理
 - 与 xhttp、xgorm 等模块无缝集成
+- 支持 W3C Trace Context 和 B3 两种传播格式
 - 支持控制台打印 Trace 信息（调试用）
 - 线程安全的 shutdown 机制
 

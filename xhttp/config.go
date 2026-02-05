@@ -7,6 +7,10 @@ type Config struct {
 	// optional default "60s"
 	Timeout string `mapstructure:"Timeout"`
 
+	// DialTimeout 建立 TCP 连接超时时间
+	// optional default "30s"
+	DialTimeout string `mapstructure:"DialTimeout"`
+
 	// MaxIdleConns 最大空闲连接数
 	// optional default 100
 	MaxIdleConns int `mapstructure:"MaxIdleConns"`
@@ -38,6 +42,9 @@ func configMergeDefault(c *Config) *Config {
 	}
 	if c.Timeout == "" {
 		c.Timeout = "60s"
+	}
+	if c.DialTimeout == "" {
+		c.DialTimeout = "30s"
 	}
 	if c.MaxIdleConns <= 0 {
 		c.MaxIdleConns = 100

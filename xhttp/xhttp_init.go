@@ -2,6 +2,7 @@ package xhttp
 
 import (
 	"fmt"
+	"net"
 	"net/http"
 
 	"github.com/go-resty/resty/v2"
@@ -30,6 +31,9 @@ func initHttpClient() error {
 		transport.MaxIdleConns = c.MaxIdleConns
 		transport.MaxIdleConnsPerHost = c.MaxIdleConnsPerHost
 		transport.IdleConnTimeout = xutil.ToDuration(c.IdleConnTimeout)
+		transport.DialContext = (&net.Dialer{
+			Timeout: xutil.ToDuration(c.DialTimeout),
+		}).DialContext
 		baseTransport = transport
 	} else {
 		xutil.WarnIfEnableDebug("XOne initHttpClient http.DefaultTransport is %T, skip transport tuning", baseTransport)

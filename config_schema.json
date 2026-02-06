@@ -139,6 +139,14 @@
           "type": "string",
           "description": "HTTP 请求超时时间，默认60s"
         },
+        "DialTimeout": {
+          "type": "string",
+          "description": "建立 TCP 连接超时时间，默认30s"
+        },
+        "DialKeepAlive": {
+          "type": "string",
+          "description": "TCP keep-alive 探测间隔，默认30s"
+        },
         "MaxIdleConns": {
           "type": "integer",
           "description": "最大空闲连接数，默认100"

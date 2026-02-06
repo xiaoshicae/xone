@@ -2,6 +2,7 @@ package xcache
 
 import (
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -421,5 +422,223 @@ func TestNewCache(t *testing.T) {
 		c.So(cache, c.ShouldNotBeNil)
 		c.So(cache.defaultTTL, c.ShouldEqual, time.Hour)
 		cache.Close()
+	})
+}
+
+// --- 全局缓存 & 泛型 API 测试 ---
+
+type testUser struct {
+	Name string
+	Age  int
+}
+
+func withCleanGlobal(fn func()) {
+	cacheMu.Lock()
+	origMap := cacheMap
+	cacheMap = make(map[string]*Cache)
+	cacheMu.Unlock()
+
+	origOnce := globalOnce
+	origGlobal := globalCache
+	globalOnce = sync.Once{}
+	globalCache = nil
+
+	defer func() {
+		if globalCache != nil {
+			globalCache.Close()
+		}
+		cacheMu.Lock()
+		for _, v := range cacheMap {
+			v.Close()
+		}
+		cacheMap = origMap
+		cacheMu.Unlock()
+		globalOnce = origOnce
+		globalCache = origGlobal
+	}()
+
+	fn()
+}
+
+func TestGlobalLazyInit(t *testing.T) {
+	mockey.PatchConvey("TestGlobal-LazyInit", t, func() {
+		withCleanGlobal(func() {
+			// 无配置时，global() 应懒初始化一个默认缓存
+			g := global()
+			c.So(g, c.ShouldNotBeNil)
+			c.So(globalCache, c.ShouldNotBeNil)
+			c.So(g, c.ShouldEqual, globalCache)
+		})
+	})
+
+	mockey.PatchConvey("TestGlobal-UsesConfiguredCache", t, func() {
+		withCleanGlobal(func() {
+			// 有配置的缓存时，global() 应返回配置的缓存而不是创建新的
+			configuredCache, _ := newCache(configMergeDefault(nil))
+			setDefault(configuredCache)
+
+			g := global()
+			c.So(g, c.ShouldEqual, configuredCache)
+			c.So(globalCache, c.ShouldBeNil) // 不应创建全局缓存
+		})
+	})
+}
+
+func TestPackageLevelGenericFunctions(t *testing.T) {
+	mockey.PatchConvey("TestGeneric-SetAndGet", t, func() {
+		withCleanGlobal(func() {
+			user := &testUser{Name: "alice", Age: 30}
+
+			ok := Set("user:1", user)
+			c.So(ok, c.ShouldBeTrue)
+			global().Wait()
+
+			got, found := Get[*testUser]("user:1")
+			c.So(found, c.ShouldBeTrue)
+			c.So(got.Name, c.ShouldEqual, "alice")
+			c.So(got.Age, c.ShouldEqual, 30)
+		})
+	})
+
+	mockey.PatchConvey("TestGeneric-SetWithTTL", t, func() {
+		withCleanGlobal(func() {
+			ok := SetWithTTL("key", "hello", time.Hour)
+			c.So(ok, c.ShouldBeTrue)
+			global().Wait()
+
+			got, found := Get[string]("key")
+			c.So(found, c.ShouldBeTrue)
+			c.So(got, c.ShouldEqual, "hello")
+		})
+	})
+
+	mockey.PatchConvey("TestGeneric-Del", t, func() {
+		withCleanGlobal(func() {
+			Set("to-del", 42)
+			global().Wait()
+
+			Del("to-del")
+			global().Wait()
+
+			_, found := Get[int]("to-del")
+			c.So(found, c.ShouldBeFalse)
+		})
+	})
+
+	mockey.PatchConvey("TestGeneric-GetNotFound", t, func() {
+		withCleanGlobal(func() {
+			val, found := Get[string]("nonexistent")
+			c.So(found, c.ShouldBeFalse)
+			c.So(val, c.ShouldEqual, "")
+		})
+	})
+
+	mockey.PatchConvey("TestGeneric-GetTypeMismatch", t, func() {
+		withCleanGlobal(func() {
+			Set("str-key", "hello")
+			global().Wait()
+
+			// 类型不匹配时返回 false
+			val, found := Get[int]("str-key")
+			c.So(found, c.ShouldBeFalse)
+			c.So(val, c.ShouldEqual, 0)
+		})
+	})
+}
+
+func TestTypedCache(t *testing.T) {
+	mockey.PatchConvey("TestTypedCache-SetAndGet", t, func() {
+		withCleanGlobal(func() {
+			tc := Of[*testUser]()
+			c.So(tc, c.ShouldNotBeNil)
+
+			user := &testUser{Name: "bob", Age: 25}
+			ok := tc.Set("user:2", user)
+			c.So(ok, c.ShouldBeTrue)
+			tc.Wait()
+
+			got, found := tc.Get("user:2")
+			c.So(found, c.ShouldBeTrue)
+			c.So(got.Name, c.ShouldEqual, "bob")
+			c.So(got.Age, c.ShouldEqual, 25)
+		})
+	})
+
+	mockey.PatchConvey("TestTypedCache-SetWithTTL", t, func() {
+		withCleanGlobal(func() {
+			tc := Of[string]()
+
+			ok := tc.SetWithTTL("greeting", "hello", time.Hour)
+			c.So(ok, c.ShouldBeTrue)
+			tc.Wait()
+
+			got, found := tc.Get("greeting")
+			c.So(found, c.ShouldBeTrue)
+			c.So(got, c.ShouldEqual, "hello")
+		})
+	})
+
+	mockey.PatchConvey("TestTypedCache-Del", t, func() {
+		withCleanGlobal(func() {
+			tc := Of[int]()
+			tc.Set("num", 100)
+			tc.Wait()
+
+			tc.Del("num")
+			tc.Wait()
+
+			_, found := tc.Get("num")
+			c.So(found, c.ShouldBeFalse)
+		})
+	})
+
+	mockey.PatchConvey("TestTypedCache-TypeMismatch", t, func() {
+		withCleanGlobal(func() {
+			// 往全局缓存写入 string 类型
+			Set("mixed", "text")
+			global().Wait()
+
+			// 用 int 类型的 TypedCache 读取，应返回 false
+			tc := Of[int]()
+			val, found := tc.Get("mixed")
+			c.So(found, c.ShouldBeFalse)
+			c.So(val, c.ShouldEqual, 0)
+		})
+	})
+
+	mockey.PatchConvey("TestTypedCache-NilCache", t, func() {
+		tc := &TypedCache[string]{cache: nil}
+
+		val, found := tc.Get("key")
+		c.So(found, c.ShouldBeFalse)
+		c.So(val, c.ShouldEqual, "")
+
+		ok := tc.Set("key", "val")
+		c.So(ok, c.ShouldBeFalse)
+
+		ok = tc.SetWithTTL("key", "val", time.Hour)
+		c.So(ok, c.ShouldBeFalse)
+
+		// Del 和 Wait 不应 panic
+		tc.Del("key")
+		tc.Wait()
+	})
+
+	mockey.PatchConvey("TestTypedCache-OfWithName", t, func() {
+		withCleanGlobal(func() {
+			namedCache, _ := newCache(configMergeDefault(nil))
+			set("user-cache", namedCache)
+
+			tc := Of[*testUser]("user-cache")
+			c.So(tc, c.ShouldNotBeNil)
+
+			user := &testUser{Name: "carol", Age: 28}
+			tc.Set("user:3", user)
+			tc.Wait()
+
+			got, found := tc.Get("user:3")
+			c.So(found, c.ShouldBeTrue)
+			c.So(got.Name, c.ShouldEqual, "carol")
+		})
 	})
 }

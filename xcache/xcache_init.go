@@ -84,6 +84,13 @@ func closeXCache() error {
 		cache.Close()
 	}
 
+	// 关闭懒初始化的全局缓存
+	if globalCache != nil {
+		if _, ok := closed[globalCache]; !ok {
+			globalCache.Close()
+		}
+	}
+
 	return errors.Join(errs...)
 }
 

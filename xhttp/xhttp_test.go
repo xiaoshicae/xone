@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/xiaoshicae/xone/xconfig"
 	"github.com/xiaoshicae/xone/xtrace"
@@ -26,6 +27,7 @@ func TestXHttpConfig(t *testing.T) {
 		c.So(config, c.ShouldResemble, &Config{
 			Timeout:             "60s",
 			DialTimeout:         "30s",
+			DialKeepAlive:       "30s",
 			MaxIdleConns:        100,
 			MaxIdleConnsPerHost: 10,
 			IdleConnTimeout:     "90s",
@@ -43,6 +45,7 @@ func TestXHttpConfig(t *testing.T) {
 		c.So(config, c.ShouldResemble, &Config{
 			Timeout:             "1",
 			DialTimeout:         "30s",
+			DialKeepAlive:       "30s",
 			MaxIdleConns:        100,
 			MaxIdleConnsPerHost: 10,
 			IdleConnTimeout:     "90s",
@@ -142,6 +145,8 @@ func TestInitHttpClient(t *testing.T) {
 	mockey.PatchConvey("TestInitHttpClient-Success-NoTrace", t, func() {
 		mockey.Mock(getConfig).Return(&Config{
 			Timeout:             "60s",
+			DialTimeout:         "30s",
+			DialKeepAlive:       "30s",
 			MaxIdleConns:        100,
 			MaxIdleConnsPerHost: 10,
 			IdleConnTimeout:     "90s",
@@ -156,6 +161,8 @@ func TestInitHttpClient(t *testing.T) {
 	mockey.PatchConvey("TestInitHttpClient-Success-WithTrace", t, func() {
 		mockey.Mock(getConfig).Return(&Config{
 			Timeout:             "60s",
+			DialTimeout:         "30s",
+			DialKeepAlive:       "30s",
 			MaxIdleConns:        100,
 			MaxIdleConnsPerHost: 10,
 			IdleConnTimeout:     "90s",
@@ -170,6 +177,8 @@ func TestInitHttpClient(t *testing.T) {
 	mockey.PatchConvey("TestInitHttpClient-Success-WithRetry", t, func() {
 		mockey.Mock(getConfig).Return(&Config{
 			Timeout:             "60s",
+			DialTimeout:         "30s",
+			DialKeepAlive:       "30s",
 			MaxIdleConns:        100,
 			MaxIdleConnsPerHost: 10,
 			IdleConnTimeout:     "90s",
@@ -181,6 +190,24 @@ func TestInitHttpClient(t *testing.T) {
 
 		err := initHttpClient()
 		c.So(err, c.ShouldBeNil)
+	})
+
+	mockey.PatchConvey("TestInitHttpClient-Success-WithCustomDialTimeout", t, func() {
+		mockey.Mock(getConfig).Return(&Config{
+			Timeout:             "60s",
+			DialTimeout:         "5s",
+			DialKeepAlive:       "30s",
+			MaxIdleConns:        100,
+			MaxIdleConnsPerHost: 10,
+			IdleConnTimeout:     "90s",
+			RetryCount:          0,
+		}, nil).Build()
+		mockey.Mock(xtrace.EnableTrace).Return(false).Build()
+
+		err := initHttpClient()
+		c.So(err, c.ShouldBeNil)
+		c.So(rawHttpClient, c.ShouldNotBeNil)
+		c.So(rawHttpClient.Transport, c.ShouldNotBeNil)
 	})
 }
 
@@ -199,6 +226,8 @@ func TestInitHttpClientDefaultTransportFallback(t *testing.T) {
 
 		mockey.Mock(getConfig).Return(&Config{
 			Timeout:             "60s",
+			DialTimeout:         "30s",
+			DialKeepAlive:       "30s",
 			MaxIdleConns:        100,
 			MaxIdleConnsPerHost: 10,
 			IdleConnTimeout:     "90s",
@@ -208,5 +237,75 @@ func TestInitHttpClientDefaultTransportFallback(t *testing.T) {
 		err := initHttpClient()
 		c.So(err, c.ShouldBeNil)
 		c.So(rawHttpClient.Transport, c.ShouldEqual, stub)
+	})
+}
+
+// TestDialTimeoutApplied 验证 DialTimeout 和 DialKeepAlive 配置是否正确应用到 Transport
+func TestDialTimeoutApplied(t *testing.T) {
+	mockey.PatchConvey("TestDialTimeout-Applied", t, func() {
+		prevRawClient := rawHttpClient
+		prevDefaultClient := defaultClient
+		defer func() {
+			rawHttpClient = prevRawClient
+			defaultClient = prevDefaultClient
+		}()
+
+		// 设置自定义 DialTimeout 和 DialKeepAlive
+		mockey.Mock(getConfig).Return(&Config{
+			Timeout:             "60s",
+			DialTimeout:         "5s",
+			DialKeepAlive:       "15s",
+			MaxIdleConns:        100,
+			MaxIdleConnsPerHost: 10,
+			IdleConnTimeout:     "90s",
+			RetryCount:          0,
+		}, nil).Build()
+		mockey.Mock(xtrace.EnableTrace).Return(false).Build()
+
+		err := initHttpClient()
+		c.So(err, c.ShouldBeNil)
+
+		// 验证 rawHttpClient 已创建
+		c.So(rawHttpClient, c.ShouldNotBeNil)
+
+		// 验证 Transport 已设置
+		transport, ok := rawHttpClient.Transport.(*http.Transport)
+		c.So(ok, c.ShouldBeTrue)
+		c.So(transport, c.ShouldNotBeNil)
+
+		// 验证 DialContext 已设置（不为 nil）
+		c.So(transport.DialContext, c.ShouldNotBeNil)
+
+		// 验证其他 Transport 配置
+		c.So(transport.MaxIdleConns, c.ShouldEqual, 100)
+		c.So(transport.MaxIdleConnsPerHost, c.ShouldEqual, 10)
+		c.So(transport.IdleConnTimeout, c.ShouldEqual, 90*time.Second)
+	})
+}
+
+// TestDialConfigMerge 验证 DialTimeout 和 DialKeepAlive 配置合并逻辑
+func TestDialConfigMerge(t *testing.T) {
+	mockey.PatchConvey("TestDialConfig-ConfigMerge-Empty", t, func() {
+		config := configMergeDefault(&Config{})
+		c.So(config.DialTimeout, c.ShouldEqual, "30s")
+		c.So(config.DialKeepAlive, c.ShouldEqual, "30s")
+	})
+
+	mockey.PatchConvey("TestDialConfig-ConfigMerge-CustomTimeout", t, func() {
+		config := configMergeDefault(&Config{DialTimeout: "5s"})
+		c.So(config.DialTimeout, c.ShouldEqual, "5s")
+		c.So(config.DialKeepAlive, c.ShouldEqual, "30s")
+	})
+
+	mockey.PatchConvey("TestDialConfig-ConfigMerge-CustomKeepAlive", t, func() {
+		config := configMergeDefault(&Config{DialKeepAlive: "15s"})
+		c.So(config.DialTimeout, c.ShouldEqual, "30s")
+		c.So(config.DialKeepAlive, c.ShouldEqual, "15s")
+	})
+
+	mockey.PatchConvey("TestDialConfig-ConfigMerge-CustomBoth", t, func() {
+		config := configMergeDefault(&Config{DialTimeout: "5s", DialKeepAlive: "10s"})
+		c.So(config.DialTimeout, c.ShouldEqual, "5s")
+		c.So(config.DialKeepAlive, c.ShouldEqual, "10s")
 	})
 }

@@ -13,6 +13,7 @@
 XHttp:
   Timeout: "60s"             # HTTP 请求超时时间 (optional, default "60s")，支持 "d" 格式如 "1d"
   DialTimeout: "30s"         # 建立 TCP 连接超时时间 (optional, default "30s")
+  DialKeepAlive: "30s"       # TCP keep-alive 探测间隔 (optional, default "30s")
   MaxIdleConns: 100          # 最大空闲连接数 (optional, default 100)
   MaxIdleConnsPerHost: 10    # 每个 host 最大空闲连接数 (optional, default 10)
   IdleConnTimeout: "90s"     # 空闲连接超时时间 (optional, default "90s")

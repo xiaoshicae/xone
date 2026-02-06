@@ -11,6 +11,10 @@ type Config struct {
 	// optional default "30s"
 	DialTimeout string `mapstructure:"DialTimeout"`
 
+	// DialKeepAlive TCP keep-alive 探测间隔
+	// optional default "30s"
+	DialKeepAlive string `mapstructure:"DialKeepAlive"`
+
 	// MaxIdleConns 最大空闲连接数
 	// optional default 100
 	MaxIdleConns int `mapstructure:"MaxIdleConns"`
@@ -45,6 +49,9 @@ func configMergeDefault(c *Config) *Config {
 	}
 	if c.DialTimeout == "" {
 		c.DialTimeout = "30s"
+	}
+	if c.DialKeepAlive == "" {
+		c.DialKeepAlive = "30s"
 	}
 	if c.MaxIdleConns <= 0 {
 		c.MaxIdleConns = 100

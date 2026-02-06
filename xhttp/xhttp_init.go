@@ -32,7 +32,8 @@ func initHttpClient() error {
 		transport.MaxIdleConnsPerHost = c.MaxIdleConnsPerHost
 		transport.IdleConnTimeout = xutil.ToDuration(c.IdleConnTimeout)
 		transport.DialContext = (&net.Dialer{
-			Timeout: xutil.ToDuration(c.DialTimeout),
+			Timeout:   xutil.ToDuration(c.DialTimeout),
+			KeepAlive: xutil.ToDuration(c.DialKeepAlive),
 		}).DialContext
 		baseTransport = transport
 	} else {

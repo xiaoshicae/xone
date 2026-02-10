@@ -238,7 +238,7 @@ func TestGetHandlerSimpleName(t *testing.T) {
 		},
 		{
 			input:    "main.handleRequest",
-			expected: "main.handleRequest",
+			expected: "handleRequest",
 		},
 		{
 			input:    "simpleHandler",
@@ -248,13 +248,29 @@ func TestGetHandlerSimpleName(t *testing.T) {
 			input:    "/path/to/handler.Method",
 			expected: "Method",
 		},
+		{
+			input:    "github.com/xiaoshicae/xone/v2/xgin/middleware.LogMiddleware.func1",
+			expected: "LogMiddleware",
+		},
+		{
+			input:    "main.main.func1",
+			expected: "main",
+		},
+		{
+			input:    "main.func1",
+			expected: "",
+		},
+		{
+			input:    "github.com/project/handler.Setup.func1.func2",
+			expected: "Setup",
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
 			result := GetHandlerSimpleName(tt.input)
 			if result != tt.expected {
-				t.Errorf("expected %s, got %s", tt.expected, result)
+				t.Errorf("expected '%s', got '%s'", tt.expected, result)
 			}
 		})
 	}
@@ -400,7 +416,7 @@ func TestGetHandlerSimpleNameEdgeCases(t *testing.T) {
 		{
 			name:     "simple with dot",
 			input:    "handler.Method",
-			expected: "handler.Method", // 没有 / 所以返回原样
+			expected: "Method",
 		},
 	}
 

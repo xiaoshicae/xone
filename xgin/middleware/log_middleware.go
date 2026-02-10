@@ -100,7 +100,16 @@ func LogMiddleware(opts ...LogOption) gin.HandlerFunc {
 		requestInfo["response_header"] = ToJsonString(filterSensitiveHeaders(c.Writer.Header()))
 		requestInfo["response_status"] = c.Writer.Status()
 
-		logrus.WithContext(c.Request.Context()).WithFields(requestInfo).Infof("[XGin-LogMiddleware] %s request processed.", GetHandlerSimpleName(c.HandlerName()))
+		// 构建日志描述：METHOD 路由 (HandlerName)
+		route := c.FullPath()
+		if route == "" {
+			route = c.Request.URL.Path
+		}
+		desc := c.Request.Method + " " + route
+		if handlerName := GetHandlerSimpleName(c.HandlerName()); handlerName != "" {
+			desc += " (" + handlerName + ")"
+		}
+		logrus.WithContext(c.Request.Context()).WithFields(requestInfo).Infof("[XGin-LogMiddleware] %s request processed.", desc)
 	}
 }
 
@@ -235,24 +244,51 @@ func GetTraceIDFromCtx(ctx context.Context) string {
 
 func GetHandlerSimpleName(handlerName string) string {
 	if handlerName == "" {
-		return handlerName
+		return ""
 	}
 
-	index := strings.LastIndex(handlerName, "/")
-	if index == -1 {
-		return handlerName
-	}
-
-	if index < len(handlerName)-1 {
+	// 提取最后一个 "/" 后的部分（去掉模块路径）
+	if index := strings.LastIndex(handlerName, "/"); index >= 0 && index < len(handlerName)-1 {
 		handlerName = handlerName[index+1:]
 	}
 
-	index = strings.Index(handlerName, ".")
-	if index >= 0 && index < len(handlerName)-1 {
+	// 去掉包名前缀（第一个 "." 之前的部分）
+	if index := strings.Index(handlerName, "."); index >= 0 && index < len(handlerName)-1 {
 		handlerName = handlerName[index+1:]
+	}
+
+	// 去掉末尾的匿名函数后缀（如 .func1, .func1.func2）
+	for {
+		dotIdx := strings.LastIndex(handlerName, ".")
+		if dotIdx == -1 {
+			break
+		}
+		if isAnonymousFuncName(handlerName[dotIdx+1:]) {
+			handlerName = handlerName[:dotIdx]
+		} else {
+			break
+		}
+	}
+
+	// 如果整体就是匿名函数名（如 func1），返回空
+	if isAnonymousFuncName(handlerName) {
+		return ""
 	}
 
 	return handlerName
+}
+
+// isAnonymousFuncName 判断是否为 Go 匿名函数名（如 func1, func2）
+func isAnonymousFuncName(name string) bool {
+	if !strings.HasPrefix(name, "func") || len(name) <= 4 {
+		return false
+	}
+	for _, c := range name[4:] {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // getAllSensitiveFields 获取所有敏感字段（默认 + 用户自定义）

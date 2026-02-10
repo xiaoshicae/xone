@@ -51,8 +51,6 @@ func (s *ginServer) Run() error {
 
 	invokeEngineInjectFunc(s.engine)
 
-	PrintBanner()
-
 	s.srv = &http.Server{
 		Addr:    addr,
 		Handler: s.engine.Handler(),
@@ -98,8 +96,6 @@ func (s *ginTLSServer) Run() error {
 
 	invokeEngineInjectFunc(s.engine)
 
-	PrintBanner()
-
 	s.srv = &http.Server{
 		Addr:    addr,
 		Handler: s.engine.Handler(),
@@ -139,11 +135,14 @@ func invokeEngineInjectFunc(engine *gin.Engine) {
 		}
 	}
 
+	// 打印 Banner：优先使用 FuncMap 注入的函数，否则直接调用
 	if f := engine.FuncMap[PrintBannerFuncKey]; f != nil {
 		if ff, ok := f.(func()); ok {
 			ff()
+			return
 		}
 	}
+	PrintBanner()
 }
 
 func setGinSwaggerInfo(swaggerInfo *swag.Spec) {

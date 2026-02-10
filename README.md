@@ -41,6 +41,22 @@ XGin:
 XLog:
   Level: "info"
   Console: true
+<<<<<<< HEAD
+=======
+
+XGorm:
+  Driver: "mysql"
+  DSN: "user:password@tcp(127.0.0.1:3306)/dbname?charset=utf8mb4&parseTime=True"
+
+XHttp:
+  Timeout: "30s"
+  MaxIdleConns: 100
+  MaxIdleConnsPerHost: 10
+
+XCache:
+  MaxCost: 100000
+  DefaultTTL: "5m"
+>>>>>>> origin/main
 ```
 
 ### 3. 启动服务
@@ -69,6 +85,7 @@ func main() {
 
 ## 模块清单
 
+<<<<<<< HEAD
 | 模块                             | 底层库                                                                 | 说明                               | Log | Trace |
 |--------------------------------|---------------------------------------------------------------------|----------------------------------|-----|-------|
 | [xconfig](./xconfig/README.md) | [viper](https://github.com/spf13/viper)                             | 配置管理（YAML + 环境变量 + Profile）      | -   | -     |
@@ -78,6 +95,16 @@ func main() {
 | [xgorm](./xgorm/README.md)     | [gorm](https://gorm.io/)                                            | 数据库（MySQL / PostgreSQL，多数据源）     | ✅   | ✅     |
 | xserver                        | -                                                                   | 服务运行和生命周期管理                      | -   | -     |
 | xgin                           | [gin](https://github.com/gin-gonic/gin)                             | Gin Web 框架集成（Builder 模式 + 内置中间件） | ✅   | ✅     |
+=======
+| 模块      | 底层库                                                                 | 文档                            | Log | Trace | 说明                    |
+|---------|---------------------------------------------------------------------|-------------------------------|-----|-------|-----------------------|
+| xconfig | [viper](https://github.com/spf13/viper)                             | [README](./xconfig/README.md) | -   | -     | 配置管理                  |
+| xlog    | [logrus](https://github.com/sirupsen/logrus)                        | [README](./xlog/README.md)    | -   | -     | 日志记录                  |
+| xtrace  | [opentelemetry](https://github.com/open-telemetry/opentelemetry-go) | [README](./xtrace/README.md)  | -   | -     | 链路追踪                  |
+| xgorm   | [gorm](https://gorm.io/)                                            | [README](./xgorm/README.md)   | ✅   | ✅     | 数据库(MySQL/PostgreSQL) |
+| xhttp   | [go-resty](https://github.com/go-resty/resty)                       | [README](./xhttp/README.md)   | -   | ✅     | HTTP 客户端              |
+| xcache  | [ristretto](https://github.com/dgraph-io/ristretto)                 | [README](./xcache/README.md)  | -   | -     | 本地缓存（支持 TTL/泛型）     |
+>>>>>>> origin/main
 
 ## 服务启动方式
 
@@ -337,8 +364,8 @@ XGorm:
 
 ## 更新日志
 
-- **v2.0.0** (2026-02-10) - **BREAKING**: 合并 ginx 为 xgin 子模块，新增 xserver 模块，Gin 配置从 `Server.Gin` 迁移为独立
-  `XGin` 顶级配置
+- **v2.0.0** (2026-02-10) - **BREAKING**: 合并 ginx 为 xgin 子模块，新增 xserver 模块，Gin 配置从 `Server.Gin` 迁移为独立 `XGin` 顶级配置
+- **v1.3.1** (2026-02-06) - feat: 新增 xcache 本地缓存模块，基于 ristretto，支持 TTL、泛型 API、多实例
 - **v1.2.1** (2026-02-06) - feat: xhttp 新增 DialKeepAlive 配置，支持自定义 TCP keep-alive 探测间隔
 - **v1.2.0** (2026-02-05) - feat: xhttp 新增 DialTimeout 配置，支持自定义 TCP 连接超时时间
 - **v1.1.5** (2026-02-02) - feat: xtrace 新增 B3 传播格式支持，兼容 W3C Trace Context

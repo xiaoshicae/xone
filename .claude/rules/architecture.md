@@ -51,7 +51,10 @@ func configMergeDefault(c *Config) *Config {
 
 ## 错误处理
 
-- 错误信息格式：`fmt.Errorf("XOne xxx failed, err=[%v]", err)`
+- 优先使用 `xerror.XOneError` 统一错误类型，禁止直接使用 `fmt.Errorf`
+- 创建错误：`xerror.New(module, op, err)` 或 `xerror.Newf(module, op, format, args...)`
+- 判断模块错误：`xerror.Is(err, "xconfig")`
+- 提取模块名：`xerror.Module(err)`
 - 不要忽略错误，必须处理或向上传递
 - 使用 `errors.Is()` 和 `errors.As()` 进行错误判断
 - 关键操作失败时记录日志：`xutil.ErrorIfEnableDebug()`
@@ -82,12 +85,25 @@ xserver.R()              // 仅执行 BeforeStart hook（调试用）
 ## xgin 包
 
 ```go
-// XGin Builder（唯一启动方式，支持中间件、Swagger、HTTP/2、TLS）
+// XGin Builder（支持中间件、Swagger、HTTP/2、TLS）
 gx := xgin.New(
     options.EnableLogMiddleware(true),
     options.EnableTraceMiddleware(true),
-).WithRouteRegister(register).WithSwagger(docs.SwaggerInfo).Build()
-xserver.Run(gx)  // gx 实现了 xserver.Server 接口
+).
+    WithRouteRegister(register).
+    WithMiddleware(customMiddleware).
+    WithRecoverFunc(customRecoveryFunc).
+    WithSwagger(docs.SwaggerInfo, options.SwaggerUrlPrefix("/api")).
+    Build()
+
+// 启动方式一：通过 xserver.Run（推荐，gx 实现了 xserver.Server 接口）
+xserver.Run(gx)
+
+// 启动方式二：快捷启动（内部调用 xserver.Run）
+gx.Start()
+
+// 获取原始 gin.Engine（自动调用 Build）
+engine := gx.Engine()
 
 // TLS 和 HTTP/2 通过 YAML 配置启用（XGin.CertFile / XGin.KeyFile / XGin.UseH2C）
 ```

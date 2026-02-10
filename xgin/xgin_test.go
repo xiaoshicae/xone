@@ -423,7 +423,7 @@ func TestNewGinServer(t *testing.T) {
 		Mock((*http.Server).ListenAndServe).Return(errors.New("for test")).Build()
 		Mock((*http.Server).Shutdown).Return(errors.New("for test2")).Build()
 
-		server := newGinServer(gin.New())
+		server := NewServer(gin.New())
 		So(server, ShouldNotBeNil)
 
 		err := server.Run()
@@ -440,10 +440,8 @@ func TestNewGinTLSServer(t *testing.T) {
 		Mock((*http.Server).ListenAndServeTLS).Return(errors.New("for test tls")).Build()
 		Mock((*http.Server).Shutdown).Return(errors.New("for test2 tls")).Build()
 
-		server := newGinTLSServer(gin.New(), "/path/to/cert.pem", "/path/to/key.pem")
+		server := NewTLSServer(gin.New(), "/path/to/cert.pem", "/path/to/key.pem")
 		So(server, ShouldNotBeNil)
-		So(server.certFile, ShouldEqual, "/path/to/cert.pem")
-		So(server.keyFile, ShouldEqual, "/path/to/key.pem")
 
 		err := server.Run()
 		So(err.Error(), ShouldEqual, "for test tls")

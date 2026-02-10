@@ -30,39 +30,40 @@ const (
 
 // ginServer 基于 gin.Engine 的 HTTP 服务器
 type ginServer struct {
-	srv *http.Server
+	engine *gin.Engine
+	srv    *http.Server
 }
 
 // NewServer 从 gin.Engine 创建 Server
 func NewServer(engine *gin.Engine) xserver.Server {
-	return newGinServer(engine)
+	return &ginServer{engine: engine}
 }
 
-func newGinServer(engine *gin.Engine) *ginServer {
+func (s *ginServer) Run() error {
 	ginConfig := GetConfig()
 	if ginConfig.UseHttp2 {
-		engine.UseH2C = true
+		s.engine.UseH2C = true
 		xutil.InfoIfEnableDebug("gin server use http2")
 	}
 
 	addr := net.JoinHostPort(ginConfig.Host, strconv.Itoa(ginConfig.Port))
 	xutil.InfoIfEnableDebug("gin server listen at: %s", addr)
 
-	invokeEngineInjectFunc(engine)
+	invokeEngineInjectFunc(s.engine)
 
-	// 包装一下engine，为后续Run()和Stop()作准备
-	srv := &http.Server{
+	PrintBanner()
+
+	s.srv = &http.Server{
 		Addr:    addr,
-		Handler: engine.Handler(),
+		Handler: s.engine.Handler(),
 	}
-	return &ginServer{srv: srv}
-}
-
-func (s *ginServer) Run() error {
 	return s.srv.ListenAndServe()
 }
 
 func (s *ginServer) Stop() error {
+	if s.srv == nil {
+		return nil
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), defaultWaitStopDuration)
 	defer cancel()
 
@@ -74,6 +75,7 @@ func (s *ginServer) Stop() error {
 
 // ginTLSServer 支持 HTTPS 的 Gin 服务器
 type ginTLSServer struct {
+	engine   *gin.Engine
 	srv      *http.Server
 	certFile string
 	keyFile  string
@@ -81,39 +83,34 @@ type ginTLSServer struct {
 
 // NewTLSServer 从 gin.Engine 创建 TLS Server
 func NewTLSServer(engine *gin.Engine, certFile, keyFile string) xserver.Server {
-	return newGinTLSServer(engine, certFile, keyFile)
+	return &ginTLSServer{engine: engine, certFile: certFile, keyFile: keyFile}
 }
 
-// newGinTLSServer 创建 HTTPS Gin 服务器实例
-func newGinTLSServer(engine *gin.Engine, certFile, keyFile string) *ginTLSServer {
+func (s *ginTLSServer) Run() error {
 	ginConfig := GetConfig()
 	if ginConfig.UseHttp2 {
-		engine.UseH2C = true
+		s.engine.UseH2C = true
 		xutil.InfoIfEnableDebug("gin server use http2")
 	}
 
 	addr := net.JoinHostPort(ginConfig.Host, strconv.Itoa(ginConfig.Port))
 	xutil.InfoIfEnableDebug("gin server listen at: %s (TLS)", addr)
 
-	invokeEngineInjectFunc(engine)
+	invokeEngineInjectFunc(s.engine)
 
-	// 包装一下engine,为后续Run()和Stop()作准备
-	srv := &http.Server{
+	PrintBanner()
+
+	s.srv = &http.Server{
 		Addr:    addr,
-		Handler: engine.Handler(),
+		Handler: s.engine.Handler(),
 	}
-	return &ginTLSServer{
-		srv:      srv,
-		certFile: certFile,
-		keyFile:  keyFile,
-	}
-}
-
-func (s *ginTLSServer) Run() error {
 	return s.srv.ListenAndServeTLS(s.certFile, s.keyFile)
 }
 
 func (s *ginTLSServer) Stop() error {
+	if s.srv == nil {
+		return nil
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), defaultWaitStopDuration)
 	defer cancel()
 

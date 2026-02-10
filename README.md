@@ -364,6 +364,7 @@ XGorm:
 
 ## 更新日志
 
+- **v2.0.3** (2026-02-10) - fix: ginServer 延迟读取配置和打印 Banner 到 Run()，避免启动时 WARN 和 Banner 顺序不对
 - **v2.0.2** (2026-02-10) - refactor: Go module 路径迁移至 v2（`github.com/xiaoshicae/xone/v2`）
 - **v2.0.1** (2026-02-10) - chore: 合并 merge-ginx 分支到 main，版本号对齐
 - **v2.0.0** (2026-02-10) - **BREAKING**: 合并 ginx 为 xgin 子模块，新增 xserver 模块，Gin 配置从 `Server.Gin` 迁移为独立 `XGin` 顶级配置

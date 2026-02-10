@@ -236,7 +236,7 @@ func TestInvokeBeforeStopHook(t *testing.T) {
 		defaultStopTimeout = 1 * time.Second
 		defer func() {
 			resetHooks()
-			defaultStopTimeout = 30 * time.Second
+			defaultStopTimeout = 60 * time.Second
 		}()
 		f := func() error {
 			time.Sleep(2 * time.Second)
@@ -393,7 +393,7 @@ func TestHookIndividualTimeout(t *testing.T) {
 		defaultStopTimeout = 10 * time.Second
 		defer func() {
 			resetHooks()
-			defaultStopTimeout = 30 * time.Second
+			defaultStopTimeout = 60 * time.Second
 		}()
 
 		slowStop := func() error {

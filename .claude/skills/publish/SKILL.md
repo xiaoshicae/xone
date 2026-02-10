@@ -54,10 +54,15 @@ allowed-tools: Bash, Read, Grep, Glob, AskUserQuestion
 - 运行 `GOPROXY=https://proxy.golang.org GO111MODULE=on go list -m github.com/xiaoshicae/xone/v2@<version>` 触发模块索引
 - 如果命令失败，提示用户手动访问 pkg.go.dev 页面
 
-#### 10. 输出结果
+#### 10. 创建 GitHub Release
+- 运行 `gh release create <version> --title "<version>" --generate-notes` 创建 Release
+- 自动根据 PR 和 commit 生成变更说明
+- 如果失败（如 tag 已有 Release），提示用户并继续
+
+#### 11. 输出结果
 - 显示发布成功信息
 - 输出 pkg.go.dev 链接：`https://pkg.go.dev/github.com/xiaoshicae/xone/v2@<version>`
-- 输出 GitHub release 建议：`gh release create <version> --title "<version>" --generate-notes`
+- 输出 GitHub Release 链接：`https://github.com/xiaoshicae/xone/releases/tag/<version>`
 
 ### 用法
 ```

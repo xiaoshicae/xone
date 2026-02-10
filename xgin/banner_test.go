@@ -9,6 +9,8 @@ import (
 )
 
 func TestPrintBanner(t *testing.T) {
+	PrintBanner()
+
 	// 捕获标准输出
 	old := os.Stdout
 	r, w, _ := os.Pipe()

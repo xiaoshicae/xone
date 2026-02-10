@@ -62,28 +62,3 @@ func TestInjectSwaggerInfoWithUrlPrefix(t *testing.T) {
 	// 应该有响应（不是 404）
 	t.Logf("prefixed swagger route response code: %d", w.Code)
 }
-
-func TestInjectPrintBanner(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	engine := gin.New()
-
-	// 测试不 panic
-	injectPrintBanner(engine)
-
-	// 验证函数被注入到 FuncMap
-	if engine.FuncMap[PrintBannerFuncKey] == nil {
-		t.Error("PrintBanner should be injected into FuncMap")
-	}
-}
-
-func TestSwaggerInfoFuncMapKey(t *testing.T) {
-	if SwaggerInfoFuncKey == "" {
-		t.Error("SwaggerInfoFuncKey should not be empty")
-	}
-}
-
-func TestPrintBannerFuncMapKey(t *testing.T) {
-	if PrintBannerFuncKey == "" {
-		t.Error("PrintBannerFuncKey should not be empty")
-	}
-}

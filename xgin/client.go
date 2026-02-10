@@ -10,6 +10,7 @@ import (
 
 	"github.com/xiaoshicae/xone/v2/xgin/middleware"
 	"github.com/xiaoshicae/xone/v2/xgin/options"
+	"github.com/xiaoshicae/xone/v2/xgin/swagger"
 	"github.com/xiaoshicae/xone/v2/xgin/trans"
 
 	"github.com/gin-gonic/gin"
@@ -79,8 +80,10 @@ func (g *XGin) Build() *XGin {
 	// 注册路由
 	g.registerRoute()
 
-	// 向*gin.Engine注入一些额外内容
-	g.injectEngine()
+	// 向*gin.Engine注入swaggar配置
+	if g.swaggerInfo != nil {
+		injectSwaggerInfo(g.swaggerInfo, g.engine, g.swaggerOpts...)
+	}
 
 	// 注册中文翻译器
 	if ginXOptions.EnableZHTranslations {
@@ -105,6 +108,11 @@ func (g *XGin) Engine() *gin.Engine {
 func (g *XGin) Run() error {
 	if !g.build {
 		g.Build()
+	}
+
+	// 在 Run 时填充 swagger 配置（此时 xconfig 已通过 BeforeStart hook 初始化）
+	if g.swaggerInfo != nil {
+		setGinSwaggerInfo(g.swaggerInfo)
 	}
 
 	PrintBanner()
@@ -146,7 +154,7 @@ func (g *XGin) getXGinOptions() *options.Options {
 }
 
 func (g *XGin) registerMiddleware(do *options.Options) {
-	// 提前注入一下session相关信息
+	// 提前注入一下 session 相关信息
 	g.engine.Use(middleware.GinXSessionMiddleware())
 
 	// 注册trace middleware，需要放在靠前的位置，保证traceid能提前生成，后续middleware和handler能正确获取到
@@ -162,9 +170,7 @@ func (g *XGin) registerMiddleware(do *options.Options) {
 		g.engine.Use(middleware.LogMiddleware(middleware.WithSkipPaths(do.LogSkipPaths...)))
 	}
 
-	// TODO: metrics middleware 待补充
-
-	// 注册自定义middleware
+	// 注册自定义的 middleware
 	for _, m := range g.middlewares {
 		g.engine.Use(m)
 	}
@@ -174,14 +180,6 @@ func (g *XGin) registerRoute() {
 	for _, register := range g.routerRegisters {
 		register(g.engine)
 	}
-}
-
-func (g *XGin) injectEngine() {
-	// 向gin.Engine注入swagger信息
-	injectSwaggerInfo(g.swaggerInfo, g.engine, g.swaggerOpts...)
-
-	// 注入banner打印
-	injectPrintBanner(g.engine)
 }
 
 func setGinMode() {
@@ -194,4 +192,22 @@ func setGinMode() {
 	default:
 		gin.SetMode(gin.ReleaseMode)
 	}
+}
+
+func injectSwaggerInfo(swaggerInfo *swag.Spec, engine *gin.Engine, opts ...options.SwaggerOption) {
+	if swaggerInfo == nil || engine == nil {
+		return
+	}
+
+	dso := options.DefaultSwaggerOptions()
+	for _, opt := range opts {
+		opt(dso)
+	}
+
+	swaggerUrl := swagger.SwaggerUrl
+	if dso.UrlPrefix != "" {
+		swaggerUrl = dso.UrlPrefix + swaggerUrl
+	}
+
+	engine.GET(swaggerUrl, swagger.SwaggerHandler)
 }

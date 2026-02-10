@@ -364,6 +364,7 @@ XGorm:
 
 ## 更新日志
 
+- **v2.0.5** (2026-02-10) - fix: 修复 swagger 配置未从 YAML 填充到 swag.Spec 的问题；优化 Banner 渐变色；清理 inject 死代码
 - **v2.0.4** (2026-02-10) - refactor: 优化日志中间件输出格式，使用路由+HandlerName 替代匿名函数名；修复 Banner 打印逻辑
 - **v2.0.3** (2026-02-10) - fix: ginServer 延迟读取配置和打印 Banner 到 Run()，避免启动时 WARN 和 Banner 顺序不对
 - **v2.0.2** (2026-02-10) - refactor: Go module 路径迁移至 v2（`github.com/xiaoshicae/xone/v2`）

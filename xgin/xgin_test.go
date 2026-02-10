@@ -451,62 +451,6 @@ func TestNewGinTLSServer(t *testing.T) {
 	})
 }
 
-func TestInvokeEngineInjectFunc(t *testing.T) {
-	PatchConvey("TestInvokeEngineInjectFunc-WithSwaggerFunc", t, func() {
-		engine := gin.New()
-		called := false
-		engine.FuncMap = map[string]any{
-			SwaggerInfoFuncKey: func() *swag.Spec {
-				called = true
-				return &swag.Spec{}
-			},
-		}
-		Mock(GetSwaggerConfig).Return(&SwaggerConfig{}).Build()
-		Mock(xconfig.GetServerVersion).Return("v1.0.0").Build()
-
-		invokeEngineInjectFunc(engine)
-		So(called, ShouldBeTrue)
-	})
-
-	PatchConvey("TestInvokeEngineInjectFunc-WithPrintBannerFunc", t, func() {
-		engine := gin.New()
-		called := false
-		engine.FuncMap = map[string]any{
-			PrintBannerFuncKey: func() {
-				called = true
-			},
-		}
-
-		invokeEngineInjectFunc(engine)
-		So(called, ShouldBeTrue)
-	})
-
-	PatchConvey("TestInvokeEngineInjectFunc-SwaggerFuncReturnsNil", t, func() {
-		engine := gin.New()
-		called := false
-		engine.FuncMap = map[string]any{
-			SwaggerInfoFuncKey: func() *swag.Spec {
-				called = true
-				return nil
-			},
-		}
-
-		invokeEngineInjectFunc(engine)
-		So(called, ShouldBeTrue)
-	})
-
-	PatchConvey("TestInvokeEngineInjectFunc-WrongFuncType", t, func() {
-		engine := gin.New()
-		engine.FuncMap = map[string]any{
-			SwaggerInfoFuncKey: "not a function",
-			PrintBannerFuncKey: 123,
-		}
-
-		// Should not panic
-		invokeEngineInjectFunc(engine)
-	})
-}
-
 func TestSetGinSwaggerInfo(t *testing.T) {
 	PatchConvey("TestSetGinSwaggerInfo", t, func() {
 		Mock(GetSwaggerConfig).Return(&SwaggerConfig{

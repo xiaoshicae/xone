@@ -18,14 +18,6 @@ import (
 
 const (
 	defaultWaitStopDuration = 30 * time.Second
-
-	// SwaggerInfoFuncKey 用于在 gin.Engine.FuncMap 中注入 Swagger 信息获取函数
-	// 函数签名: func() *swag.Spec
-	SwaggerInfoFuncKey = "__swagger_info__func__"
-
-	// PrintBannerFuncKey 用于在 gin.Engine.FuncMap 中注入启动 Banner 打印函数
-	// 函数签名: func()
-	PrintBannerFuncKey = "__print_banner__func__"
 )
 
 // ginServer 基于 gin.Engine 的 HTTP 服务器
@@ -47,9 +39,10 @@ func (s *ginServer) Run() error {
 	}
 
 	addr := net.JoinHostPort(ginConfig.Host, strconv.Itoa(ginConfig.Port))
-	xutil.InfoIfEnableDebug("gin server listen at: %s", addr)
 
-	invokeEngineInjectFunc(s.engine)
+	PrintBanner()
+
+	xutil.InfoIfEnableDebug("gin server listen on: %s", addr)
 
 	s.srv = &http.Server{
 		Addr:    addr,
@@ -92,9 +85,9 @@ func (s *ginTLSServer) Run() error {
 	}
 
 	addr := net.JoinHostPort(ginConfig.Host, strconv.Itoa(ginConfig.Port))
-	xutil.InfoIfEnableDebug("gin server listen at: %s (TLS)", addr)
 
-	invokeEngineInjectFunc(s.engine)
+	PrintBanner()
+	xutil.InfoIfEnableDebug("gin server listen at: %s (TLS)", addr)
 
 	s.srv = &http.Server{
 		Addr:    addr,
@@ -124,25 +117,6 @@ func Run(engine *gin.Engine) error {
 // RunTLS 便捷启动 HTTPS
 func RunTLS(engine *gin.Engine, certFile, keyFile string) error {
 	return xserver.Run(NewTLSServer(engine, certFile, keyFile))
-}
-
-func invokeEngineInjectFunc(engine *gin.Engine) {
-	if f := engine.FuncMap[SwaggerInfoFuncKey]; f != nil {
-		if ff, ok := f.(func() *swag.Spec); ok {
-			if swaggerInfo := ff(); swaggerInfo != nil {
-				setGinSwaggerInfo(swaggerInfo)
-			}
-		}
-	}
-
-	// 打印 Banner：优先使用 FuncMap 注入的函数，否则直接调用
-	if f := engine.FuncMap[PrintBannerFuncKey]; f != nil {
-		if ff, ok := f.(func()); ok {
-			ff()
-			return
-		}
-	}
-	PrintBanner()
 }
 
 func setGinSwaggerInfo(swaggerInfo *swag.Spec) {

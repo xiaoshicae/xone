@@ -438,7 +438,6 @@ func withCleanGlobal(fn func()) {
 	cacheMap = make(map[string]*Cache)
 	cacheMu.Unlock()
 
-	origOnce := globalOnce
 	origGlobal := globalCache
 	globalOnce = sync.Once{}
 	globalCache = nil
@@ -453,7 +452,7 @@ func withCleanGlobal(fn func()) {
 		}
 		cacheMap = origMap
 		cacheMu.Unlock()
-		globalOnce = origOnce
+		globalOnce = sync.Once{}
 		globalCache = origGlobal
 	}()
 

@@ -4,8 +4,8 @@ import (
 	"os"
 	"testing"
 
-	"github.com/xiaoshicae/xone"
 	"github.com/xiaoshicae/xone/xconfig"
+	"github.com/xiaoshicae/xone/xserver"
 
 	. "github.com/bytedance/mockey"
 	. "github.com/smartystreets/goconvey/convey"
@@ -13,7 +13,7 @@ import (
 
 func TestXConfig(t *testing.T) {
 	PatchConvey("TestXConfig", t, func() {
-		if err := xone.R(); err != nil {
+		if err := xserver.R(); err != nil {
 			panic(err)
 		}
 
@@ -59,7 +59,7 @@ type Config struct {
 var cfg Config
 
 func TestLoadConfig(t *testing.T) {
-	if err := xone.R(); err != nil {
+	if err := xserver.R(); err != nil {
 		t.Fatal(err)
 	}
 

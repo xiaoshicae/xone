@@ -15,9 +15,9 @@ import (
 // 日志相关的方法，注意这里的日志主要用来做XOne debug用，因此只会打印在屏幕上
 
 var (
-	logger     *logrus.Logger
-	initOnce   sync.Once // 确保初始化只执行一次
-	regexOnce  sync.Once // 确保正则编译只执行一次
+	logger    *logrus.Logger
+	initOnce  sync.Once // 确保初始化只执行一次
+	regexOnce sync.Once // 确保正则编译只执行一次
 )
 
 func init() {

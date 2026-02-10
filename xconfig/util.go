@@ -17,9 +17,6 @@ const (
 	defaultServerName    = "unknown.unknown.unknown"
 	defaultServerVersion = "v0.0.1"
 
-	ginConfigKey        = ServerConfigKey + ".Gin"
-	ginSwaggerConfigKey = ginConfigKey + ".GinSwagger"
-
 	dotEnvFileName = ".env"
 )
 
@@ -92,22 +89,6 @@ func GetRawServerName() string {
 // GetServerVersion 获取Server的Version，如果没有配置则为空
 func GetServerVersion() string {
 	return xutil.GetOrDefault(getViperConfig().GetString(serverVersionConfigKey), defaultServerVersion)
-}
-
-// ************ gin 相关配置获取 ************
-
-// GetGinConfig 获取Gin相关配置
-func GetGinConfig() *Gin {
-	config := &Gin{}
-	_ = getViperConfig().UnmarshalKey(ginConfigKey, config)
-	return ginConfigMergeDefault(config)
-}
-
-// GetGinSwaggerConfig 获取Gin-Swagger相关配置
-func GetGinSwaggerConfig() *GinSwagger {
-	config := &GinSwagger{}
-	_ = getViperConfig().UnmarshalKey(ginSwaggerConfigKey, config)
-	return ginSwaggerConfigMergeDefault(config)
 }
 
 func getViperConfig() *viper.Viper {

@@ -28,56 +28,58 @@
           "required": [
             "Active"
           ]
+        }
+      },
+      "required": [
+        "Name"
+      ]
+    },
+    "XGin": {
+      "type": "object",
+      "description": "Gin Web 框架配置",
+      "properties": {
+        "Host": {
+          "type": "string",
+          "description": "服务监听的host，默认0.0.0.0"
         },
-        "Gin": {
+        "Port": {
+          "type": "integer",
+          "description": "服务监听的端口，默认8000"
+        },
+        "UseHttp2": {
+          "type": "boolean",
+          "description": "是否使用http2协议，默认false"
+        },
+        "Swagger": {
           "type": "object",
-          "description": "gin相关配置",
+          "description": "swagger相关配置",
           "properties": {
             "Host": {
               "type": "string",
-              "description": "服务监听的host，默认0.0.0.0"
+              "description": "提供api服务的host"
             },
-            "Port": {
-              "type": "integer",
-              "description": "服务监听的端口，默认8000"
+            "BasePath": {
+              "type": "string",
+              "description": "api公共前缀"
             },
-            "UseHttp2": {
-              "type": "boolean",
-              "description": "是否使用http2协议，默认false"
+            "Title": {
+              "type": "string",
+              "description": "api管理后台的title"
             },
-            "GinSwagger": {
-              "type": "object",
-              "description": "swagger相关配置",
-              "properties": {
-                "Host": {
-                  "type": "string",
-                  "description": "提供api服务的host"
-                },
-                "BasePath": {
-                  "type": "string",
-                  "description": "api公共前缀"
-                },
-                "Title": {
-                  "type": "string",
-                  "description": "api管理后台的title"
-                },
-                "Description": {
-                  "type": "string",
-                  "description": "api管理后台的描述信息"
-                },
-                "Schemes": {
-                  "type": "array",
-                  "description": "api支持的协议，默认[https, http]",
-                  "items": {
-                    "type": "string"
-                  }
-                }
+            "Description": {
+              "type": "string",
+              "description": "api管理后台的描述信息"
+            },
+            "Schemes": {
+              "type": "array",
+              "description": "api支持的协议，默认[https, http]",
+              "items": {
+                "type": "string"
               }
             }
           }
         }
-      },
-      "required": []
+      }
     },
     "XLog": {
       "type": "object",

@@ -35,7 +35,6 @@ func MyIntFunc1() error {
 
 func PanicFunc() error {
 	panic("for test")
-	return nil
 }
 
 // resetHooks 重置所有 hooks 状态，用于测试

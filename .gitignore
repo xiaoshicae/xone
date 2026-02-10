@@ -19,3 +19,6 @@ cover.html
 
 # cov
 coverage.out
+
+# claude local
+.claude/CLAUDE.local.md

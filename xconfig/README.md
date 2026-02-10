@@ -45,25 +45,12 @@
   Server:
     Name: "a.b.c"      # 服务名(required)，log/trace都会需要这个配置
     Version: "v2.0.0"  # 服务版本号(optional default "v0.0.1")，trace上报，swagger版本显示等需要使用该配置
-    
+
     Profiles:          # 环境相关配置(optional default nil)
       Active: "dev"      # 指定启用的环境(required)
-    
-    Gin:               # gin相关配置(optional default nil)
-      Host: "0.0.0.0"    # 服务监听host(optional default "0.0.0.0")
-      Port: 9000         # 服务端口号(optional default 8000)
-      UseHttp2: false    # 是否使用http2协议(optional default false)
-      
-      # 具体参数含义请参考: https://github.com/swaggo/swag/blob/master/README_zh-CN.md#%E9%80%9A%E7%94%A8api%E4%BF%A1%E6%81%AF
-      GinSwagger:        # gin-swagger管理后台相关配置(optional default "")
-        Host: "https://xxx.xxx"       # 提供api服务的host(optional default "")
-        BasePath: "/api/v1"           # api公共前缀(optional default "")
-        Title: "API接口文档"           # api管理后台的title(optional default "")
-        Description: "xxx"            # api管理后台的描述信息(optional default "")
-        Schemes:                      # 支持的协议(optional default ["https", "http"])
-          - "https"
-          - "http"
   ```
+
+> Gin 相关配置已迁移至 `xgin` 模块，请参考 [xgin/README.md](../xgin/README.md)
 
 ### 3. 使用demo
 
@@ -76,23 +63,23 @@
 * 读取
   ```go
   package main
-  
+
   import "github.com/xiaoshicae/xone/xconfig"
-  
+
   // 如果结构体名称, 如果字段名称有特殊命名方式(驼峰映射成下划线等)，需要tag mapstructure 进行映射
   // 具体使用方法请参考: https://github.com/spf13/viper
   type MyConfig  struct {
       X int    `mapstructure:"x"`
       Y string
   }
-  
+
   func main() {
       x := xconfig.GetInt("MyConfig.X")
       println("get config x: ", x)
-    
+
       y := xconfig.GetString("MyConfig.Y")
       println("get config y: ", y)
-	  
+
       myConfig := &MyConfig{}
       _ = xconfig.UnmarshalConfig("MyConfig", myConfig)
       println("get config myConfig: ", myConfig)

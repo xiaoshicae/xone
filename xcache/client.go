@@ -4,8 +4,8 @@ import (
 	"context"
 	"sync"
 
-	"github.com/xiaoshicae/xone/xlog"
-	"github.com/xiaoshicae/xone/xutil"
+	"github.com/xiaoshicae/xone/v2/xlog"
+	"github.com/xiaoshicae/xone/v2/xutil"
 )
 
 const defaultCacheName = "__default_cache__"

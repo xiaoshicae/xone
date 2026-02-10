@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
-	"github.com/xiaoshicae/xone/xlog"
+	"github.com/xiaoshicae/xone/v2/xlog"
 )
 
 func TestGinXSessionMiddleware(t *testing.T) {

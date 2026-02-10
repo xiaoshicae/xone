@@ -6,9 +6,9 @@ import (
 
 	"github.com/dgraph-io/ristretto"
 
-	"github.com/xiaoshicae/xone/xconfig"
-	"github.com/xiaoshicae/xone/xhook"
-	"github.com/xiaoshicae/xone/xutil"
+	"github.com/xiaoshicae/xone/v2/xconfig"
+	"github.com/xiaoshicae/xone/v2/xhook"
+	"github.com/xiaoshicae/xone/v2/xutil"
 )
 
 func init() {

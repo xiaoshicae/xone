@@ -6,7 +6,7 @@ import (
 	"sync"
 
 	"github.com/go-resty/resty/v2"
-	"github.com/xiaoshicae/xone/xutil"
+	"github.com/xiaoshicae/xone/v2/xutil"
 )
 
 var (

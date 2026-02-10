@@ -1,6 +1,6 @@
 package xtrace
 
-import "github.com/xiaoshicae/xone/xutil"
+import "github.com/xiaoshicae/xone/v2/xutil"
 
 const (
 	XTraceConfigKey = "XTrace"

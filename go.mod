@@ -1,4 +1,4 @@
-module github.com/xiaoshicae/xone
+module github.com/xiaoshicae/xone/v2
 
 go 1.24.0
 

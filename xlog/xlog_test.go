@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xiaoshicae/xone/xconfig"
-	"github.com/xiaoshicae/xone/xutil"
+	"github.com/xiaoshicae/xone/v2/xconfig"
+	"github.com/xiaoshicae/xone/v2/xutil"
 
 	"github.com/bytedance/mockey"
 	rotatelogs "github.com/lestrrat-go/file-rotatelogs"

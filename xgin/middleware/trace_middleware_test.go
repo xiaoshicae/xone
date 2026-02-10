@@ -123,7 +123,7 @@ func TestGinXTraceMiddlewareStatusCodes(t *testing.T) {
 }
 
 func TestTracerNameConstant(t *testing.T) {
-	expected := "github.com/xiaoshicae/xone/xgin"
+	expected := "github.com/xiaoshicae/xone/v2/xgin"
 	if tracerName != expected {
 		t.Errorf("tracerName should be %s, got %s", expected, tracerName)
 	}

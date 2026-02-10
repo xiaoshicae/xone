@@ -3,7 +3,7 @@ package xtrace
 import (
 	"strings"
 
-	"github.com/xiaoshicae/xone/xconfig"
+	"github.com/xiaoshicae/xone/v2/xconfig"
 )
 
 const (

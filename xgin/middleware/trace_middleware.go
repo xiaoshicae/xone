@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	tracerName    = "github.com/xiaoshicae/xone/xgin"
+	tracerName    = "github.com/xiaoshicae/xone/v2/xgin"
 	traceIdHeader = "X-Trace-Id"
 )
 

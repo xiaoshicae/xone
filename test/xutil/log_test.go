@@ -3,7 +3,7 @@ package xutil
 import (
 	"testing"
 
-	"github.com/xiaoshicae/xone/xutil"
+	"github.com/xiaoshicae/xone/v2/xutil"
 )
 
 func TestLog(t *testing.T) {

@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xiaoshicae/xone/xhook"
+	"github.com/xiaoshicae/xone/v2/xhook"
 
 	. "github.com/bytedance/mockey"
 	. "github.com/smartystreets/goconvey/convey"

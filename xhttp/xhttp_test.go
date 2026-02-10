@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xiaoshicae/xone/xconfig"
-	"github.com/xiaoshicae/xone/xtrace"
+	"github.com/xiaoshicae/xone/v2/xconfig"
+	"github.com/xiaoshicae/xone/v2/xtrace"
 
 	"github.com/bytedance/mockey"
 	"github.com/go-resty/resty/v2"

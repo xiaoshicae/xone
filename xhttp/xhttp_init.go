@@ -6,10 +6,10 @@ import (
 	"net/http"
 
 	"github.com/go-resty/resty/v2"
-	"github.com/xiaoshicae/xone/xconfig"
-	"github.com/xiaoshicae/xone/xhook"
-	"github.com/xiaoshicae/xone/xtrace"
-	"github.com/xiaoshicae/xone/xutil"
+	"github.com/xiaoshicae/xone/v2/xconfig"
+	"github.com/xiaoshicae/xone/v2/xhook"
+	"github.com/xiaoshicae/xone/v2/xtrace"
+	"github.com/xiaoshicae/xone/v2/xutil"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 

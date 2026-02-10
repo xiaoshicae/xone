@@ -8,8 +8,8 @@ import (
 	"strings"
 
 	"github.com/joho/godotenv"
-	"github.com/xiaoshicae/xone/xhook"
-	"github.com/xiaoshicae/xone/xutil"
+	"github.com/xiaoshicae/xone/v2/xhook"
+	"github.com/xiaoshicae/xone/v2/xutil"
 
 	"github.com/spf13/viper"
 )

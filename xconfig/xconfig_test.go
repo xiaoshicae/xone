@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xiaoshicae/xone/xutil"
+	"github.com/xiaoshicae/xone/v2/xutil"
 
 	"github.com/spf13/viper"
 

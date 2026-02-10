@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xiaoshicae/xone/xconfig"
+	"github.com/xiaoshicae/xone/v2/xconfig"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"

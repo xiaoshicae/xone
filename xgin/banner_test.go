@@ -5,7 +5,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/xiaoshicae/xone"
+	"github.com/xiaoshicae/xone/v2"
 )
 
 func TestPrintBanner(t *testing.T) {

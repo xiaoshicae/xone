@@ -9,8 +9,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/swaggo/swag"
-	"github.com/xiaoshicae/xone/xconfig"
-	"github.com/xiaoshicae/xone/xgin/options"
+	"github.com/xiaoshicae/xone/v2/xconfig"
+	"github.com/xiaoshicae/xone/v2/xgin/options"
 
 	. "github.com/bytedance/mockey"
 	. "github.com/smartystreets/goconvey/convey"

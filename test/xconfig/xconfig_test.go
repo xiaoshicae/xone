@@ -4,8 +4,8 @@ import (
 	"os"
 	"testing"
 
-	"github.com/xiaoshicae/xone/xconfig"
-	"github.com/xiaoshicae/xone/xserver"
+	"github.com/xiaoshicae/xone/v2/xconfig"
+	"github.com/xiaoshicae/xone/v2/xserver"
 
 	. "github.com/bytedance/mockey"
 	. "github.com/smartystreets/goconvey/convey"

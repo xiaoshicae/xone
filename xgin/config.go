@@ -1,6 +1,6 @@
 package xgin
 
-import "github.com/xiaoshicae/xone/xconfig"
+import "github.com/xiaoshicae/xone/v2/xconfig"
 
 const (
 	ginConfigKey        = "XGin"

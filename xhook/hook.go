@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/xiaoshicae/xone/xutil"
+	"github.com/xiaoshicae/xone/v2/xutil"
 
 	"golang.org/x/exp/slices"
 )

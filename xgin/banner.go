@@ -3,7 +3,7 @@ package xgin
 import (
 	"fmt"
 
-	"github.com/xiaoshicae/xone"
+	"github.com/xiaoshicae/xone/v2"
 )
 
 func PrintBanner() {

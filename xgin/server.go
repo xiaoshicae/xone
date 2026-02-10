@@ -8,9 +8,9 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/xiaoshicae/xone/xconfig"
-	"github.com/xiaoshicae/xone/xserver"
-	"github.com/xiaoshicae/xone/xutil"
+	"github.com/xiaoshicae/xone/v2/xconfig"
+	"github.com/xiaoshicae/xone/v2/xserver"
+	"github.com/xiaoshicae/xone/v2/xutil"
 
 	"github.com/gin-gonic/gin"
 	"github.com/swaggo/swag"

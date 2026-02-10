@@ -3,7 +3,7 @@ package xgorm
 import (
 	"context"
 
-	"github.com/xiaoshicae/xone/xlog"
+	"github.com/xiaoshicae/xone/v2/xlog"
 
 	"gorm.io/gorm"
 )

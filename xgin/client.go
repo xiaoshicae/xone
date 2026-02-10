@@ -8,9 +8,9 @@ import (
 	"os"
 	"strings"
 
-	"github.com/xiaoshicae/xone/xgin/middleware"
-	"github.com/xiaoshicae/xone/xgin/options"
-	"github.com/xiaoshicae/xone/xgin/trans"
+	"github.com/xiaoshicae/xone/v2/xgin/middleware"
+	"github.com/xiaoshicae/xone/v2/xgin/options"
+	"github.com/xiaoshicae/xone/v2/xgin/trans"
 
 	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"

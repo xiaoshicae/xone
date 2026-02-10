@@ -4,8 +4,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/swaggo/swag"
 
-	"github.com/xiaoshicae/xone/xgin/options"
-	"github.com/xiaoshicae/xone/xgin/swagger"
+	"github.com/xiaoshicae/xone/v2/xgin/options"
+	"github.com/xiaoshicae/xone/v2/xgin/swagger"
 )
 
 func injectSwaggerInfo(swaggerInfo *swag.Spec, engine *gin.Engine, opts ...options.SwaggerOption) {

@@ -8,9 +8,9 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/xiaoshicae/xone/xhook"
-	_ "github.com/xiaoshicae/xone/xtrace" // 默认加载trace
-	"github.com/xiaoshicae/xone/xutil"
+	"github.com/xiaoshicae/xone/v2/xhook"
+	_ "github.com/xiaoshicae/xone/v2/xtrace" // 默认加载trace
+	"github.com/xiaoshicae/xone/v2/xutil"
 )
 
 // Run 启动Server，会以阻塞方式启动，且等待退出信号

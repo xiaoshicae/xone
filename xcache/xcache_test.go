@@ -9,8 +9,8 @@ import (
 	"github.com/bytedance/mockey"
 	c "github.com/smartystreets/goconvey/convey"
 
-	"github.com/xiaoshicae/xone/xconfig"
-	"github.com/xiaoshicae/xone/xutil"
+	"github.com/xiaoshicae/xone/v2/xconfig"
+	"github.com/xiaoshicae/xone/v2/xutil"
 )
 
 func TestXCacheConfig(t *testing.T) {
@@ -545,4 +545,3 @@ func TestPackageLevelGenericFunctions(t *testing.T) {
 		})
 	})
 }
-

@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"github.com/gin-gonic/gin"
-	"github.com/xiaoshicae/xone/xlog"
+	"github.com/xiaoshicae/xone/v2/xlog"
 )
 
 // GinXSessionMiddleware session中间件

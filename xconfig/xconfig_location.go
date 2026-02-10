@@ -3,7 +3,7 @@ package xconfig
 import (
 	"os"
 
-	"github.com/xiaoshicae/xone/xutil"
+	"github.com/xiaoshicae/xone/v2/xutil"
 )
 
 const (

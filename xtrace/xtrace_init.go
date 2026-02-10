@@ -4,7 +4,6 @@ import (
 	"context"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"github.com/xiaoshicae/xone/v2/xconfig"
 	"github.com/xiaoshicae/xone/v2/xerror"
@@ -21,8 +20,6 @@ import (
 	oteltrace "go.opentelemetry.io/otel/trace"
 )
 
-var defaultShutdownTimeout = 5 * time.Second
-
 var (
 	xTraceShutdownFunc func() error
 	shutdownExecuted   atomic.Bool // 确保 shutdown 只执行一次
@@ -32,13 +29,6 @@ var (
 func init() {
 	xhook.BeforeStart(initXTrace)
 	xhook.BeforeStop(shutdownXTrace)
-}
-
-// SetShutdownTimeout 设置 shutdown 超时时间
-func SetShutdownTimeout(timeout time.Duration) {
-	if timeout > 0 {
-		defaultShutdownTimeout = timeout
-	}
 }
 
 // GetTracer 获取 Tracer，方便用户创建自定义 Span
@@ -107,12 +97,10 @@ func initXTraceByConfig(c *Config, serviceName, serviceVersion string) error {
 		b3.New(),
 	))
 
-	// 使用互斥锁保护 shutdown 函数的设置
+	// 使用互斥锁保护 shutdown 函数的设置，超时由 xhook stop hook 统一控制
 	shutdownMu.Lock()
 	xTraceShutdownFunc = func() error {
-		ctx, cancel := context.WithTimeout(context.Background(), defaultShutdownTimeout)
-		defer cancel()
-		return tp.Shutdown(ctx)
+		return tp.Shutdown(context.Background())
 	}
 	// 重置 shutdown 标志，允许新的 shutdown
 	shutdownExecuted.Store(false)

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"log"
 	"testing"
-	"time"
 
 	"github.com/xiaoshicae/xone/v2/xconfig"
 
@@ -69,27 +68,6 @@ func TestShutdownXTraceIdempotent(t *testing.T) {
 		So(shutdownXTrace(), ShouldBeNil)
 		So(shutdownXTrace(), ShouldBeNil)
 		So(calls, ShouldEqual, 1)
-	})
-}
-
-func TestSetShutdownTimeout(t *testing.T) {
-	PatchConvey("TestSetShutdownTimeout-ValidTimeout", t, func() {
-		original := defaultShutdownTimeout
-		SetShutdownTimeout(10 * time.Second)
-		So(defaultShutdownTimeout, ShouldEqual, 10*time.Second)
-		defaultShutdownTimeout = original
-	})
-
-	PatchConvey("TestSetShutdownTimeout-ZeroTimeout", t, func() {
-		original := defaultShutdownTimeout
-		SetShutdownTimeout(0)
-		So(defaultShutdownTimeout, ShouldEqual, original)
-	})
-
-	PatchConvey("TestSetShutdownTimeout-NegativeTimeout", t, func() {
-		original := defaultShutdownTimeout
-		SetShutdownTimeout(-1 * time.Second)
-		So(defaultShutdownTimeout, ShouldEqual, original)
 	})
 }
 

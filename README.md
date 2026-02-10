@@ -41,8 +41,6 @@ XGin:
 XLog:
   Level: "info"
   Console: true
-<<<<<<< HEAD
-=======
 
 XGorm:
   Driver: "mysql"
@@ -56,7 +54,6 @@ XHttp:
 XCache:
   MaxCost: 100000
   DefaultTTL: "5m"
->>>>>>> origin/main
 ```
 
 ### 3. 启动服务
@@ -65,19 +62,24 @@ XCache:
 package main
 
 import (
+	"github.com/xiaoshicae/xone/v2/xgin"
+	"github.com/xiaoshicae/xone/v2/xgin/options"
+	"github.com/xiaoshicae/xone/v2/xserver"
 	"github.com/gin-gonic/gin"
-	"github.com/xiaoshicae/xone/xgin"
 )
 
 func main() {
-	engine := gin.Default()
-
-	engine.GET("/ping", func(c *gin.Context) {
-		c.JSON(200, gin.H{"message": "pong"})
-	})
+	gx := xgin.New(
+		options.EnableLogMiddleware(true),
+		options.EnableTraceMiddleware(true),
+	).WithRouteRegister(func(e *gin.Engine) {
+		e.GET("/ping", func(c *gin.Context) {
+			c.JSON(200, gin.H{"message": "pong"})
+		})
+	}).Build()
 
 	// 启动服务，自动初始化配置、日志、追踪等所有模块
-	xgin.Run(engine)
+	gx.Start()
 }
 ```
 
@@ -85,7 +87,6 @@ func main() {
 
 ## 模块清单
 
-<<<<<<< HEAD
 | 模块                             | 底层库                                                                 | 说明                               | Log | Trace |
 |--------------------------------|---------------------------------------------------------------------|----------------------------------|-----|-------|
 | [xconfig](./xconfig/README.md) | [viper](https://github.com/spf13/viper)                             | 配置管理（YAML + 环境变量 + Profile）      | -   | -     |
@@ -93,52 +94,51 @@ func main() {
 | [xtrace](./xtrace/README.md)   | [opentelemetry](https://github.com/open-telemetry/opentelemetry-go) | 链路追踪（W3C + B3 传播格式）              | -   | -     |
 | [xhttp](./xhttp/README.md)     | [go-resty](https://github.com/go-resty/resty)                       | HTTP 客户端（重试 + 连接池）               | -   | ✅     |
 | [xgorm](./xgorm/README.md)     | [gorm](https://gorm.io/)                                            | 数据库（MySQL / PostgreSQL，多数据源）     | ✅   | ✅     |
+| [xcache](./xcache/README.md)   | [ristretto](https://github.com/dgraph-io/ristretto)                 | 本地缓存（支持 TTL / 泛型）               | -   | -     |
 | xserver                        | -                                                                   | 服务运行和生命周期管理                      | -   | -     |
-| xgin                           | [gin](https://github.com/gin-gonic/gin)                             | Gin Web 框架集成（Builder 模式 + 内置中间件） | ✅   | ✅     |
-=======
-| 模块      | 底层库                                                                 | 文档                            | Log | Trace | 说明                    |
-|---------|---------------------------------------------------------------------|-------------------------------|-----|-------|-----------------------|
-| xconfig | [viper](https://github.com/spf13/viper)                             | [README](./xconfig/README.md) | -   | -     | 配置管理                  |
-| xlog    | [logrus](https://github.com/sirupsen/logrus)                        | [README](./xlog/README.md)    | -   | -     | 日志记录                  |
-| xtrace  | [opentelemetry](https://github.com/open-telemetry/opentelemetry-go) | [README](./xtrace/README.md)  | -   | -     | 链路追踪                  |
-| xgorm   | [gorm](https://gorm.io/)                                            | [README](./xgorm/README.md)   | ✅   | ✅     | 数据库(MySQL/PostgreSQL) |
-| xhttp   | [go-resty](https://github.com/go-resty/resty)                       | [README](./xhttp/README.md)   | -   | ✅     | HTTP 客户端              |
-| xcache  | [ristretto](https://github.com/dgraph-io/ristretto)                 | [README](./xcache/README.md)  | -   | -     | 本地缓存（支持 TTL/泛型）     |
->>>>>>> origin/main
+| [xgin](./xgin/README.md)       | [gin](https://github.com/gin-gonic/gin)                             | Gin Web 框架集成（Builder 模式 + 内置中间件） | ✅   | ✅     |
 
 ## 服务启动方式
 
 ```go
 import (
 "github.com/gin-gonic/gin"
-"github.com/xiaoshicae/xone/xgin"
-"github.com/xiaoshicae/xone/xgin/options"
-"github.com/xiaoshicae/xone/xserver"
+"github.com/xiaoshicae/xone/v2/xgin"
+"github.com/xiaoshicae/xone/v2/xgin/options"
+"github.com/xiaoshicae/xone/v2/xserver"
 )
 
-// 方式一：Gin HTTP 服务（最常用）
-xgin.Run(engine)
-
-// 方式二：Gin HTTPS 服务
-xgin.RunTLS(engine, "cert.pem", "key.pem")
-
-// 方式三：Builder 模式（启用内置中间件、Swagger 等）
-gx := xgin.New(
+// 方式一：XGin Start 快捷启动（推荐，支持中间件、Swagger、HTTP/2、TLS）
+xgin.New(
 options.EnableLogMiddleware(true),
 options.EnableTraceMiddleware(true),
 ).WithRouteRegister(registerRoutes).
 WithSwagger(docs.SwaggerInfo).
-Build()
+Build().
+Start()
+
+// 方式二：通过 xserver.Run 启动（等价于方式一）
+gx := xgin.New(...).Build()
 xserver.Run(gx)
 
-// 方式四：自定义 Server（实现 xserver.Server 接口）
+// 方式三：自定义 Server（实现 xserver.Server 接口）
 xserver.Run(myServer)
 
-// 方式五：阻塞服务（consumer / job 场景）
+// 方式四：阻塞服务（consumer / job 场景）
 xserver.RunBlocking()
 
-// 方式六：仅初始化模块，不启动服务（调试用）
+// 方式五：仅初始化模块，不启动服务（调试用）
 xserver.R()
+```
+
+TLS 和 HTTP/2 通过 YAML 配置启用：
+
+```yaml
+XGin:
+  Port: 8443
+  UseHttp2: true
+  CertFile: "cert.pem"
+  KeyFile: "key.pem"
 ```
 
 ## 使用模块
@@ -337,6 +337,8 @@ XGin:
   Host: "0.0.0.0"             # 监听地址（默认 0.0.0.0）
   Port: 8000                   # 监听端口（默认 8000）
   UseHttp2: false              # 是否启用 HTTP/2
+  CertFile: ""                 # TLS 证书路径（配置后自动启用 HTTPS）
+  KeyFile: ""                  # TLS 私钥路径
 
 XLog:
   Level: "info"                # 日志级别（默认 info）
@@ -364,6 +366,7 @@ XGorm:
 
 ## 更新日志
 
+- **v2.0.6** (2026-02-10) - refactor: 移除 ginServer/ginTLSServer，统一为 XGin Builder；新增 Start() 快捷启动；TLS/HTTP2 通过 YAML 配置启用
 - **v2.0.5** (2026-02-10) - fix: 修复 swagger 配置未从 YAML 填充到 swag.Spec 的问题；优化 Banner 渐变色；清理 inject 死代码
 - **v2.0.4** (2026-02-10) - refactor: 优化日志中间件输出格式，使用路由+HandlerName 替代匿名函数名；修复 Banner 打印逻辑
 - **v2.0.3** (2026-02-10) - fix: ginServer 延迟读取配置和打印 Banner 到 Run()，避免启动时 WARN 和 Banner 顺序不对

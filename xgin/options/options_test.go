@@ -14,9 +14,6 @@ func TestDefaultOptions(t *testing.T) {
 	if opts.EnableZHTranslations {
 		t.Error("EnableZHTranslations should be false by default")
 	}
-	if opts.Addr != "0.0.0.0:8080" {
-		t.Errorf("Addr should be '0.0.0.0:8080' by default, got %s", opts.Addr)
-	}
 }
 
 func TestEnableLogMiddleware(t *testing.T) {
@@ -88,27 +85,19 @@ func TestEnableZHTranslations(t *testing.T) {
 	}
 }
 
-func TestAddr(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    string
-		expected string
-	}{
-		{"custom addr", "127.0.0.1:9000", "127.0.0.1:9000"},
-		{"empty addr", "", ""},
-		{"localhost", "localhost:8080", "localhost:8080"},
+func TestLogSkipPaths(t *testing.T) {
+	opts := DefaultOptions()
+	opt := LogSkipPaths("/health", "/ready")
+	opt(opts)
+
+	if len(opts.LogSkipPaths) != 2 {
+		t.Errorf("expected 2 skip paths, got %d", len(opts.LogSkipPaths))
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			opts := DefaultOptions()
-			opt := Addr(tt.input)
-			opt(opts)
-
-			if opts.Addr != tt.expected {
-				t.Errorf("expected Addr to be %s, got %s", tt.expected, opts.Addr)
-			}
-		})
+	if opts.LogSkipPaths[0] != "/health" {
+		t.Errorf("expected first path '/health', got %s", opts.LogSkipPaths[0])
+	}
+	if opts.LogSkipPaths[1] != "/ready" {
+		t.Errorf("expected second path '/ready', got %s", opts.LogSkipPaths[1])
 	}
 }
 
@@ -119,7 +108,6 @@ func TestMultipleOptions(t *testing.T) {
 		EnableLogMiddleware(false),
 		EnableTraceMiddleware(false),
 		EnableZHTranslations(true),
-		Addr("192.168.1.1:3000"),
 	}
 
 	for _, opt := range options {
@@ -134,8 +122,5 @@ func TestMultipleOptions(t *testing.T) {
 	}
 	if !opts.EnableZHTranslations {
 		t.Error("EnableZHTranslations should be true")
-	}
-	if opts.Addr != "192.168.1.1:3000" {
-		t.Errorf("Addr should be '192.168.1.1:3000', got %s", opts.Addr)
 	}
 }

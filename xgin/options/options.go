@@ -28,19 +28,12 @@ func EnableZHTranslations(enableZHTranslations bool) Option {
 	}
 }
 
-func Addr(addr string) Option {
-	return func(o *Options) {
-		o.Addr = addr
-	}
-}
-
 type Option func(*Options)
 
 type Options struct {
 	EnableLogMiddleware   bool
 	EnableTraceMiddleware bool
 	EnableZHTranslations  bool
-	Addr                  string
 	LogSkipPaths          []string // 日志中间件忽略的路由列表
 }
 
@@ -50,6 +43,5 @@ func DefaultOptions() *Options {
 		EnableTraceMiddleware: true,
 		EnableZHTranslations:  false,
 		LogSkipPaths:          make([]string, 0),
-		Addr:                  "0.0.0.0:8080",
 	}
 }

@@ -82,14 +82,12 @@ xserver.R()              // 仅执行 BeforeStart hook（调试用）
 ## xgin 包
 
 ```go
-// 便捷启动
-xgin.Run(engine)
-xgin.RunTLS(engine, certFile, keyFile)
-
-// Builder 模式
+// XGin Builder（唯一启动方式，支持中间件、Swagger、HTTP/2、TLS）
 gx := xgin.New(
     options.EnableLogMiddleware(true),
     options.EnableTraceMiddleware(true),
 ).WithRouteRegister(register).WithSwagger(docs.SwaggerInfo).Build()
 xserver.Run(gx)  // gx 实现了 xserver.Server 接口
+
+// TLS 和 HTTP/2 通过 YAML 配置启用（XGin.CertFile / XGin.KeyFile / XGin.UseHttp2）
 ```

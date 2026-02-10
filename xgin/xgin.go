@@ -4,18 +4,28 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
+	"time"
 
+	"github.com/xiaoshicae/xone/v2/xconfig"
 	"github.com/xiaoshicae/xone/v2/xgin/middleware"
 	"github.com/xiaoshicae/xone/v2/xgin/options"
 	"github.com/xiaoshicae/xone/v2/xgin/swagger"
 	"github.com/xiaoshicae/xone/v2/xgin/trans"
+	"github.com/xiaoshicae/xone/v2/xserver"
+	"github.com/xiaoshicae/xone/v2/xutil"
 
 	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"
 	"github.com/swaggo/swag"
+)
+
+const (
+	defaultWaitStopDuration = 30 * time.Second
 )
 
 // New 创建 XGin builder
@@ -45,7 +55,6 @@ type XGin struct {
 	swaggerInfo     *swag.Spec
 	swaggerOpts     []options.SwaggerOption
 
-	addr  string       // 服务监听地址(host+port)
 	srv   *http.Server // 对gin进行包装后的http server
 	build bool         // XGin实例是否已经build完成
 }
@@ -92,7 +101,6 @@ func (g *XGin) Build() *XGin {
 		}
 	}
 
-	g.addr = ginXOptions.Addr
 	g.build = true
 	return g
 }
@@ -104,25 +112,51 @@ func (g *XGin) Engine() *gin.Engine {
 	return g.engine
 }
 
+// Start 提供快捷启动方式
+func (g *XGin) Start() error {
+	return xserver.Run(g)
+}
+
 // Run 实现 xserver.Server 接口
 func (g *XGin) Run() error {
 	if !g.build {
 		g.Build()
 	}
 
-	// 在 Run 时填充 swagger 配置（此时 xconfig 已通过 BeforeStart hook 初始化）
+	// 从 xconfig 读取配置（此时 xconfig 已通过 BeforeStart hook 初始化）
+	ginConfig := GetConfig()
+
+	// 启用 HTTP/2
+	if ginConfig.UseHttp2 {
+		g.engine.UseH2C = true
+		xutil.InfoIfEnableDebug("gin server use http2")
+	}
+
+	// 填充 swagger 配置
 	if g.swaggerInfo != nil {
 		setGinSwaggerInfo(g.swaggerInfo)
 	}
 
+	addr := net.JoinHostPort(ginConfig.Host, strconv.Itoa(ginConfig.Port))
+
 	PrintBanner()
 
+	xutil.InfoIfEnableDebug("gin server listen on: %s", addr)
+
 	g.srv = &http.Server{
-		Addr:    g.addr,
+		Addr:    addr,
 		Handler: g.engine.Handler(),
 	}
 
-	err := g.srv.ListenAndServe()
+	// 根据 TLS 配置决定启动方式
+	var err error
+	if ginConfig.CertFile != "" && ginConfig.KeyFile != "" {
+		xutil.InfoIfEnableDebug("gin server use TLS, cert=[%s], key=[%s]", ginConfig.CertFile, ginConfig.KeyFile)
+		err = g.srv.ListenAndServeTLS(ginConfig.CertFile, ginConfig.KeyFile)
+	} else {
+		err = g.srv.ListenAndServe()
+	}
+
 	if errors.Is(err, http.ErrServerClosed) {
 		return nil
 	}
@@ -210,4 +244,14 @@ func injectSwaggerInfo(swaggerInfo *swag.Spec, engine *gin.Engine, opts ...optio
 	}
 
 	engine.GET(swaggerUrl, swagger.SwaggerHandler)
+}
+
+func setGinSwaggerInfo(swaggerInfo *swag.Spec) {
+	ginSwaggerConfig := GetSwaggerConfig()
+	swaggerInfo.Version = xconfig.GetServerVersion()
+	swaggerInfo.Host = ginSwaggerConfig.Host
+	swaggerInfo.BasePath = ginSwaggerConfig.BasePath
+	swaggerInfo.Title = ginSwaggerConfig.Title
+	swaggerInfo.Description = ginSwaggerConfig.Description
+	swaggerInfo.Schemes = ginSwaggerConfig.Schemes
 }

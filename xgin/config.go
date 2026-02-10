@@ -21,6 +21,14 @@ type Config struct {
 	// optional default false
 	UseHttp2 bool `mapstructure:"UseHttp2"`
 
+	// CertFile TLS 证书路径
+	// optional default ""
+	CertFile string `mapstructure:"CertFile"`
+
+	// KeyFile TLS 私钥路径
+	// optional default ""
+	KeyFile string `mapstructure:"KeyFile"`
+
 	// Swagger swagger相关配置
 	// optional default nil
 	Swagger *SwaggerConfig `mapstructure:"Swagger"`

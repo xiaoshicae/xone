@@ -3,11 +3,11 @@ package xgorm
 import (
 	"context"
 	"errors"
-	"fmt"
 	"sync"
 	"time"
 
 	"github.com/xiaoshicae/xone/v2/xconfig"
+	"github.com/xiaoshicae/xone/v2/xerror"
 	"github.com/xiaoshicae/xone/v2/xhook"
 	"github.com/xiaoshicae/xone/v2/xtrace"
 	"github.com/xiaoshicae/xone/v2/xutil"
@@ -47,13 +47,13 @@ func initXGorm() error {
 func initSingle() error {
 	config, err := getConfig()
 	if err != nil {
-		return fmt.Errorf("XOne init %s getConfig failed, err=[%v]", XGormConfigKey, err)
+		return xerror.Newf("xgorm", "init", "getConfig failed, err=[%v]", err)
 	}
 	xutil.InfoIfEnableDebug("XOne init %s got config: %s", XGormConfigKey, xutil.ToJsonString(config))
 
 	client, err := newClient(config)
 	if err != nil {
-		return fmt.Errorf("XOne init %s newClient failed, err=[%v]", XGormConfigKey, err)
+		return xerror.Newf("xgorm", "init", "newClient failed, err=[%v]", err)
 	}
 
 	setDefault(client)
@@ -63,14 +63,14 @@ func initSingle() error {
 func initMulti() error {
 	configs, err := getMultiConfig()
 	if err != nil {
-		return fmt.Errorf("XOne init %s getMultiConfig failed, err=[%v]", XGormConfigKey, err)
+		return xerror.Newf("xgorm", "init", "getMultiConfig failed, err=[%v]", err)
 	}
 	xutil.InfoIfEnableDebug("XOne init %s got config: %s", XGormConfigKey, xutil.ToJsonString(configs))
 
 	for idx, config := range configs {
 		client, err := newClient(config)
 		if err != nil {
-			return fmt.Errorf("XOne init %s newClient failed, name: %v, err=[%v]", XGormConfigKey, config.Name, err)
+			return xerror.Newf("xgorm", "init", "newClient failed, name=[%v], err=[%v]", config.Name, err)
 		}
 
 		set(config.Name, client)
@@ -99,11 +99,11 @@ func closeXGorm() error {
 
 		db, err := client.DB()
 		if err != nil {
-			errs = append(errs, fmt.Errorf("get underlying db failed: %w", err))
+			errs = append(errs, xerror.Newf("xgorm", "close", "get underlying db failed, err=[%v]", err))
 			continue
 		}
 		if err := db.Close(); err != nil {
-			errs = append(errs, fmt.Errorf("close db failed: %w", err))
+			errs = append(errs, xerror.Newf("xgorm", "close", "close db failed, err=[%v]", err))
 		}
 	}
 	return errors.Join(errs...)
@@ -135,7 +135,7 @@ func setDefault(client *gorm.DB) {
 func newClient(c *Config) (*gorm.DB, error) {
 	dialector, err := resolveDialector(c)
 	if err != nil {
-		return nil, fmt.Errorf("newClient invoke resolveDialector failed, err=[%v]", err)
+		return nil, xerror.Newf("xgorm", "newClient", "invoke resolveDialector failed, err=[%v]", err)
 	}
 
 	gormConfig := &gorm.Config{}
@@ -144,12 +144,12 @@ func newClient(c *Config) (*gorm.DB, error) {
 	}
 	client, err := gorm.Open(dialector, gormConfig)
 	if err != nil {
-		return nil, fmt.Errorf("newClient invoke gorm.Open failed, err=[%v]", err)
+		return nil, xerror.Newf("xgorm", "newClient", "invoke gorm.Open failed, err=[%v]", err)
 	}
 
 	db, err := client.DB()
 	if err != nil {
-		return nil, fmt.Errorf("newClient invoke client.DB failed, err=[%v]", err)
+		return nil, xerror.Newf("xgorm", "newClient", "invoke client.DB failed, err=[%v]", err)
 	}
 
 	// 连接池参数配置
@@ -160,12 +160,12 @@ func newClient(c *Config) (*gorm.DB, error) {
 
 	err = xutil.Retry(func() error { return db.PingContext(context.Background()) }, 3, time.Second)
 	if err != nil {
-		return nil, fmt.Errorf("newClient invoke db.PingContext failed, err=[%v]", err)
+		return nil, xerror.Newf("xgorm", "newClient", "invoke db.PingContext failed, err=[%v]", err)
 	}
 
 	if xtrace.EnableTrace() {
 		if err := client.Use(tracing.NewPlugin(tracing.WithoutMetrics())); err != nil {
-			return nil, fmt.Errorf("newClient use tracing.NewPlugin failed, err=[%v]", err)
+			return nil, xerror.Newf("xgorm", "newClient", "use tracing.NewPlugin failed, err=[%v]", err)
 		}
 	}
 
@@ -175,18 +175,18 @@ func newClient(c *Config) (*gorm.DB, error) {
 // resolveDialector 根据 driver 类型返回对应的 gorm dialector
 func resolveDialector(c *Config) (gorm.Dialector, error) {
 	if c == nil {
-		return nil, fmt.Errorf("config can't be empty")
+		return nil, xerror.Newf("xgorm", "resolveDialector", "config can't be empty")
 	}
 
 	if c.DSN == "" {
-		return nil, fmt.Errorf("dsn can't be empty")
+		return nil, xerror.Newf("xgorm", "resolveDialector", "dsn can't be empty")
 	}
 
 	switch c.GetDriver() {
 	case DriverMySQL:
 		resolvedDSN, err := resolveMySQLDSN(c)
 		if err != nil {
-			return nil, fmt.Errorf("resolve mysql dsn failed, err=[%v]", err)
+			return nil, xerror.Newf("xgorm", "resolveDialector", "resolve mysql dsn failed, err=[%v]", err)
 		}
 		xutil.InfoIfEnableDebug("XOne initXGorm newClient resolve MySQL DSN: %s", resolvedDSN)
 		return mysql.Open(resolvedDSN), nil
@@ -196,7 +196,7 @@ func resolveDialector(c *Config) (gorm.Dialector, error) {
 		return postgres.Open(c.DSN), nil
 
 	default:
-		return nil, fmt.Errorf("unsupported driver: %s, supported: mysql, postgres", c.GetDriver())
+		return nil, xerror.Newf("xgorm", "resolveDialector", "unsupported driver: %s, supported: mysql, postgres", c.GetDriver())
 	}
 }
 
@@ -230,7 +230,7 @@ func getConfig() (*Config, error) {
 	}
 	c = configMergeDefault(c)
 	if c.DSN == "" {
-		return nil, fmt.Errorf("config XGorm.DSN can not be empty")
+		return nil, xerror.Newf("xgorm", "getConfig", "config XGorm.DSN can not be empty")
 	}
 	return c, nil
 }
@@ -243,10 +243,10 @@ func getMultiConfig() ([]*Config, error) {
 	for _, c := range multiConfig {
 		c = configMergeDefault(c)
 		if c.DSN == "" {
-			return nil, fmt.Errorf("multi config XGorm.DSN can not be empty")
+			return nil, xerror.Newf("xgorm", "getMultiConfig", "multi config XGorm.DSN can not be empty")
 		}
 		if c.Name == "" {
-			return nil, fmt.Errorf("multi config XGorm.Name can not be empty")
+			return nil, xerror.Newf("xgorm", "getMultiConfig", "multi config XGorm.Name can not be empty")
 		}
 	}
 	return multiConfig, nil

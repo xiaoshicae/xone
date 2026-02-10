@@ -35,17 +35,17 @@ func (m MockServer) Stop() error {
 func TestRunWithSeverRun(t *testing.T) {
 	PatchConvey("TestRunWithSeverRun-Panic", t, func() {
 		err := runWithSever(nil)
-		So(err.Error(), ShouldEqual, "XOne Run server failed, err=[panic occurred, runtime error: invalid memory address or nil pointer dereference]")
+		So(err.Error(), ShouldEqual, "XOne xserver run failed, err=[panic occurred, runtime error: invalid memory address or nil pointer dereference]")
 	})
 
 	PatchConvey("TestRunWithSeverRun-Panic2", t, func() {
 		err := runWithSever(PanicRunServer{})
-		So(err.Error(), ShouldEqual, "XOne Run server failed, err=[panic occurred, panic run]")
+		So(err.Error(), ShouldEqual, "XOne xserver run failed, err=[panic occurred, panic run]")
 	})
 
 	PatchConvey("TestRunWithSeverRun-Err", t, func() {
 		err := runWithSever(ErrRunServer{})
-		So(err.Error(), ShouldEqual, "XOne Run server failed, err=[err run]")
+		So(err.Error(), ShouldEqual, "XOne xserver run failed, err=[err run]")
 	})
 
 	PatchConvey("TestRunWithSeverRun-ExistWitNil", t, func() {
@@ -57,17 +57,17 @@ func TestRunWithSeverRun(t *testing.T) {
 func TestSafeInvokeServerStop(t *testing.T) {
 	PatchConvey("TestRunWithSeverRun-Panic", t, func() {
 		err := safeInvokeServerStop(nil)
-		So(err.Error(), ShouldEqual, "panic occurred, runtime error: invalid memory address or nil pointer dereference")
+		So(err.Error(), ShouldEqual, "XOne xserver stop failed, err=[panic occurred, runtime error: invalid memory address or nil pointer dereference]")
 	})
 
 	PatchConvey("TestRunWithSeverRun-Panic2", t, func() {
 		err := safeInvokeServerStop(PanicStopServer{})
-		So(err.Error(), ShouldEqual, "panic occurred, stop panic")
+		So(err.Error(), ShouldEqual, "XOne xserver stop failed, err=[panic occurred, stop panic]")
 	})
 
 	PatchConvey("TestRunWithSeverRun-Err", t, func() {
 		err := safeInvokeServerStop(ErrStopServer{})
-		So(err.Error(), ShouldEqual, "stop err")
+		So(err.Error(), ShouldEqual, "XOne xserver stop failed, err=[stop err]")
 	})
 
 	PatchConvey("TestRunWithSeverStop-ExistWitNil", t, func() {
@@ -80,7 +80,7 @@ func TestRunWithSeverStopError(t *testing.T) {
 	t.Skip("测试主动打断进程，退出err，需要手动执行")
 	PatchConvey("TestRunWithSeverStopError", t, func() {
 		err := runWithSever(DemoServerStopError{})
-		So(err.Error(), ShouldEqual, "XOne Stop server failed, err=[stop err]")
+		So(err.Error(), ShouldEqual, "XOne xserver stop failed, err=[stop err]")
 	})
 }
 

@@ -89,5 +89,5 @@ gx := xgin.New(
 ).WithRouteRegister(register).WithSwagger(docs.SwaggerInfo).Build()
 xserver.Run(gx)  // gx 实现了 xserver.Server 接口
 
-// TLS 和 HTTP/2 通过 YAML 配置启用（XGin.CertFile / XGin.KeyFile / XGin.UseHttp2）
+// TLS 和 HTTP/2 通过 YAML 配置启用（XGin.CertFile / XGin.KeyFile / XGin.UseH2C）
 ```

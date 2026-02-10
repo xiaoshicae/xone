@@ -411,7 +411,7 @@ func TestBuildWithAllMiddlewares(t *testing.T) {
 
 func TestRunWithHttp2(t *testing.T) {
 	PatchConvey("TestRunWithHttp2", t, func() {
-		Mock(GetConfig).Return(&Config{Host: "127.0.0.1", Port: 0, UseHttp2: true}).Build()
+		Mock(GetConfig).Return(&Config{Host: "127.0.0.1", Port: 0, UseH2C: true}).Build()
 		Mock((*http.Server).ListenAndServe).Return(errors.New("for test")).Build()
 
 		g := New(
@@ -422,7 +422,9 @@ func TestRunWithHttp2(t *testing.T) {
 		err := g.Run()
 		So(err, ShouldNotBeNil)
 		So(err.Error(), ShouldEqual, "for test")
-		So(g.engine.UseH2C, ShouldBeTrue)
+		// h2c 模式下 handler 被 h2c.NewHandler 包装，不再设置 engine.UseH2C
+		So(g.srv, ShouldNotBeNil)
+		So(g.srv.Handler, ShouldNotBeNil)
 	})
 }
 

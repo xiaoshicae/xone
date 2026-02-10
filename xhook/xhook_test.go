@@ -25,7 +25,7 @@ func TestSafeInvokeHook(t *testing.T) {
 	PatchConvey("TestSafeInvokeHook", t, func() {
 		err := safeInvokeHook(PanicFunc)
 		So(err, ShouldNotBeNil)
-		So(err.Error(), ShouldEqual, "panic occurred, for test")
+		So(err.Error(), ShouldEqual, "XOne xhook invokeHook failed, err=[panic occurred, for test]")
 	})
 }
 
@@ -43,6 +43,7 @@ func resetHooks() {
 	beforeStartHooksSorted = true
 	beforeStopHooks = beforeStopHooks[:0]
 	beforeStopHooksSorted = true
+	registeredFuncs = make(map[uintptr]string)
 }
 
 func TestXHookBeforeStart(t *testing.T) {
@@ -55,9 +56,8 @@ func TestXHookBeforeStart(t *testing.T) {
 
 		maxHookNum = 1
 
-		h = func() error { return nil }
-		BeforeStart(h)
-		So(func() { BeforeStart(h) }, ShouldPanicWith, "XOne BeforeStart hook can not be more than 1")
+		BeforeStart(IntFunc1)
+		So(func() { BeforeStart(IntFunc2) }, ShouldPanicWith, "XOne BeforeStart hook can not be more than 1")
 	})
 
 	PatchConvey("TestXHookBeforeStart-Sort", t, func() {
@@ -90,9 +90,8 @@ func TestXHookBeforeStop(t *testing.T) {
 
 		maxHookNum = 1
 
-		h = func() error { return nil }
-		BeforeStop(h)
-		So(func() { BeforeStop(h) }, ShouldPanicWith, "XOne BeforeStop hook can not be more than 1")
+		BeforeStop(IntFunc1)
+		So(func() { BeforeStop(IntFunc2) }, ShouldPanicWith, "XOne BeforeStop hook can not be more than 1")
 	})
 
 	PatchConvey("TestXHookBeforeStop-Sort", t, func() {
@@ -124,7 +123,7 @@ func TestInvokeBeforeStartHook(t *testing.T) {
 		}
 		BeforeStart(f)
 		err := InvokeBeforeStartHook()
-		So(err.Error(), ShouldContainSubstring, "XOne invoke before start hook failed")
+		So(err.Error(), ShouldContainSubstring, "XOne xhook BeforeStart failed")
 		So(err.Error(), ShouldContainSubstring, "BeforeStart-Invoke-Err")
 	})
 
@@ -136,7 +135,7 @@ func TestInvokeBeforeStartHook(t *testing.T) {
 		}
 		BeforeStart(f)
 		err := InvokeBeforeStartHook()
-		So(err.Error(), ShouldContainSubstring, "XOne invoke before start hook failed")
+		So(err.Error(), ShouldContainSubstring, "XOne xhook BeforeStart failed")
 		So(err.Error(), ShouldContainSubstring, "panic occurred, BeforeStart-Invoke-Panic")
 	})
 
@@ -169,7 +168,7 @@ func TestInvokeBeforeStopHook(t *testing.T) {
 		}
 		BeforeStop(f)
 		err := InvokeBeforeStopHook()
-		So(err.Error(), ShouldContainSubstring, "XOne invoke before stop hook failed")
+		So(err.Error(), ShouldContainSubstring, "XOne xhook BeforeStop failed")
 		So(err.Error(), ShouldContainSubstring, "BeforeStop-Invoke-Err")
 	})
 
@@ -181,7 +180,7 @@ func TestInvokeBeforeStopHook(t *testing.T) {
 		}
 		BeforeStop(f)
 		err := InvokeBeforeStopHook()
-		So(err.Error(), ShouldContainSubstring, "XOne invoke before stop hook failed")
+		So(err.Error(), ShouldContainSubstring, "XOne xhook BeforeStop failed")
 		So(err.Error(), ShouldContainSubstring, "panic occurred, BeforeStop-Invoke-Panic")
 	})
 
@@ -201,7 +200,7 @@ func TestInvokeBeforeStopHook(t *testing.T) {
 		BeforeStop(f2, MustInvokeSuccess(false))
 		BeforeStop(f3, MustInvokeSuccess(false))
 		err := InvokeBeforeStopHook()
-		So(err.Error(), ShouldContainSubstring, "XOne invoke before stop hook failed")
+		So(err.Error(), ShouldContainSubstring, "XOne xhook BeforeStop failed")
 		So(err.Error(), ShouldContainSubstring, "BeforeStop-Invoke-Err")
 		So(err.Error(), ShouldContainSubstring, "BeforeStop-Invoke-Panic")
 	})
@@ -245,7 +244,7 @@ func TestInvokeBeforeStopHook(t *testing.T) {
 		}
 		BeforeStop(f)
 		err := InvokeBeforeStopHook()
-		So(err.Error(), ShouldContainSubstring, "XOne invoke before stop hook failed")
+		So(err.Error(), ShouldContainSubstring, "XOne xhook BeforeStop failed")
 		So(err.Error(), ShouldContainSubstring, "timeout")
 	})
 }
@@ -283,6 +282,41 @@ func TestSetStopTimeout(t *testing.T) {
 
 		SetStopTimeout(-1 * time.Second)
 		So(defaultStopTimeout, ShouldEqual, 5*time.Second)
+	})
+}
+
+func TestHookDedup(t *testing.T) {
+	PatchConvey("TestHookDedup-重复注册跳过", t, func() {
+		resetHooks()
+		defer resetHooks()
+
+		f := func() error { return nil }
+		BeforeStart(f, Order(1))
+		BeforeStart(f, Order(2)) // 重复注册，应跳过
+		hooks := getSortedHooks(&beforeStartHooks, &beforeStartHooksSorted)
+		So(len(hooks), ShouldEqual, 1)
+	})
+
+	PatchConvey("TestHookDedup-不同函数各自注册", t, func() {
+		resetHooks()
+		defer resetHooks()
+
+		BeforeStart(IntFunc1)
+		BeforeStart(IntFunc2)
+		hooks := getSortedHooks(&beforeStartHooks, &beforeStartHooksSorted)
+		So(len(hooks), ShouldEqual, 2)
+	})
+
+	PatchConvey("TestHookDedup-同函数跨类型也检测", t, func() {
+		resetHooks()
+		defer resetHooks()
+
+		BeforeStart(IntFunc1)
+		BeforeStop(IntFunc1) // 同一个函数注册到 BeforeStop，应跳过
+		startHooks := getSortedHooks(&beforeStartHooks, &beforeStartHooksSorted)
+		stopHooks := getSortedHooks(&beforeStopHooks, &beforeStopHooksSorted)
+		So(len(startHooks), ShouldEqual, 1)
+		So(len(stopHooks), ShouldEqual, 0)
 	})
 }
 
@@ -325,4 +359,61 @@ func StopErr2() error {
 
 func StopSuccess() error {
 	return nil
+}
+
+func TestHookIndividualTimeout(t *testing.T) {
+	PatchConvey("TestHookIndividualTimeout-BeforeStart超时", t, func() {
+		resetHooks()
+		defer resetHooks()
+
+		slowFunc := func() error {
+			time.Sleep(2 * time.Second)
+			return nil
+		}
+		BeforeStart(slowFunc, Timeout(500*time.Millisecond))
+		err := InvokeBeforeStartHook()
+		So(err, ShouldNotBeNil)
+		So(err.Error(), ShouldContainSubstring, "hook timeout after")
+	})
+
+	PatchConvey("TestHookIndividualTimeout-BeforeStart正常完成", t, func() {
+		resetHooks()
+		defer resetHooks()
+
+		fastFunc := func() error {
+			return nil
+		}
+		BeforeStart(fastFunc, Timeout(5*time.Second))
+		err := InvokeBeforeStartHook()
+		So(err, ShouldBeNil)
+	})
+
+	PatchConvey("TestHookIndividualTimeout-BeforeStop个体超时", t, func() {
+		resetHooks()
+		defaultStopTimeout = 10 * time.Second
+		defer func() {
+			resetHooks()
+			defaultStopTimeout = 30 * time.Second
+		}()
+
+		slowStop := func() error {
+			time.Sleep(2 * time.Second)
+			return nil
+		}
+		BeforeStop(slowStop, Timeout(500*time.Millisecond))
+		err := InvokeBeforeStopHook()
+		So(err, ShouldNotBeNil)
+		So(err.Error(), ShouldContainSubstring, "hook timeout after")
+	})
+}
+
+func TestInvokeHookWithTimeout(t *testing.T) {
+	PatchConvey("TestInvokeHookWithTimeout-timeout<=0直接执行", t, func() {
+		h := hook{
+			HookFunc: func() error { return nil },
+			Options:  defaultOptions(),
+		}
+		err := invokeHookWithTimeout(h, 0)
+		So(err, ShouldBeNil)
+	})
 }

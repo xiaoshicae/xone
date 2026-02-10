@@ -15,7 +15,7 @@
 XGin:
   Host: "0.0.0.0"        # 服务监听地址 (optional, default "0.0.0.0")
   Port: 8000              # 服务端口号 (optional, default 8000)
-  UseHttp2: false         # 是否启用 HTTP/2 H2C (optional, default false)
+  UseH2C: false         # 非 TLS 下启用 h2c (optional, default false)
   CertFile: ""            # TLS 证书路径 (optional, default ""，配置后自动启用 HTTPS)
   KeyFile: ""             # TLS 私钥路径 (optional, default "")
   Swagger: # Swagger 相关配置 (optional)
@@ -111,7 +111,7 @@ XGin:
 
 ```yaml
 XGin:
-  UseHttp2: true
+  UseH2C: true
 ```
 
 ### 4. API 说明

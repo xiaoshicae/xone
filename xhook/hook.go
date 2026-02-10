@@ -3,10 +3,12 @@ package xhook
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/xiaoshicae/xone/v2/xerror"
 	"github.com/xiaoshicae/xone/v2/xutil"
 
 	"golang.org/x/exp/slices"
@@ -21,7 +23,8 @@ var (
 	beforeStartHooks       = make([]hook, 0)
 	beforeStartHooksSorted = true // 空列表视为已排序
 	beforeStopHooks        = make([]hook, 0)
-	beforeStopHooksSorted  = true // 空列表视为已排序
+	beforeStopHooksSorted  = true                     // 空列表视为已排序
+	registeredFuncs        = make(map[uintptr]string) // 函数指针 -> hookType，用于去重检测
 	hooksMu                sync.RWMutex
 )
 
@@ -64,6 +67,14 @@ func registerHook(f HookFunc, opts []Option, hooks *[]hook, sorted *bool, hookTy
 	hooksMu.Lock()
 	defer hooksMu.Unlock()
 
+	// 去重检测：通过函数指针判断是否重复注册
+	fp := reflect.ValueOf(f).Pointer()
+	if existType, ok := registeredFuncs[fp]; ok {
+		xutil.WarnIfEnableDebug("XOne %s hook duplicate registration detected, already registered as %s, skipping", hookType, existType)
+		return
+	}
+	registeredFuncs[fp] = hookType
+
 	if len(*hooks) >= maxHookNum {
 		panic(fmt.Sprintf("XOne %s hook can not be more than %d", hookType, maxHookNum))
 	}
@@ -72,16 +83,16 @@ func registerHook(f HookFunc, opts []Option, hooks *[]hook, sorted *bool, hookTy
 	*sorted = false // 标记需要重新排序
 }
 
-// InvokeBeforeStartHook 执行所有 BeforeStart Hook
+// InvokeBeforeStartHook 执行所有 BeforeStart Hook，每个 Hook 独立超时
 func InvokeBeforeStartHook() error {
 	hooks := getSortedHooks(&beforeStartHooks, &beforeStartHooksSorted)
 
 	for _, h := range hooks {
 		funcName := getInvokeFuncFullName(h.HookFunc)
-		if err := safeInvokeHook(h.HookFunc); err != nil {
+		if err := invokeHookWithTimeout(h, h.Options.Timeout); err != nil {
 			if h.Options.MustInvokeSuccess {
 				xutil.ErrorIfEnableDebug("XOne invoke before start hook failed, func=[%v], err=[%v]", funcName, err)
-				return fmt.Errorf("XOne invoke before start hook failed, func=[%v], err=[%v]", funcName, err)
+				return xerror.Newf("xhook", "BeforeStart", "func=[%v], err=[%v]", funcName, err)
 			}
 			xutil.WarnIfEnableDebug("XOne invoke before start hook failed, case MustInvokeSuccess=false, before start hook will continue to invoke, func=[%v], err=[%v]", funcName, err)
 		} else {
@@ -110,12 +121,9 @@ func InvokeBeforeStopHook() error {
 
 	select {
 	case err := <-stopErrChan:
-		if err != nil {
-			return fmt.Errorf("XOne invoke before stop hook failed, %v", err)
-		}
-		return nil
+		return err // invokeBeforeStopHook 已返回 xerror
 	case <-ctx.Done():
-		return fmt.Errorf("XOne invoke before stop hook failed, due to timeout after %v", defaultStopTimeout)
+		return xerror.Newf("xhook", "BeforeStop", "timeout after %v", defaultStopTimeout)
 	}
 }
 
@@ -140,13 +148,22 @@ func invokeBeforeStopHook(ctx context.Context, hooks []hook, stopResultChan chan
 		// 检查是否已超时，如果超时则提前退出
 		select {
 		case <-ctx.Done():
-			stopResultChan <- fmt.Errorf("interrupted due to timeout, completed %d/%d hooks", completed, len(hooks))
+			stopResultChan <- xerror.Newf("xhook", "BeforeStop", "interrupted due to timeout, completed %d/%d hooks", completed, len(hooks))
 			return
 		default:
 		}
 
+		// 取 min(个体超时, 全局剩余时间) 作为本次 hook 超时
+		hookTimeout := h.Options.Timeout
+		if deadline, ok := ctx.Deadline(); ok {
+			remaining := time.Until(deadline)
+			if remaining < hookTimeout {
+				hookTimeout = remaining
+			}
+		}
+
 		funcName := getInvokeFuncFullName(h.HookFunc)
-		if err := safeInvokeHook(h.HookFunc); err != nil {
+		if err := invokeHookWithTimeout(h, hookTimeout); err != nil {
 			xutil.ErrorIfEnableDebug("XOne invoke before stop hook failed, func=[%v], err=[%v]", funcName, err)
 			errMsgList = append(errMsgList, fmt.Sprintf("func=[%v], err=[%v]", funcName, err))
 		} else {
@@ -155,16 +172,36 @@ func invokeBeforeStopHook(ctx context.Context, hooks []hook, stopResultChan chan
 		completed++
 	}
 	if len(errMsgList) > 0 {
-		stopResultChan <- fmt.Errorf("%s", strings.Join(errMsgList, "; "))
+		stopResultChan <- xerror.Newf("xhook", "BeforeStop", "%s", strings.Join(errMsgList, "; "))
 	} else {
 		stopResultChan <- nil
+	}
+}
+
+// invokeHookWithTimeout 在指定超时内执行单个 Hook
+func invokeHookWithTimeout(h hook, timeout time.Duration) error {
+	if timeout <= 0 {
+		return safeInvokeHook(h.HookFunc)
+	}
+
+	ch := make(chan error, 1)
+	go func() {
+		ch <- safeInvokeHook(h.HookFunc)
+	}()
+
+	select {
+	case err := <-ch:
+		return err
+	case <-time.After(timeout):
+		funcName := getInvokeFuncFullName(h.HookFunc)
+		return xerror.Newf("xhook", "invokeHook", "hook timeout after %v, func=[%v]", timeout, funcName)
 	}
 }
 
 func safeInvokeHook(h HookFunc) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			err = fmt.Errorf("panic occurred, %v", r)
+			err = xerror.Newf("xhook", "invokeHook", "panic occurred, %v", r)
 		}
 	}()
 	return h()

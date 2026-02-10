@@ -2,12 +2,12 @@ package xserver
 
 import (
 	"errors"
-	"fmt"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 
+	"github.com/xiaoshicae/xone/v2/xerror"
 	"github.com/xiaoshicae/xone/v2/xhook"
 	_ "github.com/xiaoshicae/xone/v2/xtrace" // 默认加载trace
 	"github.com/xiaoshicae/xone/v2/xutil"
@@ -67,14 +67,14 @@ func runWithSever(s Server) error {
 	select {
 	case err := <-serverRunErrChan: // 接收到服务运行失败消息，或者正常退出指令时
 		if err != nil {
-			return fmt.Errorf("XOne Run server failed, err=[%v]", err)
+			return err // safeInvokeServerRun 已返回 xerror
 		}
 		xutil.WarnIfEnableDebug("XOne Run server unexpected stopped")
 		return nil
 	case <-quit: // 接收到退出信号后，执行Server.Stop()
 		xutil.InfoIfEnableDebug("********** XOne Stop server begin **********")
 		if err := safeInvokeServerStop(s); err != nil {
-			return fmt.Errorf("XOne Stop server failed, err=[%v]", err)
+			return err // safeInvokeServerStop 已返回 xerror
 		}
 		xutil.InfoIfEnableDebug("********** XOne Stop server success **********")
 		return nil
@@ -84,13 +84,13 @@ func runWithSever(s Server) error {
 func safeInvokeServerRun(s Server, serverRunErrChan chan<- error) {
 	defer func() {
 		if r := recover(); r != nil {
-			serverRunErrChan <- fmt.Errorf("panic occurred, %v", r)
+			serverRunErrChan <- xerror.Newf("xserver", "run", "panic occurred, %v", r)
 		}
 	}()
 
 	err := s.Run() // 服务一般会阻塞在此处
 	if err != nil && !errors.Is(err, http.ErrServerClosed) {
-		serverRunErrChan <- err
+		serverRunErrChan <- xerror.New("xserver", "run", err)
 	} else {
 		serverRunErrChan <- nil
 	}
@@ -99,12 +99,12 @@ func safeInvokeServerRun(s Server, serverRunErrChan chan<- error) {
 func safeInvokeServerStop(s Server) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			err = fmt.Errorf("panic occurred, %v", r)
+			err = xerror.Newf("xserver", "stop", "panic occurred, %v", r)
 		}
 	}()
 
 	if err = s.Stop(); err != nil {
-		return err
+		return xerror.New("xserver", "stop", err)
 	}
 	return nil
 }

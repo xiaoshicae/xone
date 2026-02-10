@@ -1,7 +1,6 @@
 package xlog
 
 import (
-	"fmt"
 	"io"
 	"os"
 	"path"
@@ -11,6 +10,7 @@ import (
 	"time"
 
 	"github.com/xiaoshicae/xone/v2/xconfig"
+	"github.com/xiaoshicae/xone/v2/xerror"
 	"github.com/xiaoshicae/xone/v2/xhook"
 	"github.com/xiaoshicae/xone/v2/xutil"
 
@@ -33,7 +33,7 @@ func init() {
 func initXLog() error {
 	c, err := getConfig()
 	if err != nil {
-		return fmt.Errorf("XOne initXLog getConfig failed, err=[%v]", err)
+		return xerror.Newf("xlog", "init", "getConfig failed, err=[%v]", err)
 	}
 	xutil.InfoIfEnableDebug("XOne initXLog got config: %s", xutil.ToJsonString(c))
 
@@ -43,7 +43,7 @@ func initXLog() error {
 func initXLogByConfig(c *Config) error {
 	if !xutil.DirExist(c.Path) { // 日志所在文件夹不存在则创建
 		if err := os.MkdirAll(c.Path, os.ModePerm); err != nil {
-			return fmt.Errorf("XOne initXLogByConfig invoke os.MkdirAll failed, path=[%s], err=[%v]", c.Path, err)
+			return xerror.Newf("xlog", "init", "os.MkdirAll failed, path=[%s], err=[%v]", c.Path, err)
 		}
 	}
 
@@ -56,7 +56,7 @@ func initXLogByConfig(c *Config) error {
 		rotatelogs.WithRotationTime(xutil.ToDuration(c.RotateTime)),
 	)
 	if err != nil {
-		return fmt.Errorf("XOne initXLogByConfig invoke rotatelogs.New failed, err=[%v]", err)
+		return xerror.Newf("xlog", "init", "rotatelogs.New failed, err=[%v]", err)
 	}
 
 	// 使用异步写入器包装，避免日志 I/O 阻塞调用方

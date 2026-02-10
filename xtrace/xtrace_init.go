@@ -2,12 +2,12 @@ package xtrace
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/xiaoshicae/xone/v2/xconfig"
+	"github.com/xiaoshicae/xone/v2/xerror"
 	"github.com/xiaoshicae/xone/v2/xhook"
 	"github.com/xiaoshicae/xone/v2/xutil"
 
@@ -49,7 +49,7 @@ func GetTracer(name string, opts ...oteltrace.TracerOption) oteltrace.Tracer {
 func initXTrace() error {
 	c, err := getConfig()
 	if err != nil {
-		return fmt.Errorf("XOne initXTrace getConfig failed, err=[%v]", err)
+		return xerror.Newf("xtrace", "init", "getConfig failed, err=[%v]", err)
 	}
 
 	if c.Enable != nil && !*c.Enable {
@@ -80,7 +80,7 @@ func initXTraceByConfig(c *Config, serviceName, serviceVersion string) error {
 		),
 	)
 	if err != nil {
-		return fmt.Errorf("XOne initXTraceByConfig invoke resource.New failed, err=[%v]", err)
+		return xerror.Newf("xtrace", "init", "resource.New failed, err=[%v]", err)
 	}
 
 	tpOpts := []trace.TracerProviderOption{
@@ -91,7 +91,7 @@ func initXTraceByConfig(c *Config, serviceName, serviceVersion string) error {
 	if c.Console {
 		exporter, err := stdouttrace.New(stdouttrace.WithPrettyPrint())
 		if err != nil {
-			return fmt.Errorf("XOne initXTraceByConfig init exporter failed, err=[%v]", err)
+			return xerror.Newf("xtrace", "init", "init exporter failed, err=[%v]", err)
 		}
 		// 使用 SimpleSpanProcessor 确保每个 Span 都被导出，避免丢失
 		tpOpts = append(tpOpts, trace.WithSpanProcessor(trace.NewSimpleSpanProcessor(exporter)))

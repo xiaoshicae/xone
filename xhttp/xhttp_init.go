@@ -1,12 +1,12 @@
 package xhttp
 
 import (
-	"fmt"
 	"net"
 	"net/http"
 
 	"github.com/go-resty/resty/v2"
 	"github.com/xiaoshicae/xone/v2/xconfig"
+	"github.com/xiaoshicae/xone/v2/xerror"
 	"github.com/xiaoshicae/xone/v2/xhook"
 	"github.com/xiaoshicae/xone/v2/xtrace"
 	"github.com/xiaoshicae/xone/v2/xutil"
@@ -20,7 +20,7 @@ func init() {
 func initHttpClient() error {
 	c, err := getConfig()
 	if err != nil {
-		return fmt.Errorf("XOne initHttpClient invoke getConfig failed, err=[%v]", err)
+		return xerror.Newf("xhttp", "init", "getConfig failed, err=[%v]", err)
 	}
 	xutil.InfoIfEnableDebug("XOne initHttpClient got config: %s", xutil.ToJsonString(c))
 

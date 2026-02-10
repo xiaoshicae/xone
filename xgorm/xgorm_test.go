@@ -163,12 +163,12 @@ func TestInitXGorm(t *testing.T) {
 func TestResolveDialector(t *testing.T) {
 	mockey.PatchConvey("TestResolveDialector-NilConfig", t, func() {
 		_, err := resolveDialector(nil)
-		c.So(err.Error(), c.ShouldEqual, "config can't be empty")
+		c.So(err.Error(), c.ShouldEqual, "XOne xgorm resolveDialector failed, err=[config can't be empty]")
 	})
 
 	mockey.PatchConvey("TestResolveDialector-EmptyDSN", t, func() {
 		_, err := resolveDialector(&Config{})
-		c.So(err.Error(), c.ShouldEqual, "dsn can't be empty")
+		c.So(err.Error(), c.ShouldEqual, "XOne xgorm resolveDialector failed, err=[dsn can't be empty]")
 	})
 
 	mockey.PatchConvey("TestResolveDialector-UnsupportedDriver", t, func() {
@@ -255,14 +255,14 @@ func TestGetConfig(t *testing.T) {
 		mockey.Mock(xconfig.UnmarshalConfig).Return(nil).Build()
 		mockey.Mock(configMergeDefault).Return(&Config{}).Build()
 		_, err := getConfig()
-		c.So(err.Error(), c.ShouldEqual, "config XGorm.DSN can not be empty")
+		c.So(err.Error(), c.ShouldEqual, "XOne xgorm getConfig failed, err=[config XGorm.DSN can not be empty]")
 	})
 
 	mockey.PatchConvey("TestGetConfig-DSN-Empty2", t, func() {
 		mockey.Mock(xconfig.UnmarshalConfig).Return(nil).Build()
 		mockey.Mock(configMergeDefault).Return(&Config{DSN: ""}).Build()
 		_, err := getConfig()
-		c.So(err.Error(), c.ShouldEqual, "config XGorm.DSN can not be empty")
+		c.So(err.Error(), c.ShouldEqual, "XOne xgorm getConfig failed, err=[config XGorm.DSN can not be empty]")
 	})
 
 	mockey.PatchConvey("TestGetConfig-Success", t, func() {
@@ -290,19 +290,19 @@ func TestGetMultiConfig(t *testing.T) {
 		mockey.PatchConvey("TestGetMultiConfig-DSN-Empty1", func() {
 			mockey.Mock(configMergeDefault).Return(&Config{}).Build()
 			_, err := getMultiConfig()
-			c.So(err.Error(), c.ShouldEqual, "multi config XGorm.DSN can not be empty")
+			c.So(err.Error(), c.ShouldEqual, "XOne xgorm getMultiConfig failed, err=[multi config XGorm.DSN can not be empty]")
 		})
 
 		mockey.PatchConvey("TestGetMultiConfig-DSN-Empty2", func() {
 			mockey.Mock(configMergeDefault).Return(&Config{}).Build()
 			_, err := getMultiConfig()
-			c.So(err.Error(), c.ShouldEqual, "multi config XGorm.DSN can not be empty")
+			c.So(err.Error(), c.ShouldEqual, "XOne xgorm getMultiConfig failed, err=[multi config XGorm.DSN can not be empty]")
 		})
 
 		mockey.PatchConvey("TestGetMultiConfig-Name-Empty", func() {
 			mockey.Mock(configMergeDefault).Return(&Config{DSN: "X"}).Build()
 			_, err := getMultiConfig()
-			c.So(err.Error(), c.ShouldEqual, "multi config XGorm.Name can not be empty")
+			c.So(err.Error(), c.ShouldEqual, "XOne xgorm getMultiConfig failed, err=[multi config XGorm.Name can not be empty]")
 		})
 
 		mockey.PatchConvey("TestGetMultiConfig-Success", func() {

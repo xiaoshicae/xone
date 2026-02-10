@@ -3,7 +3,6 @@ package xgin
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net"
 	"net/http"
 	"os"
@@ -12,6 +11,7 @@ import (
 	"time"
 
 	"github.com/xiaoshicae/xone/v2/xconfig"
+	"github.com/xiaoshicae/xone/v2/xerror"
 	"github.com/xiaoshicae/xone/v2/xgin/middleware"
 	"github.com/xiaoshicae/xone/v2/xgin/options"
 	"github.com/xiaoshicae/xone/v2/xgin/swagger"
@@ -22,6 +22,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"
 	"github.com/swaggo/swag"
+	"golang.org/x/net/http2"
+	"golang.org/x/net/http2/h2c"
 )
 
 const (
@@ -126,12 +128,6 @@ func (g *XGin) Run() error {
 	// 从 xconfig 读取配置（此时 xconfig 已通过 BeforeStart hook 初始化）
 	ginConfig := GetConfig()
 
-	// 启用 HTTP/2
-	if ginConfig.UseHttp2 {
-		g.engine.UseH2C = true
-		xutil.InfoIfEnableDebug("gin server use http2")
-	}
-
 	// 填充 swagger 配置
 	if g.swaggerInfo != nil {
 		setGinSwaggerInfo(g.swaggerInfo)
@@ -143,9 +139,18 @@ func (g *XGin) Run() error {
 
 	xutil.InfoIfEnableDebug("gin server listen on: %s", addr)
 
+	// 构建 handler，根据配置决定是否启用 h2c
+	handler := g.engine.Handler()
+	if ginConfig.UseH2C && ginConfig.CertFile == "" && ginConfig.KeyFile == "" {
+		// 非 TLS 模式下使用 h2c（HTTP/2 Cleartext）
+		h2s := &http2.Server{}
+		handler = h2c.NewHandler(handler, h2s)
+		xutil.InfoIfEnableDebug("gin server use h2c (HTTP/2 Cleartext)")
+	}
+
 	g.srv = &http.Server{
 		Addr:    addr,
-		Handler: g.engine.Handler(),
+		Handler: handler,
 	}
 
 	// 根据 TLS 配置决定启动方式
@@ -166,7 +171,7 @@ func (g *XGin) Run() error {
 // Stop 实现 xserver.Server 接口
 func (g *XGin) Stop() error {
 	if g.srv == nil {
-		return fmt.Errorf("server not started")
+		return xerror.Newf("xgin", "stop", "server not started")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), defaultWaitStopDuration)

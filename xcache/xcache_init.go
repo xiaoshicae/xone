@@ -2,11 +2,11 @@ package xcache
 
 import (
 	"errors"
-	"fmt"
 
 	"github.com/dgraph-io/ristretto"
 
 	"github.com/xiaoshicae/xone/v2/xconfig"
+	"github.com/xiaoshicae/xone/v2/xerror"
 	"github.com/xiaoshicae/xone/v2/xhook"
 	"github.com/xiaoshicae/xone/v2/xutil"
 )
@@ -32,13 +32,13 @@ func initXCache() error {
 func initSingle() error {
 	config, err := getConfig()
 	if err != nil {
-		return fmt.Errorf("XOne init %s getConfig failed, err=[%v]", XCacheConfigKey, err)
+		return xerror.Newf("xcache", "init", "getConfig failed, err=[%v]", err)
 	}
 	xutil.InfoIfEnableDebug("XOne init %s got config: %s", XCacheConfigKey, xutil.ToJsonString(config))
 
 	cache, err := newCache(config)
 	if err != nil {
-		return fmt.Errorf("XOne init %s newCache failed, err=[%v]", XCacheConfigKey, err)
+		return xerror.Newf("xcache", "init", "newCache failed, err=[%v]", err)
 	}
 
 	setDefault(cache)
@@ -48,14 +48,14 @@ func initSingle() error {
 func initMulti() error {
 	configs, err := getMultiConfig()
 	if err != nil {
-		return fmt.Errorf("XOne init %s getMultiConfig failed, err=[%v]", XCacheConfigKey, err)
+		return xerror.Newf("xcache", "init", "getMultiConfig failed, err=[%v]", err)
 	}
 	xutil.InfoIfEnableDebug("XOne init %s got config: %s", XCacheConfigKey, xutil.ToJsonString(configs))
 
 	for idx, config := range configs {
 		cache, err := newCache(config)
 		if err != nil {
-			return fmt.Errorf("XOne init %s newCache failed, name: %v, err=[%v]", XCacheConfigKey, config.Name, err)
+			return xerror.Newf("xcache", "init", "newCache failed, name=[%v], err=[%v]", config.Name, err)
 		}
 
 		set(config.Name, cache)
@@ -101,7 +101,7 @@ func newCache(c *Config) (*Cache, error) {
 		BufferItems: c.BufferItems,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("ristretto.NewCache failed, err=[%v]", err)
+		return nil, xerror.Newf("xcache", "newCache", "ristretto.NewCache failed, err=[%v]", err)
 	}
 
 	return &Cache{
@@ -127,7 +127,7 @@ func getMultiConfig() ([]*Config, error) {
 	for _, c := range multiConfig {
 		c = configMergeDefault(c)
 		if c.Name == "" {
-			return nil, fmt.Errorf("multi config XCache.Name can not be empty")
+			return nil, xerror.Newf("xcache", "getMultiConfig", "multi config XCache.Name can not be empty")
 		}
 	}
 	return multiConfig, nil

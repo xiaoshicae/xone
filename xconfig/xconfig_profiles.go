@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/xiaoshicae/xone/v2/xerror"
 	"github.com/xiaoshicae/xone/v2/xutil"
 
 	"github.com/spf13/viper"
@@ -58,7 +59,7 @@ func getProfilesActiveFromViperConfig(vp *viper.Viper) string {
 func toProfilesActiveConfigLocation(configLocation string, pa string) (string, error) {
 	ext := filepath.Ext(configLocation)
 	if ext == "" {
-		return "", fmt.Errorf("config file name is invalid, no extension found")
+		return "", xerror.Newf("xconfig", "init", "config file name is invalid, no extension found")
 	}
 
 	// 去掉扩展名，添加环境后缀，再加回扩展名

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -18,7 +19,47 @@ import (
 
 const (
 	FilteredValue = "***FILTERED***"
+
+	// maxRequestBodySize 请求 body 读取上限 256KB
+	maxRequestBodySize = 256 * 1024
+
+	// maxResponseBodyCapture 响应 body 捕获上限 4KB
+	maxResponseBodyCapture = 4 * 1024
 )
+
+// responseBodyWriter 包装 gin.ResponseWriter，捕获响应 body（仅文本类型且 <= 4KB）
+type responseBodyWriter struct {
+	gin.ResponseWriter
+	body        *bytes.Buffer
+	captureBody bool
+}
+
+func (w *responseBodyWriter) Write(b []byte) (int, error) {
+	if w.captureBody && w.body.Len()+len(b) <= maxResponseBodyCapture {
+		w.body.Write(b)
+	}
+	return w.ResponseWriter.Write(b)
+}
+
+// isTextContentType 判断是否为文本类型的 Content-Type
+func isTextContentType(contentType string) bool {
+	ct := strings.ToLower(contentType)
+	return strings.Contains(ct, "application/json") ||
+		strings.Contains(ct, "text/") ||
+		strings.Contains(ct, "application/xml") ||
+		strings.Contains(ct, "application/javascript")
+}
+
+// formatElapsed 将耗时格式化为人性化字符串
+func formatElapsed(d time.Duration) string {
+	if d < time.Millisecond {
+		return fmt.Sprintf("%.2fus", float64(d.Microseconds()))
+	}
+	if d < time.Second {
+		return fmt.Sprintf("%.2fms", float64(d.Microseconds())/1000.0)
+	}
+	return fmt.Sprintf("%.2fs", d.Seconds())
+}
 
 // 默认敏感字段列表（用于 request body）
 var defaultSensitiveFields = []string{
@@ -90,15 +131,33 @@ func LogMiddleware(opts ...LogOption) gin.HandlerFunc {
 
 		begin := time.Now()
 
+		// 在处理前读取请求 body（此时 body 还可读）
+		bodyBytes := getBodySnapshot(c.Request)
+
+		// 包装 ResponseWriter 以捕获响应 body
+		rbw := &responseBodyWriter{
+			ResponseWriter: c.Writer,
+			body:           &bytes.Buffer{},
+			captureBody:    true,
+		}
+		c.Writer = rbw
+
 		// 继续处理
 		c.Next()
 
-		// 读取 body 并重新包装，确保后续仍可读取
-		bodyBytes := getBodySnapshot(c.Request)
+		elapsed := time.Since(begin)
+
 		requestInfo := ParseRequestInfoWithBody(c.Request, bodyBytes)
-		requestInfo["process_latency"] = time.Since(begin).Milliseconds()
+		requestInfo["process_latency"] = elapsed.Milliseconds()
+		requestInfo["process_latency_human"] = formatElapsed(elapsed)
 		requestInfo["response_header"] = ToJsonString(filterSensitiveHeaders(c.Writer.Header()))
 		requestInfo["response_status"] = c.Writer.Status()
+
+		// 捕获响应 body（仅文本类型且 <= 4KB）
+		respContentType := c.Writer.Header().Get("Content-Type")
+		if isTextContentType(respContentType) && rbw.body.Len() > 0 && rbw.body.Len() <= maxResponseBodyCapture {
+			requestInfo["response_body"] = rbw.body.String()
+		}
 
 		// 构建日志描述：METHOD 路由 (HandlerName)
 		route := c.FullPath()
@@ -183,13 +242,13 @@ func getBodySnapshot(req *http.Request) []byte {
 		body, err := req.GetBody()
 		if err == nil {
 			defer body.Close()
-			bodyBytes, _ := io.ReadAll(body)
+			bodyBytes, _ := io.ReadAll(io.LimitReader(body, maxRequestBodySize))
 			return bodyBytes
 		}
 	}
 
 	// 降级：直接读取 Body，然后重新包装
-	bodyBytes, err := io.ReadAll(req.Body)
+	bodyBytes, err := io.ReadAll(io.LimitReader(req.Body, maxRequestBodySize))
 	req.Body.Close()
 	if err != nil {
 		return nil

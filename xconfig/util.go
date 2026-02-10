@@ -1,10 +1,10 @@
 package xconfig
 
 import (
-	"fmt"
 	"reflect"
 	"time"
 
+	"github.com/xiaoshicae/xone/v2/xerror"
 	"github.com/xiaoshicae/xone/v2/xutil"
 
 	"github.com/spf13/viper"
@@ -101,13 +101,13 @@ func getViperConfig() *viper.Viper {
 
 func checkParam(key string, conf interface{}) error {
 	if key == "" {
-		return fmt.Errorf("param key is empty")
+		return xerror.Newf("xconfig", "checkParam", "param key is empty")
 	}
 	if conf == nil {
-		return fmt.Errorf("param conf is nil")
+		return xerror.Newf("xconfig", "checkParam", "param conf is nil")
 	}
 	if reflect.TypeOf(conf).Kind() != reflect.Ptr {
-		return fmt.Errorf("param conf is not ptr")
+		return xerror.Newf("xconfig", "checkParam", "param conf is not ptr")
 	}
 	return nil
 }

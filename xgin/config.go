@@ -17,9 +17,10 @@ type Config struct {
 	// optional default 8000
 	Port int `mapstructure:"Port"`
 
-	// UseHttp2 是否使用http2协议
+	// UseH2C 是否启用 h2c（HTTP/2 Cleartext，非 TLS 下的 HTTP/2）
+	// TLS 模式下 HTTP/2 自动启用，无需此配置
 	// optional default false
-	UseHttp2 bool `mapstructure:"UseHttp2"`
+	UseH2C bool `mapstructure:"UseH2C"`
 
 	// CertFile TLS 证书路径
 	// optional default ""

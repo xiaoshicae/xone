@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/joho/godotenv"
+	"github.com/xiaoshicae/xone/v2/xerror"
 	"github.com/xiaoshicae/xone/v2/xhook"
 	"github.com/xiaoshicae/xone/v2/xutil"
 
@@ -31,12 +32,12 @@ func initXConfig() error {
 	}
 
 	if err := loadDotEnvIfExist(configLocation); err != nil {
-		return fmt.Errorf("XOne initXConfig invoke loadDotEnvIfExist failed, err=[%v]", err)
+		return xerror.Newf("xconfig", "init", "invoke loadDotEnvIfExist failed, err=[%v]", err)
 	}
 
 	vp, err := parseConfig(configLocation)
 	if err != nil {
-		return fmt.Errorf("XOne initXConfig invoke parseConfig failed, err=[%v]", err)
+		return err // parseConfig 已返回 xerror
 	}
 
 	printFinalConfig(vp) // 打印一下最终的配置信息
@@ -56,7 +57,7 @@ func loadDotEnvIfExist(configLocation string) error {
 func parseConfig(configLocation string) (*viper.Viper, error) {
 	baseViperConfig, err := loadLocalConfig(configLocation) // 加载基础配置文件
 	if err != nil {
-		return nil, fmt.Errorf("load viper config failed, err=[%v]", err)
+		return nil, xerror.Newf("xconfig", "parseConfig", "load viper config failed, err=[%v]", err)
 	}
 
 	// 先展开基础配置中的环境变量占位符，确保 Server.Profiles.Active 等配置能正确解析
@@ -66,7 +67,7 @@ func parseConfig(configLocation string) (*viper.Viper, error) {
 		// 构造指定环境配置文件路径
 		envConfigLocation, err := toProfilesActiveConfigLocation(configLocation, pa)
 		if err != nil {
-			return nil, fmt.Errorf("parse profiles active config file failed, err=[%v]", err)
+			return nil, xerror.Newf("xconfig", "parseConfig", "parse profiles active config file failed, err=[%v]", err)
 		}
 
 		if !xutil.FileExist(envConfigLocation) {
@@ -75,7 +76,7 @@ func parseConfig(configLocation string) (*viper.Viper, error) {
 			// 加载指定环境配置文件
 			envViperConfig, err := loadLocalConfig(envConfigLocation)
 			if err != nil {
-				return nil, fmt.Errorf("load config file failed, env_config_location=[%s], err=[%v]", envConfigLocation, err)
+				return nil, xerror.Newf("xconfig", "parseConfig", "load config file failed, env_config_location=[%s], err=[%v]", envConfigLocation, err)
 			}
 
 			baseViperConfig = mergeProfilesViperConfig(baseViperConfig, envViperConfig)

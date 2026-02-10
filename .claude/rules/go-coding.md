@@ -60,10 +60,17 @@
 - 包级注释用 `// Package xxx ...`
 - 注释使用中文
 
+## 错误处理
+
+- 优先使用 `xerror.XOneError` 统一错误类型，禁止直接使用 `fmt.Errorf`
+- 创建错误：`xerror.New(module, op, err)` 或 `xerror.Newf(module, op, format, args...)`
+- 判断模块错误：`xerror.Is(err, "xconfig")`
+- 提取模块名：`xerror.Module(err)`
+
 ## 编码要点
 
 - 使用有意义的变量名，避免无意义缩写
-- 错误必须包装上下文信息：`fmt.Errorf("query user failed, userID=[%d], err=[%v]", userID, err)`
+- 错误必须包装上下文信息：`xerror.Newf("xgorm", "query", "query user failed, userID=[%d], err=[%v]", userID, err)`
 - 使用 defer 确保资源释放
 - 小接口，单一职责
 - 常量优于魔法值

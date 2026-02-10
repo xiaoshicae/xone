@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xiaoshicae/xone"
 	"github.com/xiaoshicae/xone/xgorm"
+	"github.com/xiaoshicae/xone/xserver"
 	"github.com/xiaoshicae/xone/xutil"
 	"gorm.io/gorm"
 
@@ -33,7 +33,7 @@ func TestXGormSingleClient(t *testing.T) {
 
 	PatchConvey("TestXGormSingleClient", t, func() {
 		// 初始化 XOne
-		err := xone.R()
+		err := xserver.R()
 		So(err, ShouldBeNil)
 
 		ctx := context.Background()

@@ -1,4 +1,4 @@
-package xone
+package xserver
 
 import (
 	"errors"
@@ -8,17 +8,51 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/xiaoshicae/xone/xhook"
+	_ "github.com/xiaoshicae/xone/xtrace" // 默认加载trace
 	"github.com/xiaoshicae/xone/xutil"
 )
 
-type Server interface {
-	// Run 启动服务
-	// 建议服务以阻塞方式运行，框架会以异步方式运行服务，且阻塞等待退出信号，如果服务Run()结束，那么XOne.Server也会运行结束
-	Run() error
+// Run 启动Server，会以阻塞方式启动，且等待退出信号
+func Run(server Server) error {
+	return run(server)
+}
 
-	// Stop 停止服务
-	// 建议放一些资源清理逻辑
-	Stop() error
+// RunBlocking 启动Server，会以阻塞方式启动，且等待退出信号，用于consumer或job服务等
+func RunBlocking() error {
+	return run(&blockingServer{})
+}
+
+// R 调用before start hook，建议用于调试
+func R() error {
+	return run(nil)
+}
+
+func run(server Server) error {
+	if err := xhook.InvokeBeforeStartHook(); err != nil {
+		return err
+	}
+
+	if server != nil {
+		var serverRunErr error
+		if err := runWithSever(server); err != nil { // 服务会以阻塞方式启动
+			serverRunErr = err
+		}
+
+		var beforeStopHookErr error
+		if err := xhook.InvokeBeforeStopHook(); err != nil {
+			beforeStopHookErr = err
+		}
+
+		if serverRunErr != nil || beforeStopHookErr != nil { // 任何错误发生，则合并成一个返回
+			return errors.Join(serverRunErr, beforeStopHookErr)
+		}
+
+		return nil
+	}
+
+	// 如果不是Server，则只会执行InvokeBeforeStartHook，一般用于调试
+	return nil
 }
 
 func runWithSever(s Server) error {

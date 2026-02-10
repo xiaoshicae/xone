@@ -2,11 +2,11 @@
 
 运行指定模块的测试，如果不指定模块则运行所有测试。
 
-使用方法: /project:test [模块名]
+使用方法: /test [模块名]
 
 示例:
-- /project:test        # 运行所有测试
-- /project:test xhttp  # 只运行 xhttp 模块测试
+- /test        # 运行所有测试
+- /test xhttp  # 只运行 xhttp 模块测试
 
 $ARGUMENTS
 

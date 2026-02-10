@@ -13,71 +13,6 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 )
 
-func TestGinSwaggerConfigMergeDefault(t *testing.T) {
-	PatchConvey("TestGinSwaggerConfigMergeDefault-Nil", t, func() {
-		gc := ginSwaggerConfigMergeDefault(nil)
-		So(gc, ShouldResemble, &GinSwagger{
-			Schemes: []string{"https", "http"},
-		})
-	})
-
-	PatchConvey("TestGinSwaggerConfigMergeDefault-NotNil", t, func() {
-		gc := ginSwaggerConfigMergeDefault(&GinSwagger{
-			Host:        "1",
-			BasePath:    "2",
-			Title:       "3",
-			Description: "4",
-			Schemes:     []string{"5", "6"},
-		})
-		So(gc, ShouldResemble, &GinSwagger{
-			Host:        "1",
-			BasePath:    "2",
-			Title:       "3",
-			Description: "4",
-			Schemes:     []string{"5", "6"},
-		})
-	})
-}
-
-func TestGinConfigMergeDefault(t *testing.T) {
-	PatchConvey("TestGinConfigMergeDefault-Nil", t, func() {
-		gc := ginConfigMergeDefault(nil)
-		So(gc, ShouldResemble, &Gin{
-			Host:       "0.0.0.0",
-			Port:       8000,
-			UseHttp2:   false,
-			GinSwagger: nil,
-		})
-	})
-
-	PatchConvey("TestGinConfigMergeDefault-NotNil", t, func() {
-		gc := ginConfigMergeDefault(&Gin{
-			Host:     "1",
-			Port:     2,
-			UseHttp2: true,
-			GinSwagger: &GinSwagger{
-				Host:        "1",
-				BasePath:    "2",
-				Title:       "3",
-				Description: "4",
-				Schemes:     []string{"5", "6"},
-			},
-		})
-		So(gc, ShouldResemble, &Gin{
-			Host:     "1",
-			Port:     2,
-			UseHttp2: true,
-			GinSwagger: &GinSwagger{
-				Host:        "1",
-				BasePath:    "2",
-				Title:       "3",
-				Description: "4",
-				Schemes:     []string{"5", "6"},
-			},
-		})
-	})
-}
-
 func TestServerConfigMergeDefault(t *testing.T) {
 	PatchConvey("TestServerConfigMergeDefault-Nil", t, func() {
 		sc := serverConfigMergeDefault(nil)
@@ -85,7 +20,6 @@ func TestServerConfigMergeDefault(t *testing.T) {
 			Name:     "",
 			Version:  "v0.0.1",
 			Profiles: nil,
-			Gin:      nil,
 		})
 	})
 
@@ -96,7 +30,6 @@ func TestServerConfigMergeDefault(t *testing.T) {
 			Profiles: &Profiles{
 				Active: "3",
 			},
-			Gin: nil,
 		})
 		So(sc, ShouldResemble, &Server{
 			Name:    "1",
@@ -104,7 +37,6 @@ func TestServerConfigMergeDefault(t *testing.T) {
 			Profiles: &Profiles{
 				Active: "3",
 			},
-			Gin: nil,
 		})
 	})
 }
@@ -672,25 +604,6 @@ func TestServerConfigFunctions(t *testing.T) {
 			vip.Set("Server.Version", "v1.0.0")
 			version := GetServerVersion()
 			So(version, ShouldEqual, "v1.0.0")
-		})
-	})
-}
-
-func TestGinConfigFunctions(t *testing.T) {
-	PatchConvey("TestGinConfigFunctions", t, func() {
-		PatchConvey("TestGetGinConfig", func() {
-			vip = viper.New()
-			config := GetGinConfig()
-			So(config, ShouldNotBeNil)
-			So(config.Host, ShouldEqual, "0.0.0.0")
-			So(config.Port, ShouldEqual, 8000)
-		})
-
-		PatchConvey("TestGetGinSwaggerConfig", func() {
-			vip = viper.New()
-			config := GetGinSwaggerConfig()
-			So(config, ShouldNotBeNil)
-			So(config.Schemes, ShouldResemble, []string{"https", "http"})
 		})
 	})
 }

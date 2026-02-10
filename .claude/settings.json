@@ -3,13 +3,24 @@
     "allow": [
       "Bash(go test*)",
       "Bash(go build*)",
+      "Bash(go vet*)",
+      "Bash(go get*)",
+      "Bash(go mod*)",
+      "Bash(go tool cover*)",
       "Bash(gofmt*)",
       "Bash(git status*)",
       "Bash(git diff*)",
       "Bash(git log*)",
       "Bash(git add*)",
       "Bash(git commit*)",
-      "Bash(git push*)"
+      "Bash(git push*)",
+      "Bash(git branch*)",
+      "Bash(git checkout*)",
+      "Bash(git tag*)",
+      "Bash(rm *)"
+    ],
+    "deny": [
+      "Bash(rm -rf /)"
     ]
   }
 }

@@ -4,13 +4,13 @@ import (
 	"context"
 	"testing"
 
-	"github.com/xiaoshicae/xone"
 	"github.com/xiaoshicae/xone/xlog"
+	"github.com/xiaoshicae/xone/xserver"
 )
 
 func TestXLog(t *testing.T) {
 	t.Skip("真实环境测试，如果client能连通，可以注释掉该Skip进行测试")
-	if err := xone.R(); err != nil {
+	if err := xserver.R(); err != nil {
 		panic(err)
 	}
 

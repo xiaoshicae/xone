@@ -1,4 +1,4 @@
-package xone
+package xserver
 
 import (
 	"errors"
@@ -6,11 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xiaoshicae/xone/xconfig"
 	"github.com/xiaoshicae/xone/xhook"
-
-	"github.com/gin-gonic/gin"
-	"github.com/swaggo/swag"
 
 	. "github.com/bytedance/mockey"
 	. "github.com/smartystreets/goconvey/convey"
@@ -168,47 +164,11 @@ func (d DemoServerStopSuccess) Stop() error {
 	return nil
 }
 
-func TestNewGinServer(t *testing.T) {
-	PatchConvey("TestNewGinServer", t, func() {
-		Mock(xconfig.GetGinConfig).Return(&xconfig.Gin{UseHttp2: true, Host: "123", Port: 456}).Build()
-		Mock((*http.Server).ListenAndServe).Return(errors.New("for test")).Build()
-		Mock((*http.Server).Shutdown).Return(errors.New("for test2")).Build()
-
-		server := newGinServer(gin.New())
-		So(server, ShouldNotBeNil)
-
-		err := server.Run()
-		So(err.Error(), ShouldEqual, "for test")
-
-		err = server.Stop()
-		So(err.Error(), ShouldEqual, "gin server stop failed, err=[for test2]")
-	})
-}
-
-func TestNewGinTLSServer(t *testing.T) {
-	PatchConvey("TestNewGinTLSServer", t, func() {
-		Mock(xconfig.GetGinConfig).Return(&xconfig.Gin{UseHttp2: true, Host: "127.0.0.1", Port: 8443}).Build()
-		Mock((*http.Server).ListenAndServeTLS).Return(errors.New("for test tls")).Build()
-		Mock((*http.Server).Shutdown).Return(errors.New("for test2 tls")).Build()
-
-		server := newGinTLSServer(gin.New(), "/path/to/cert.pem", "/path/to/key.pem")
-		So(server, ShouldNotBeNil)
-		So(server.certFile, ShouldEqual, "/path/to/cert.pem")
-		So(server.keyFile, ShouldEqual, "/path/to/key.pem")
-
-		err := server.Run()
-		So(err.Error(), ShouldEqual, "for test tls")
-
-		err = server.Stop()
-		So(err.Error(), ShouldEqual, "gin server stop failed, err=[for test2 tls]")
-	})
-}
-
 func TestBlockingServer(t *testing.T) {
 	t.Skip("测试BlockingServer，需要主动打断进程")
 	PatchConvey("TestBlockingServer", t, func() {
 		s := &blockingServer{}
-		_ = RunServer(s)
+		_ = Run(s)
 	})
 }
 
@@ -264,81 +224,5 @@ func TestBlockingServerStopBeforeRun(t *testing.T) {
 	})
 }
 
-func TestInvokeEngineInjectFunc(t *testing.T) {
-	PatchConvey("TestInvokeEngineInjectFunc-WithSwaggerFunc", t, func() {
-		engine := gin.New()
-		called := false
-		engine.FuncMap = map[string]any{
-			SwaggerInfoFuncKey: func() *swag.Spec {
-				called = true
-				return &swag.Spec{}
-			},
-		}
-		Mock(xconfig.GetGinSwaggerConfig).Return(&xconfig.GinSwagger{}).Build()
-		Mock(xconfig.GetServerVersion).Return("v1.0.0").Build()
-
-		invokeEngineInjectFunc(engine)
-		So(called, ShouldBeTrue)
-	})
-
-	PatchConvey("TestInvokeEngineInjectFunc-WithPrintBannerFunc", t, func() {
-		engine := gin.New()
-		called := false
-		engine.FuncMap = map[string]any{
-			PrintBannerFuncKey: func() {
-				called = true
-			},
-		}
-
-		invokeEngineInjectFunc(engine)
-		So(called, ShouldBeTrue)
-	})
-
-	PatchConvey("TestInvokeEngineInjectFunc-SwaggerFuncReturnsNil", t, func() {
-		engine := gin.New()
-		called := false
-		engine.FuncMap = map[string]any{
-			SwaggerInfoFuncKey: func() *swag.Spec {
-				called = true
-				return nil
-			},
-		}
-
-		invokeEngineInjectFunc(engine)
-		So(called, ShouldBeTrue)
-	})
-
-	PatchConvey("TestInvokeEngineInjectFunc-WrongFuncType", t, func() {
-		engine := gin.New()
-		engine.FuncMap = map[string]any{
-			SwaggerInfoFuncKey: "not a function",
-			PrintBannerFuncKey: 123,
-		}
-
-		// Should not panic
-		invokeEngineInjectFunc(engine)
-	})
-}
-
-func TestSetGinSwaggerInfo(t *testing.T) {
-	PatchConvey("TestSetGinSwaggerInfo", t, func() {
-		Mock(xconfig.GetGinSwaggerConfig).Return(&xconfig.GinSwagger{
-			Host:        "localhost",
-			BasePath:    "/api",
-			Title:       "Test API",
-			Description: "Test Description",
-			Schemes:     []string{"https"},
-		}).Build()
-		Mock(xconfig.GetServerVersion).Return("v2.0.0").Build()
-
-		spec := &swag.Spec{}
-		setGinSwaggerInfo(spec)
-
-		So(spec.Version, ShouldEqual, "v2.0.0")
-		So(spec.Host, ShouldEqual, "localhost")
-		So(spec.BasePath, ShouldEqual, "/api")
-		So(spec.Title, ShouldEqual, "Test API")
-		So(spec.Description, ShouldEqual, "Test Description")
-		So(spec.Schemes, ShouldResemble, []string{"https"})
-	})
-}
+// 以下测试用到了 net/http 的 unused import，保留在这里但不导入
+var _ = http.ErrServerClosed

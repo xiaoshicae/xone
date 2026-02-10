@@ -1,14 +1,18 @@
 # XOne
 
-开箱即用的 Golang 三方库集成 SDK
+开箱即用的 Golang 三方库集成框架
+
+## 架构图
+
+<img src="docs/architecture.svg" alt="XOne 模块架构图" width="100%">
 
 ## 功能特性
 
 - 统一集成三方包，降低维护成本
-- 通过配置启用能力，开箱即用
+- 通过 YAML 配置启用能力，开箱即用
 - 提供最佳实践的默认参数配置
-- 支持 Hook 机制，灵活扩展
-- 集成 OpenTelemetry 链路追踪
+- 支持 Hook 机制，灵活扩展生命周期
+- 集成 OpenTelemetry 链路追踪，日志自动关联 TraceID
 
 ## 环境要求
 
@@ -22,31 +26,21 @@
 go get github.com/xiaoshicae/xone
 ```
 
-### 2. 配置文件
+### 2. 创建配置文件
 
 创建 `application.yml`（支持放置在 `./`、`./conf/`、`./config/` 目录下）：
 
 ```yaml
 Server:
   Name: "my-service"
-  Version: "v1.1.5"
-  Profiles:
-    Active: "dev"
-  Gin:
-    Port: 8000
+  Version: "v1.0.0"
+
+XGin:
+  Port: 8000
 
 XLog:
   Level: "info"
   Console: true
-
-XGorm:
-  Driver: "mysql"
-  DSN: "user:password@tcp(127.0.0.1:3306)/dbname?charset=utf8mb4&parseTime=True"
-
-XHttp:
-  Timeout: "30s"
-  MaxIdleConns: 100
-  MaxIdleConnsPerHost: 10
 ```
 
 ### 3. 启动服务
@@ -56,7 +50,7 @@ package main
 
 import (
 	"github.com/gin-gonic/gin"
-	"github.com/xiaoshicae/xone"
+	"github.com/xiaoshicae/xone/xgin"
 )
 
 func main() {
@@ -66,148 +60,285 @@ func main() {
 		c.JSON(200, gin.H{"message": "pong"})
 	})
 
-	// 启动服务，自动初始化所有模块
-	xone.RunGin(engine)
+	// 启动服务，自动初始化配置、日志、追踪等所有模块
+	xgin.Run(engine)
 }
 ```
 
-### 4. 使用模块
-
-```go
-package handler
-
-import (
-	"github.com/gin-gonic/gin"
-	"github.com/xiaoshicae/xone/xgorm"
-	"github.com/xiaoshicae/xone/xhttp"
-	"github.com/xiaoshicae/xone/xconfig"
-	"github.com/xiaoshicae/xone/xlog"
-)
-
-func Handler(c *gin.Context) {
-	ctx := c.Request.Context()
-
-	// 数据库操作（推荐使用 CWithCtx 传递 context）
-	var user User
-	xgorm.CWithCtx(ctx).First(&user, 1)
-
-	// HTTP 请求（推荐使用 RWithCtx 传递 context）
-	resp, _ := xhttp.RWithCtx(ctx).Get("https://api.example.com/data")
-
-	// 日志记录
-	xlog.Info(ctx, "request handled, user_id=%d", user.ID)
-
-	// 读取自定义配置
-	customValue := xconfig.GetString("MyConfig.Key")
-}
-```
+启动后框架会自动完成：配置加载 → 链路追踪初始化 → 日志初始化 → HTTP 客户端初始化 → 数据库连接 → 启动 Gin 服务。
 
 ## 模块清单
 
-| 模块      | 底层库                                                                 | 文档                            | Log | Trace | 说明                    |
-|---------|---------------------------------------------------------------------|-------------------------------|-----|-------|-----------------------|
-| xconfig | [viper](https://github.com/spf13/viper)                             | [README](./xconfig/README.md) | -   | -     | 配置管理                  |
-| xlog    | [logrus](https://github.com/sirupsen/logrus)                        | [README](./xlog/README.md)    | -   | -     | 日志记录                  |
-| xtrace  | [opentelemetry](https://github.com/open-telemetry/opentelemetry-go) | [README](./xtrace/README.md)  | -   | -     | 链路追踪                  |
-| xgorm   | [gorm](https://gorm.io/)                                            | [README](./xgorm/README.md)   | ✅   | ✅     | 数据库(MySQL/PostgreSQL) |
-| xhttp   | [go-resty](https://github.com/go-resty/resty)                       | [README](./xhttp/README.md)   | -   | ✅     | HTTP 客户端              |
+| 模块                             | 底层库                                                                 | 说明                               | Log | Trace |
+|--------------------------------|---------------------------------------------------------------------|----------------------------------|-----|-------|
+| [xconfig](./xconfig/README.md) | [viper](https://github.com/spf13/viper)                             | 配置管理（YAML + 环境变量 + Profile）      | -   | -     |
+| [xlog](./xlog/README.md)       | [logrus](https://github.com/sirupsen/logrus)                        | 结构化日志（文件轮转 + KV 注入）              | -   | -     |
+| [xtrace](./xtrace/README.md)   | [opentelemetry](https://github.com/open-telemetry/opentelemetry-go) | 链路追踪（W3C + B3 传播格式）              | -   | -     |
+| [xhttp](./xhttp/README.md)     | [go-resty](https://github.com/go-resty/resty)                       | HTTP 客户端（重试 + 连接池）               | -   | ✅     |
+| [xgorm](./xgorm/README.md)     | [gorm](https://gorm.io/)                                            | 数据库（MySQL / PostgreSQL，多数据源）     | ✅   | ✅     |
+| xserver                        | -                                                                   | 服务运行和生命周期管理                      | -   | -     |
+| xgin                           | [gin](https://github.com/gin-gonic/gin)                             | Gin Web 框架集成（Builder 模式 + 内置中间件） | ✅   | ✅     |
 
-## 多数据库配置
+## 服务启动方式
 
-支持配置多个数据库实例：
+```go
+import (
+"github.com/gin-gonic/gin"
+"github.com/xiaoshicae/xone/xgin"
+"github.com/xiaoshicae/xone/xgin/options"
+"github.com/xiaoshicae/xone/xserver"
+)
+
+// 方式一：Gin HTTP 服务（最常用）
+xgin.Run(engine)
+
+// 方式二：Gin HTTPS 服务
+xgin.RunTLS(engine, "cert.pem", "key.pem")
+
+// 方式三：Builder 模式（启用内置中间件、Swagger 等）
+gx := xgin.New(
+options.EnableLogMiddleware(true),
+options.EnableTraceMiddleware(true),
+).WithRouteRegister(registerRoutes).
+WithSwagger(docs.SwaggerInfo).
+Build()
+xserver.Run(gx)
+
+// 方式四：自定义 Server（实现 xserver.Server 接口）
+xserver.Run(myServer)
+
+// 方式五：阻塞服务（consumer / job 场景）
+xserver.RunBlocking()
+
+// 方式六：仅初始化模块，不启动服务（调试用）
+xserver.R()
+```
+
+## 使用模块
+
+### 日志
+
+```go
+import "github.com/xiaoshicae/xone/xlog"
+
+// 基础日志
+xlog.Info(ctx, "user login success")
+
+// 格式化日志
+xlog.Info(ctx, "order created, amount=%d", 99)
+
+// 结构化 KV
+xlog.Info(ctx, "request handled",
+xlog.KV("userId", "u-123"),
+xlog.KV("latency", "50ms"),
+)
+
+// 向 context 注入公共字段，后续日志自动携带
+ctx = xlog.CtxWithKV(ctx, map[string]interface{}{"requestId": "req-456"})
+```
+
+### HTTP 客户端
+
+```go
+import "github.com/xiaoshicae/xone/xhttp"
+
+// 发起请求（推荐用 RWithCtx 传递 context，自动关联链路追踪）
+resp, err := xhttp.RWithCtx(ctx).
+SetHeader("Authorization", "Bearer xxx").
+Get("https://api.example.com/users")
+
+// 获取原生 http.Client（适用于 SSE 等流式场景）
+rawClient := xhttp.RawClient()
+```
+
+配置示例：
+
+```yaml
+XHttp:
+  Timeout: "30s"
+  RetryCount: 3
+  MaxIdleConns: 100
+  MaxIdleConnsPerHost: 10
+```
+
+### 数据库
+
+```go
+import "github.com/xiaoshicae/xone/xgorm"
+
+// 查询（推荐用 CWithCtx 传递 context）
+var user User
+xgorm.CWithCtx(ctx).First(&user, 1)
+
+// 多数据源
+masterDB := xgorm.CWithCtx(ctx, "master")
+slaveDB := xgorm.CWithCtx(ctx, "slave")
+```
+
+单数据库配置：
+
+```yaml
+XGorm:
+  Driver: "mysql"
+  DSN: "user:pass@tcp(127.0.0.1:3306)/mydb?charset=utf8mb4&parseTime=True"
+  MaxOpenConns: 50
+  EnableLog: true
+  SlowThreshold: "3s"
+```
+
+多数据库配置：
 
 ```yaml
 XGorm:
   - Name: "master"
     Driver: "mysql"
     DSN: "user:pass@tcp(127.0.0.1:3306)/master_db"
-    MaxOpenConns: 100
   - Name: "slave"
     Driver: "postgres"
-    DSN: "host=127.0.0.1 user=postgres password=pass dbname=slave_db port=5432 sslmode=disable"
-    MaxOpenConns: 50
+    DSN: "host=127.0.0.1 user=postgres dbname=slave_db"
 ```
 
-```go
-// 获取指定数据库
-masterDB := xgorm.CWithCtx(ctx, "master")
-slaveDB := xgorm.CWithCtx(ctx, "slave")
+### 自定义配置
 
-// 获取默认数据库（第一个配置）
-defaultDB := xgorm.CWithCtx(ctx)
+```go
+import "github.com/xiaoshicae/xone/xconfig"
+
+// 读取单个值
+val := xconfig.GetString("MyApp.ApiKey")
+port := xconfig.GetInt("MyApp.Port")
+timeout := xconfig.GetDuration("MyApp.Timeout")
+
+// 反序列化到结构体
+type MyAppConfig struct {
+ApiKey  string `mapstructure:"ApiKey"`
+Port    int    `mapstructure:"Port"`
+Timeout string `mapstructure:"Timeout"`
+}
+var cfg MyAppConfig
+xconfig.UnmarshalConfig("MyApp", &cfg)
 ```
 
-## 服务启动方式
+### 链路追踪
 
 ```go
-package main
+import "github.com/xiaoshicae/xone/xtrace"
 
-import (
-	"github.com/gin-gonic/gin"
-	"github.com/xiaoshicae/xone"
-	"github.com/xiaoshicae/xone/xhook"
-)
+// xhttp、xgorm、xlog 会自动关联 TraceID，一般无需手动操作
+// 如需手动创建 Span：
+tracer := xtrace.GetTracer("my-service")
+ctx, span := tracer.Start(ctx, "my-operation")
+defer span.End()
+```
+
+配置示例：
+
+```yaml
+XTrace:
+  Enable: true
+  Console: false   # 仅调试时开启控制台输出
+```
+
+## 生命周期 Hook
+
+```go
+import "github.com/xiaoshicae/xone/xhook"
 
 func init() {
-	// 注册启动前钩子
-	xhook.BeforeStart(func() error {
-		// 自定义初始化逻辑
-		return nil
-	})
+// 服务启动前执行（在所有模块初始化之后）
+xhook.BeforeStart(func () error {
+// 自定义初始化：预热缓存、检查依赖等
+return nil
+})
 
-	// 注册停止前钩子
-	xhook.BeforeStop(func() error {
-		// 自定义清理逻辑
-		return nil
-	})
+// 服务停止前执行
+xhook.BeforeStop(func () error {
+// 自定义清理：关闭连接、刷新缓冲等
+return nil
+})
 }
+```
 
-func main() {
-	// 方式一：Gin Web 服务
-	xone.RunGin(gin.Default())
+## 多环境配置
 
-	// 方式二：Gin HTTPS 服务
-	xone.RunGinTLS(gin.Default(), "/path/to/cert.pem", "/path/to/key.pem")
+通过 Profile 加载不同环境的配置文件：
 
-	// 方式三：自定义 Server（需实现 xone.Server 接口）
-	xone.RunServer(myServer)
+```yaml
+# application.yml（公共配置）
+Server:
+  Name: "my-service"
+  Profiles:
+    Active: "dev"    # 指定环境
+```
 
-	// 方式四：阻塞服务（适用于 consumer、job 等）
-	xone.RunBlockingServer()
+框架会按顺序加载：`application.yml` → `application-dev.yml`，后者覆盖前者同名配置。
 
-	// 方式五：单次执行（适用于调试）
-	xone.R()
-}
+也可通过环境变量或启动参数指定：
+
+```bash
+# 环境变量
+export SERVER_PROFILES_ACTIVE=prod
+
+# 启动参数
+go run main.go --server.profiles.active=prod
 ```
 
 ## 环境变量
 
-| 环境变量                     | 说明           | 示例                |
-|--------------------------|--------------|-------------------|
-| `SERVER_ENABLE_DEBUG`    | 启用 XOne 调试日志 | `true`            |
-| `SERVER_PROFILES_ACTIVE` | 指定激活的配置环境    | `dev`, `prod`     |
-| `SERVER_CONFIG_LOCATION` | 指定配置文件路径     | `/app/config.yml` |
+| 环境变量                     | 说明        | 示例                |
+|--------------------------|-----------|-------------------|
+| `SERVER_ENABLE_DEBUG`    | 启用框架调试日志  | `true`            |
+| `SERVER_PROFILES_ACTIVE` | 指定激活的配置环境 | `dev`, `prod`     |
+| `SERVER_CONFIG_LOCATION` | 指定配置文件路径  | `/app/config.yml` |
 
-配置文件支持环境变量占位符：
+配置文件支持环境变量占位符（带默认值）：
 
 ```yaml
 XGorm:
   DSN: "${DB_DSN:-user:pass@tcp(localhost:3306)/db}"
 ```
 
-## IDE Schema 配置
+## 完整配置参考
 
-为 YAML 配置文件启用智能提示：
+```yaml
+Server:
+  Name: "my-service"          # 服务名（必填）
+  Version: "v1.0.0"           # 版本号（默认 v0.0.1）
+  Profiles:
+    Active: "dev"              # 环境标识
 
-**GoLand**: Settings → Languages & Frameworks → Schemas and DTDs → JSON Schema Mappings
+XGin:
+  Host: "0.0.0.0"             # 监听地址（默认 0.0.0.0）
+  Port: 8000                   # 监听端口（默认 8000）
+  UseHttp2: false              # 是否启用 HTTP/2
 
-添加映射：
+XLog:
+  Level: "info"                # 日志级别（默认 info）
+  Console: true                # 控制台打印（默认 false）
+  Path: "./log/"               # 日志文件夹（默认 ./log/）
+  MaxAge: "7d"                 # 日志保留时长（默认 7d）
+  RotateTime: "1d"             # 切割周期（默认 1d）
 
-- Schema: `${GOPATH}/pkg/mod/github.com/xiaoshicae/xone@{version}/config_schema.json`
-- File pattern: `application*.yml`
+XTrace:
+  Enable: true                 # 启用链路追踪（默认 true）
+  Console: false               # 控制台打印（默认 false）
+
+XHttp:
+  Timeout: "60s"               # 请求超时（默认 60s）
+  RetryCount: 3                # 重试次数（默认 0）
+  MaxIdleConns: 100            # 最大空闲连接（默认 100）
+
+XGorm:
+  Driver: "postgres"           # 驱动（默认 postgres）
+  DSN: ""                      # 连接字符串（必填）
+  MaxOpenConns: 50             # 最大连接数（默认 50）
+  EnableLog: false             # 开启 SQL 日志（默认 false）
+  SlowThreshold: "3s"          # 慢查询阈值（默认 3s）
+```
 
 ## 更新日志
 
+- **v2.0.0** (2026-02-10) - **BREAKING**: 合并 ginx 为 xgin 子模块，新增 xserver 模块，Gin 配置从 `Server.Gin` 迁移为独立
+  `XGin` 顶级配置
 - **v1.2.1** (2026-02-06) - feat: xhttp 新增 DialKeepAlive 配置，支持自定义 TCP keep-alive 探测间隔
 - **v1.2.0** (2026-02-05) - feat: xhttp 新增 DialTimeout 配置，支持自定义 TCP 连接超时时间
 - **v1.1.5** (2026-02-02) - feat: xtrace 新增 B3 传播格式支持，兼容 W3C Trace Context
@@ -217,13 +348,13 @@ XGorm:
 - **v1.1.1** (2026-01-29) - fix: xlog 日志定位文件名误指向 hook 文件
 - **v1.1.0** (2026-01-27) - feat: 新增 RunGinTLS 支持 HTTPS 启动; fix: xlog RawLog 增加 ctx nil 检查
 - **v1.0.4** (2026-01-27) - fix xconfig 环境变量展开
-- **v1.0.3** (2026-01-26) - xtrace支持W3C Trace Context propagator
+- **v1.0.3** (2026-01-26) - xtrace 支持 W3C Trace Context propagator
 - **v1.0.2** (2026-01-26) - 稳定性修复与测试补充
-- **v0.0.8** (2026-01-21) - xhttp支持重试
-- **v0.0.7** (2026-01-21) - 修复xconfig bug
-- **v0.0.6** (2026-01-21) - xhttp模块优化
-- **v0.0.5** (2026-01-04) - 删除gin支持debug mode
-- **v0.0.4** (2026-01-04) - gin支持debug mode
-- **v0.0.3** (2026-01-04) - config新增parent目录检测
-- **v0.0.2** (2026-01-04) - 优化IP获取
+- **v0.0.8** (2026-01-21) - xhttp 支持重试
+- **v0.0.7** (2026-01-21) - 修复 xconfig bug
+- **v0.0.6** (2026-01-21) - xhttp 模块优化
+- **v0.0.5** (2026-01-04) - 删除 gin 支持 debug mode
+- **v0.0.4** (2026-01-04) - gin 支持 debug mode
+- **v0.0.3** (2026-01-04) - config 新增 parent 目录检测
+- **v0.0.2** (2026-01-04) - 优化 IP 获取
 - **v0.0.1** (2026-01-04) - 初始版本

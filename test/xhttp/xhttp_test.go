@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/xiaoshicae/xone"
 	"github.com/xiaoshicae/xone/xhttp"
+	"github.com/xiaoshicae/xone/xserver"
 	"github.com/xiaoshicae/xone/xutil"
 
 	"go.opentelemetry.io/otel/trace"
@@ -16,14 +16,14 @@ import (
 func TestXHttp(t *testing.T) {
 	// t.Skip("真实环境测试，如果client能连通，可以注释掉该Skip进行测试")
 
-	if err := xone.R(); err != nil {
+	if err := xserver.R(); err != nil {
 		panic(err)
 	}
 
 	// 测试 RawClient 获取原生 http.Client
 	rawClient := xhttp.RawClient()
 	if rawClient == nil {
-		t.Fatal("RawClient should not be nil after xone.R()")
+		t.Fatal("RawClient should not be nil after xserver.R()")
 	}
 	t.Logf("RawClient Timeout: %v", rawClient.Timeout)
 
@@ -75,7 +75,7 @@ func (*MySpan) SpanContext() trace.SpanContext {
 func TestRawClient(t *testing.T) {
 	// t.Skip("真实环境测试，如果client能连通，可以注释掉该Skip进行测试")
 
-	if err := xone.R(); err != nil {
+	if err := xserver.R(); err != nil {
 		panic(err)
 	}
 

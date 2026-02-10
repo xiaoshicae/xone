@@ -1,4 +1,4 @@
-package xone
+package xgin
 
 import (
 	"context"
@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/xiaoshicae/xone/xconfig"
+	"github.com/xiaoshicae/xone/xserver"
 	"github.com/xiaoshicae/xone/xutil"
 
 	"github.com/gin-gonic/gin"
@@ -27,12 +28,18 @@ const (
 	PrintBannerFuncKey = "__print_banner__func__"
 )
 
+// ginServer 基于 gin.Engine 的 HTTP 服务器
 type ginServer struct {
 	srv *http.Server
 }
 
+// NewServer 从 gin.Engine 创建 Server
+func NewServer(engine *gin.Engine) xserver.Server {
+	return newGinServer(engine)
+}
+
 func newGinServer(engine *gin.Engine) *ginServer {
-	ginConfig := xconfig.GetGinConfig()
+	ginConfig := GetConfig()
 	if ginConfig.UseHttp2 {
 		engine.UseH2C = true
 		xutil.InfoIfEnableDebug("gin server use http2")
@@ -72,9 +79,14 @@ type ginTLSServer struct {
 	keyFile  string
 }
 
+// NewTLSServer 从 gin.Engine 创建 TLS Server
+func NewTLSServer(engine *gin.Engine, certFile, keyFile string) xserver.Server {
+	return newGinTLSServer(engine, certFile, keyFile)
+}
+
 // newGinTLSServer 创建 HTTPS Gin 服务器实例
 func newGinTLSServer(engine *gin.Engine, certFile, keyFile string) *ginTLSServer {
-	ginConfig := xconfig.GetGinConfig()
+	ginConfig := GetConfig()
 	if ginConfig.UseHttp2 {
 		engine.UseH2C = true
 		xutil.InfoIfEnableDebug("gin server use http2")
@@ -111,6 +123,16 @@ func (s *ginTLSServer) Stop() error {
 	return nil
 }
 
+// Run 便捷启动（创建 ginServer + 调用 xserver.Run）
+func Run(engine *gin.Engine) error {
+	return xserver.Run(NewServer(engine))
+}
+
+// RunTLS 便捷启动 HTTPS
+func RunTLS(engine *gin.Engine, certFile, keyFile string) error {
+	return xserver.Run(NewTLSServer(engine, certFile, keyFile))
+}
+
 func invokeEngineInjectFunc(engine *gin.Engine) {
 	if f := engine.FuncMap[SwaggerInfoFuncKey]; f != nil {
 		if ff, ok := f.(func() *swag.Spec); ok {
@@ -128,7 +150,7 @@ func invokeEngineInjectFunc(engine *gin.Engine) {
 }
 
 func setGinSwaggerInfo(swaggerInfo *swag.Spec) {
-	ginSwaggerConfig := xconfig.GetGinSwaggerConfig()
+	ginSwaggerConfig := GetSwaggerConfig()
 	swaggerInfo.Version = xconfig.GetServerVersion()
 	swaggerInfo.Host = ginSwaggerConfig.Host
 	swaggerInfo.BasePath = ginSwaggerConfig.BasePath

@@ -2,11 +2,11 @@
 
 快速接入新的三方库到 XOne 框架。
 
-使用方法: /project:new-module <模块名> <三方库名>
+使用方法: /new-module <模块名> <三方库名>
 
 示例:
-- /project:new-module xredis go-redis
-- /project:new-module xmongo mongo-driver
+- /new-module xredis go-redis
+- /new-module xmongo mongo-driver
 
 $ARGUMENTS
 

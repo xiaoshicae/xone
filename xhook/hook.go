@@ -15,7 +15,7 @@ import (
 )
 
 var (
-	defaultStopTimeout = 30 * time.Second
+	defaultStopTimeout = 60 * time.Second
 	maxHookNum         = 1000
 )
 

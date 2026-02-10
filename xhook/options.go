@@ -2,7 +2,7 @@ package xhook
 
 import "time"
 
-const defaultHookTimeout = 30 * time.Second
+const defaultHookTimeout = 10 * time.Second
 
 // Order 设置 Hook 执行顺序，数值越小越先执行
 func Order(order int) Option {
@@ -18,7 +18,7 @@ func MustInvokeSuccess(success bool) Option {
 	}
 }
 
-// Timeout 设置单个 Hook 的超时时间，默认 30s
+// Timeout 设置单个 Hook 的超时时间，默认 10s
 func Timeout(d time.Duration) Option {
 	return func(o *options) {
 		if d > 0 {

@@ -1,50 +1,70 @@
 package xflow
 
 import (
-	"fmt"
+	"context"
+	"sync"
 	"time"
+
+	"github.com/xiaoshicae/xone/v2/xlog"
 )
 
 // Monitor 监控接口，Flow 可注入自定义实现以观测执行过程
 type Monitor interface {
 	// OnProcessDone Process 执行完成时调用（成功 err=nil，失败 err!=nil）
-	OnProcessDone(flowName, processorName string, dependency Dependency, err error, duration time.Duration)
+	OnProcessDone(ctx context.Context, flowName, processorName string, dependency Dependency, err error, duration time.Duration)
 	// OnRollbackDone Rollback 执行完成时调用
-	OnRollbackDone(flowName, processorName string, dependency Dependency, err error, duration time.Duration)
+	OnRollbackDone(ctx context.Context, flowName, processorName string, dependency Dependency, err error, duration time.Duration)
 	// OnFlowDone Flow 整体执行完成时调用（包含回滚耗时）
-	OnFlowDone(flowName string, result *ExecuteResult, duration time.Duration)
+	OnFlowDone(ctx context.Context, flowName string, result *ExecuteResult, duration time.Duration)
 }
 
-// defaultMonitor 默认实现，打印到标准输出
+// defaultMonitor 默认实现，使用 xlog 打印
 type defaultMonitor struct{}
 
-func (d *defaultMonitor) OnProcessDone(flowName, processorName string, dependency Dependency, err error, duration time.Duration) {
+func (d *defaultMonitor) OnProcessDone(ctx context.Context, flowName, processorName string, dependency Dependency, err error, duration time.Duration) {
 	if err != nil {
-		fmt.Printf("[xflow] flow=[%s] processor=[%s] dependency=[%s] duration=[%s] process=[failed] err=[%v]\n",
+		xlog.Warn(ctx, "[xflow] flow=[%s] processor=[%s] dependency=[%s] duration=[%s] process=[failed] err=[%v]",
 			flowName, processorName, dependency, duration, err)
 		return
 	}
-	fmt.Printf("[xflow] flow=[%s] processor=[%s] dependency=[%s] duration=[%s] process=[success]\n",
+	xlog.Info(ctx, "[xflow] flow=[%s] processor=[%s] dependency=[%s] duration=[%s] process=[success]",
 		flowName, processorName, dependency, duration)
 }
 
-func (d *defaultMonitor) OnRollbackDone(flowName, processorName string, dependency Dependency, err error, duration time.Duration) {
+func (d *defaultMonitor) OnRollbackDone(ctx context.Context, flowName, processorName string, dependency Dependency, err error, duration time.Duration) {
 	if err != nil {
-		fmt.Printf("[xflow] flow=[%s] processor=[%s] dependency=[%s] duration=[%s] rollback=[failed] err=[%v]\n",
+		xlog.Warn(ctx, "[xflow] flow=[%s] processor=[%s] dependency=[%s] duration=[%s] rollback=[failed] err=[%v]",
 			flowName, processorName, dependency, duration, err)
 		return
 	}
-	fmt.Printf("[xflow] flow=[%s] processor=[%s] dependency=[%s] duration=[%s] rollback=[success]\n",
+	xlog.Info(ctx, "[xflow] flow=[%s] processor=[%s] dependency=[%s] duration=[%s] rollback=[success]",
 		flowName, processorName, dependency, duration)
 }
 
-func (d *defaultMonitor) OnFlowDone(flowName string, result *ExecuteResult, duration time.Duration) {
+func (d *defaultMonitor) OnFlowDone(ctx context.Context, flowName string, result *ExecuteResult, duration time.Duration) {
 	status := "success"
 	if !result.Success() {
 		status = "failed"
 	}
-	fmt.Printf("[xflow] flow=[%s] duration=[%s] status=[%s] rolled=[%t]\n",
+	xlog.Info(ctx, "[xflow] flow=[%s] duration=[%s] status=[%s] rolled=[%t]",
 		flowName, duration, status, result.Rolled)
 }
 
-var defaultMonitorInstance Monitor = &defaultMonitor{}
+var (
+	defaultMonitorInstance Monitor = &defaultMonitor{}
+	monitorMu             sync.RWMutex
+)
+
+// SetDefaultMonitor 设置全局默认 Monitor 实现，替换内置的 xlog 打印
+func SetDefaultMonitor(m Monitor) {
+	monitorMu.Lock()
+	defer monitorMu.Unlock()
+	defaultMonitorInstance = m
+}
+
+// GetDefaultMonitor 获取全局默认 Monitor 实现
+func GetDefaultMonitor() Monitor {
+	monitorMu.RLock()
+	defer monitorMu.RUnlock()
+	return defaultMonitorInstance
+}

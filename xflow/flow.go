@@ -13,9 +13,7 @@ type Flow[T any] struct {
 	Name string
 	// Processors 按执行顺序排列的处理器列表
 	Processors []Processor[T]
-	// EnableMonitor 是否启用监控，默认 false（零开销）
-	EnableMonitor bool
-	// Monitor 可选自定义监控实现，nil 时使用 defaultMonitor
+	// Monitor 可选自定义监控实现，nil 时使用全局默认 Monitor
 	Monitor Monitor
 }
 
@@ -35,11 +33,6 @@ func (f *Flow[T]) SetName(name string) {
 // SetMonitor 设置自定义 Monitor
 func (f *Flow[T]) SetMonitor(monitor Monitor) {
 	f.Monitor = monitor
-}
-
-// SetEnableMonitor 设置是否启用监控
-func (f *Flow[T]) SetEnableMonitor(enable bool) {
-	f.EnableMonitor = enable
 }
 
 // AddProcessor 添加 Processor
@@ -74,7 +67,7 @@ func (f *Flow[T]) Execute(ctx context.Context, data T) *ExecuteResult {
 		err := safeProcess(p, ctx, data)
 
 		if monitor != nil {
-			monitor.OnProcessDone(f.Name, p.Name(), p.Dependency(), err, time.Since(start))
+			monitor.OnProcessDone(ctx, f.Name, p.Name(), p.Dependency(), err, time.Since(start))
 		}
 
 		if err != nil {
@@ -96,7 +89,7 @@ func (f *Flow[T]) Execute(ctx context.Context, data T) *ExecuteResult {
 			f.rollback(ctx, data, succeeded, result, monitor)
 
 			if monitor != nil {
-				monitor.OnFlowDone(f.Name, result, time.Since(flowStart))
+				monitor.OnFlowDone(ctx, f.Name, result, time.Since(flowStart))
 			}
 			return result
 		}
@@ -105,7 +98,7 @@ func (f *Flow[T]) Execute(ctx context.Context, data T) *ExecuteResult {
 	}
 
 	if monitor != nil {
-		monitor.OnFlowDone(f.Name, result, time.Since(flowStart))
+		monitor.OnFlowDone(ctx, f.Name, result, time.Since(flowStart))
 	}
 
 	return result
@@ -126,7 +119,7 @@ func (f *Flow[T]) rollback(ctx context.Context, data T, succeeded []Processor[T]
 		err := safeRollback(p, ctx, data)
 
 		if monitor != nil {
-			monitor.OnRollbackDone(f.Name, p.Name(), p.Dependency(), err, time.Since(start))
+			monitor.OnRollbackDone(ctx, f.Name, p.Name(), p.Dependency(), err, time.Since(start))
 		}
 
 		if err != nil {
@@ -140,15 +133,15 @@ func (f *Flow[T]) rollback(ctx context.Context, data T, succeeded []Processor[T]
 	}
 }
 
-// resolveMonitor 返回有效的 Monitor 实例，EnableMonitor=false 时返回 nil（零开销）
+// resolveMonitor 返回有效的 Monitor 实例，config 禁用时返回 nil（零开销）
 func (f *Flow[T]) resolveMonitor() Monitor {
-	if !f.EnableMonitor {
+	if GetConfig().DisableMonitor {
 		return nil
 	}
 	if f.Monitor != nil {
 		return f.Monitor
 	}
-	return defaultMonitorInstance
+	return GetDefaultMonitor()
 }
 
 // safeProcess 安全执行 Process，捕获 panic 并附带堆栈

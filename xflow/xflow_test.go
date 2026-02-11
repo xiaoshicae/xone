@@ -52,7 +52,7 @@ type testMonitor struct {
 	calls []monitorCall
 }
 
-func (m *testMonitor) OnProcessDone(flowName, processorName string, dependency Dependency, err error, duration time.Duration) {
+func (m *testMonitor) OnProcessDone(ctx context.Context, flowName, processorName string, dependency Dependency, err error, duration time.Duration) {
 	m.calls = append(m.calls, monitorCall{
 		method:        "OnProcessDone",
 		flowName:      flowName,
@@ -63,7 +63,7 @@ func (m *testMonitor) OnProcessDone(flowName, processorName string, dependency D
 	})
 }
 
-func (m *testMonitor) OnRollbackDone(flowName, processorName string, dependency Dependency, err error, duration time.Duration) {
+func (m *testMonitor) OnRollbackDone(ctx context.Context, flowName, processorName string, dependency Dependency, err error, duration time.Duration) {
 	m.calls = append(m.calls, monitorCall{
 		method:        "OnRollbackDone",
 		flowName:      flowName,
@@ -74,7 +74,7 @@ func (m *testMonitor) OnRollbackDone(flowName, processorName string, dependency 
 	})
 }
 
-func (m *testMonitor) OnFlowDone(flowName string, result *ExecuteResult, duration time.Duration) {
+func (m *testMonitor) OnFlowDone(ctx context.Context, flowName string, result *ExecuteResult, duration time.Duration) {
 	m.calls = append(m.calls, monitorCall{
 		method:   "OnFlowDone",
 		flowName: flowName,
@@ -144,14 +144,30 @@ func TestDependency_String(t *testing.T) {
 func TestDefaultMonitor(t *testing.T) {
 	PatchConvey("TestDefaultMonitor-不 panic", t, func() {
 		m := &defaultMonitor{}
+		ctx := context.Background()
 		result := &ExecuteResult{}
 
-		So(func() { m.OnProcessDone("flow", "proc", Strong, nil, time.Millisecond) }, ShouldNotPanic)
-		So(func() { m.OnProcessDone("flow", "proc", Strong, errors.New("err"), time.Millisecond) }, ShouldNotPanic)
-		So(func() { m.OnRollbackDone("flow", "proc", Strong, nil, time.Millisecond) }, ShouldNotPanic)
-		So(func() { m.OnRollbackDone("flow", "proc", Strong, errors.New("err"), time.Millisecond) }, ShouldNotPanic)
-		So(func() { m.OnFlowDone("flow", result, time.Millisecond) }, ShouldNotPanic)
-		So(func() { m.OnFlowDone("flow", &ExecuteResult{Err: errors.New("fail")}, time.Millisecond) }, ShouldNotPanic)
+		So(func() { m.OnProcessDone(ctx, "flow", "proc", Strong, nil, time.Millisecond) }, ShouldNotPanic)
+		So(func() { m.OnProcessDone(ctx, "flow", "proc", Strong, errors.New("err"), time.Millisecond) }, ShouldNotPanic)
+		So(func() { m.OnRollbackDone(ctx, "flow", "proc", Strong, nil, time.Millisecond) }, ShouldNotPanic)
+		So(func() { m.OnRollbackDone(ctx, "flow", "proc", Strong, errors.New("err"), time.Millisecond) }, ShouldNotPanic)
+		So(func() { m.OnFlowDone(ctx, "flow", result, time.Millisecond) }, ShouldNotPanic)
+		So(func() { m.OnFlowDone(ctx, "flow", &ExecuteResult{Err: errors.New("fail")}, time.Millisecond) }, ShouldNotPanic)
+	})
+}
+
+func TestSetDefaultMonitor(t *testing.T) {
+	PatchConvey("TestSetDefaultMonitor-替换全局默认 Monitor", t, func() {
+		original := GetDefaultMonitor()
+		So(original, ShouldNotBeNil)
+
+		custom := &testMonitor{}
+		SetDefaultMonitor(custom)
+		So(GetDefaultMonitor(), ShouldEqual, custom)
+
+		// 恢复
+		SetDefaultMonitor(original)
+		So(GetDefaultMonitor(), ShouldEqual, original)
 	})
 }
 
@@ -223,6 +239,8 @@ func TestExecuteResult(t *testing.T) {
 
 func TestFlow_Execute_EmptyProcessors(t *testing.T) {
 	PatchConvey("TestFlow_Execute-空流程", t, func() {
+		Mock(GetConfig).Return(&Config{DisableMonitor: true}).Build()
+
 		flow := &Flow[testData]{Name: "empty"}
 		result := flow.Execute(context.Background(), testData{})
 
@@ -234,6 +252,8 @@ func TestFlow_Execute_EmptyProcessors(t *testing.T) {
 
 func TestFlow_Execute_AllSuccess(t *testing.T) {
 	PatchConvey("TestFlow_Execute-全部成功", t, func() {
+		Mock(GetConfig).Return(&Config{DisableMonitor: true}).Build()
+
 		flow := &Flow[testData]{
 			Name: "all-success",
 			Processors: []Processor[testData]{
@@ -252,6 +272,8 @@ func TestFlow_Execute_AllSuccess(t *testing.T) {
 
 func TestFlow_Execute_StrongDependencyFail(t *testing.T) {
 	PatchConvey("TestFlow_Execute-强依赖失败触发回滚", t, func() {
+		Mock(GetConfig).Return(&Config{DisableMonitor: true}).Build()
+
 		var rollbackOrder []string
 
 		flow := &Flow[testData]{
@@ -301,6 +323,8 @@ func TestFlow_Execute_StrongDependencyFail(t *testing.T) {
 
 func TestFlow_Execute_WeakDependencySkip(t *testing.T) {
 	PatchConvey("TestFlow_Execute-弱依赖跳过继续执行", t, func() {
+		Mock(GetConfig).Return(&Config{DisableMonitor: true}).Build()
+
 		var executed []string
 
 		flow := &Flow[testData]{
@@ -346,6 +370,8 @@ func TestFlow_Execute_WeakDependencySkip(t *testing.T) {
 
 func TestFlow_Execute_WeakAndStrongMixedFail(t *testing.T) {
 	PatchConvey("TestFlow_Execute-弱+强混合失败", t, func() {
+		Mock(GetConfig).Return(&Config{DisableMonitor: true}).Build()
+
 		var rollbackOrder []string
 
 		flow := &Flow[testData]{
@@ -393,6 +419,8 @@ func TestFlow_Execute_WeakAndStrongMixedFail(t *testing.T) {
 
 func TestFlow_Execute_ProcessPanic(t *testing.T) {
 	PatchConvey("TestFlow_Execute-Process panic 被捕获", t, func() {
+		Mock(GetConfig).Return(&Config{DisableMonitor: true}).Build()
+
 		flow := &Flow[testData]{
 			Name: "panic",
 			Processors: []Processor[testData]{
@@ -416,6 +444,8 @@ func TestFlow_Execute_ProcessPanic(t *testing.T) {
 
 func TestFlow_Execute_RollbackFail(t *testing.T) {
 	PatchConvey("TestFlow_Execute-Rollback 失败不中断", t, func() {
+		Mock(GetConfig).Return(&Config{DisableMonitor: true}).Build()
+
 		var rollbackOrder []string
 
 		flow := &Flow[testData]{
@@ -461,6 +491,8 @@ func TestFlow_Execute_RollbackFail(t *testing.T) {
 
 func TestFlow_Execute_RollbackPanic(t *testing.T) {
 	PatchConvey("TestFlow_Execute-Rollback panic 被捕获", t, func() {
+		Mock(GetConfig).Return(&Config{DisableMonitor: true}).Build()
+
 		flow := &Flow[testData]{
 			Name: "rollback-panic",
 			Processors: []Processor[testData]{
@@ -491,6 +523,8 @@ func TestFlow_Execute_RollbackPanic(t *testing.T) {
 
 func TestFlow_Execute_DataPassBetweenProcessors(t *testing.T) {
 	PatchConvey("TestFlow_Execute-Processor 间数据传递（指针类型）", t, func() {
+		Mock(GetConfig).Return(&Config{DisableMonitor: true}).Build()
+
 		flow := &Flow[*testData]{
 			Name: "data-pass",
 			Processors: []Processor[*testData]{
@@ -529,12 +563,13 @@ func TestFlow_Execute_DataPassBetweenProcessors(t *testing.T) {
 
 func TestFlow_Execute_MonitorDisabled(t *testing.T) {
 	PatchConvey("TestFlow_Execute-MonitorDisabled 不调用 Monitor", t, func() {
+		Mock(GetConfig).Return(&Config{DisableMonitor: true}).Build()
+
 		mon := &testMonitor{}
 
 		flow := &Flow[testData]{
-			Name:          "no-monitor",
-			EnableMonitor: false,
-			Monitor:       mon,
+			Name:    "no-monitor",
+			Monitor: mon,
 			Processors: []Processor[testData]{
 				&mockProcessor[testData]{name: "p1", dependency: Strong},
 			},
@@ -542,19 +577,20 @@ func TestFlow_Execute_MonitorDisabled(t *testing.T) {
 		result := flow.Execute(context.Background(), testData{})
 
 		So(result.Success(), ShouldBeTrue)
-		// EnableMonitor=false 时 Monitor 不被调用
+		// DisableMonitor=true 时 Monitor 不被调用
 		So(len(mon.calls), ShouldEqual, 0)
 	})
 }
 
 func TestFlow_Execute_MonitorEnabled(t *testing.T) {
 	PatchConvey("TestFlow_Execute-MonitorEnabled 调用验证", t, func() {
+		Mock(GetConfig).Return(&Config{DisableMonitor: false}).Build()
+
 		mon := &testMonitor{}
 
 		flow := &Flow[testData]{
-			Name:          "with-monitor",
-			EnableMonitor: true,
-			Monitor:       mon,
+			Name:    "with-monitor",
+			Monitor: mon,
 			Processors: []Processor[testData]{
 				&mockProcessor[testData]{name: "p1", dependency: Strong},
 				&mockProcessor[testData]{name: "p2", dependency: Weak},
@@ -585,12 +621,13 @@ func TestFlow_Execute_MonitorEnabled(t *testing.T) {
 
 func TestFlow_Execute_MonitorDuration(t *testing.T) {
 	PatchConvey("TestFlow_Execute-MonitorDuration 验证耗时 > 0", t, func() {
+		Mock(GetConfig).Return(&Config{DisableMonitor: false}).Build()
+
 		mon := &testMonitor{}
 
 		flow := &Flow[testData]{
-			Name:          "duration-check",
-			EnableMonitor: true,
-			Monitor:       mon,
+			Name:    "duration-check",
+			Monitor: mon,
 			Processors: []Processor[testData]{
 				&mockProcessor[testData]{name: "p1", dependency: Strong},
 			},
@@ -611,12 +648,13 @@ func TestFlow_Execute_MonitorDuration(t *testing.T) {
 
 func TestFlow_Execute_MonitorWithFailure(t *testing.T) {
 	PatchConvey("TestFlow_Execute-MonitorWithFailure 强依赖失败", t, func() {
+		Mock(GetConfig).Return(&Config{DisableMonitor: false}).Build()
+
 		mon := &testMonitor{}
 
 		flow := &Flow[testData]{
-			Name:          "monitor-fail",
-			EnableMonitor: true,
-			Monitor:       mon,
+			Name:    "monitor-fail",
+			Monitor: mon,
 			Processors: []Processor[testData]{
 				&mockProcessor[testData]{
 					name:       "p1",
@@ -660,12 +698,13 @@ func TestFlow_Execute_MonitorWithFailure(t *testing.T) {
 
 func TestFlow_Execute_MonitorWeakSkip(t *testing.T) {
 	PatchConvey("TestFlow_Execute-MonitorWeakSkip 弱依赖跳过记录", t, func() {
+		Mock(GetConfig).Return(&Config{DisableMonitor: false}).Build()
+
 		mon := &testMonitor{}
 
 		flow := &Flow[testData]{
-			Name:          "monitor-weak",
-			EnableMonitor: true,
-			Monitor:       mon,
+			Name:    "monitor-weak",
+			Monitor: mon,
 			Processors: []Processor[testData]{
 				&mockProcessor[testData]{name: "p1", dependency: Strong},
 				&mockProcessor[testData]{
@@ -697,11 +736,11 @@ func TestFlow_Execute_MonitorWeakSkip(t *testing.T) {
 }
 
 func TestFlow_Execute_MonitorDefaultImpl(t *testing.T) {
-	PatchConvey("TestFlow_Execute-Monitor 为 nil 时使用默认实现", t, func() {
+	PatchConvey("TestFlow_Execute-Monitor 为 nil 时使用全局默认实现", t, func() {
+		Mock(GetConfig).Return(&Config{DisableMonitor: false}).Build()
+
 		flow := &Flow[testData]{
-			Name:          "default-monitor",
-			EnableMonitor: true,
-			Monitor:       nil, // 使用默认 defaultMonitor
+			Name: "default-monitor",
 			Processors: []Processor[testData]{
 				&mockProcessor[testData]{name: "p1", dependency: Strong},
 			},
@@ -728,15 +767,6 @@ func TestFlow_SetterMethods(t *testing.T) {
 		So(f.Monitor, ShouldEqual, mon)
 	})
 
-	PatchConvey("TestFlow_SetEnableMonitor", t, func() {
-		f := &Flow[testData]{}
-		So(f.EnableMonitor, ShouldBeFalse)
-		f.SetEnableMonitor(true)
-		So(f.EnableMonitor, ShouldBeTrue)
-		f.SetEnableMonitor(false)
-		So(f.EnableMonitor, ShouldBeFalse)
-	})
-
 	PatchConvey("TestFlow_AddProcessor", t, func() {
 		f := &Flow[testData]{}
 		p := &mockProcessor[testData]{name: "p1"}
@@ -750,6 +780,8 @@ func TestFlow_SetterMethods(t *testing.T) {
 
 func TestFlow_Execute_NilCtx(t *testing.T) {
 	PatchConvey("TestFlow_Execute-nil ctx 自动填充 Background", t, func() {
+		Mock(GetConfig).Return(&Config{DisableMonitor: true}).Build()
+
 		flow := &Flow[testData]{
 			Name: "nil-ctx",
 			Processors: []Processor[testData]{
@@ -766,6 +798,8 @@ func TestFlow_Execute_NilCtx(t *testing.T) {
 
 func TestNew(t *testing.T) {
 	PatchConvey("TestNew-函数式构建", t, func() {
+		Mock(GetConfig).Return(&Config{DisableMonitor: true}).Build()
+
 		p1 := &mockProcessor[testData]{name: "p1", dependency: Strong}
 		p2 := &mockProcessor[testData]{name: "p2", dependency: Weak}
 		flow := New[testData]("test-flow", p1, p2)
@@ -773,7 +807,6 @@ func TestNew(t *testing.T) {
 		So(flow.Name, ShouldEqual, "test-flow")
 		So(len(flow.Processors), ShouldEqual, 2)
 		So(flow.Monitor, ShouldBeNil)
-		So(flow.EnableMonitor, ShouldBeFalse)
 
 		// 验证可正常执行
 		result := flow.Execute(context.Background(), testData{})
@@ -785,6 +818,8 @@ func TestNew(t *testing.T) {
 
 func TestFlow_Execute_WeakFailRollbackIncluded(t *testing.T) {
 	PatchConvey("TestFlow_Execute-弱依赖失败后强依赖失败时弱依赖也回滚", t, func() {
+		Mock(GetConfig).Return(&Config{DisableMonitor: true}).Build()
+
 		var rollbackOrder []string
 
 		flow := &Flow[testData]{
@@ -839,6 +874,8 @@ func TestFlow_Execute_WeakFailRollbackIncluded(t *testing.T) {
 
 func TestFlow_Execute_WeakProcessPanic(t *testing.T) {
 	PatchConvey("TestFlow_Execute-弱依赖 Process panic 被跳过", t, func() {
+		Mock(GetConfig).Return(&Config{DisableMonitor: true}).Build()
+
 		flow := &Flow[testData]{
 			Name: "weak-panic",
 			Processors: []Processor[testData]{
@@ -860,5 +897,15 @@ func TestFlow_Execute_WeakProcessPanic(t *testing.T) {
 		So(result.Success(), ShouldBeTrue)
 		So(result.HasSkippedErrors(), ShouldBeTrue)
 		So(result.SkippedErrors[0].Err.Error(), ShouldContainSubstring, "panic")
+	})
+}
+
+// ==================== Config 测试 ====================
+
+func TestGetConfig(t *testing.T) {
+	PatchConvey("TestGetConfig-默认值", t, func() {
+		c := GetConfig()
+		So(c, ShouldNotBeNil)
+		So(c.DisableMonitor, ShouldBeFalse)
 	})
 }

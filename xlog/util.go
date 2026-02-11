@@ -32,13 +32,15 @@ func RawLog(ctx context.Context, level logrus.Level, msg string, args ...any) {
 		return
 	}
 
-	// 预估容量，减少内存分配
-	estimatedCap := len(args) / 2
-	if estimatedCap < 1 {
-		estimatedCap = 1
+	// Fast path：无参数调用，跳过 slice 分配和 options 处理
+	if len(args) == 0 {
+		logrus.WithContext(ctx).Log(level, msg)
+		return
 	}
-	logArgs := make([]any, 0, estimatedCap)
-	opts := make([]Option, 0, estimatedCap)
+
+	// 分离 logArgs 和 opts
+	logArgs := make([]any, 0, len(args))
+	opts := make([]Option, 0, 2)
 
 	for _, arg := range args {
 		if opt, ok := arg.(Option); ok {
@@ -48,13 +50,18 @@ func RawLog(ctx context.Context, level logrus.Level, msg string, args ...any) {
 		}
 	}
 
+	if len(opts) == 0 {
+		// 无 Option，直接用 logArgs 格式化输出
+		logrus.WithContext(ctx).Logf(level, msg, logArgs...)
+		return
+	}
+
 	dos := defaultOptions()
 	for _, o := range opts {
 		o(dos)
 	}
 
 	fields := logrus.Fields{}
-
 	for k, v := range dos.KV {
 		fields[k] = v
 	}

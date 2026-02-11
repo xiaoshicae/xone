@@ -4,6 +4,7 @@ package xerror
 import (
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // XOneError 统一错误类型，包含模块名、操作名和原始错误
@@ -15,10 +16,19 @@ type XOneError struct {
 
 // Error 实现 error 接口
 func (e *XOneError) Error() string {
+	var b strings.Builder
+	b.Grow(32 + len(e.Module) + len(e.Op))
+	b.WriteString("XOne ")
+	b.WriteString(e.Module)
+	b.WriteByte(' ')
+	b.WriteString(e.Op)
+	b.WriteString(" failed")
 	if e.Err != nil {
-		return fmt.Sprintf("XOne %s %s failed, err=[%v]", e.Module, e.Op, e.Err)
+		b.WriteString(", err=[")
+		b.WriteString(e.Err.Error())
+		b.WriteByte(']')
 	}
-	return fmt.Sprintf("XOne %s %s failed", e.Module, e.Op)
+	return b.String()
 }
 
 // Unwrap 支持 errors.Is / errors.As 链式判断

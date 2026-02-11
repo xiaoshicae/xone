@@ -398,6 +398,7 @@ XGorm:
 
 ## 更新日志
 
+- **v2.1.6** (2026-02-11) - perf: 跨模块性能优化，xerror/xgorm/xlog/xutil 热路径减少内存分配
 - **v2.1.5** (2026-02-11) - perf: xgin 中间件性能优化，减少热路径内存分配和字符串转换
 - **v2.1.4** (2026-02-11) - refactor: xserver 修复信号泄漏、修正拼写错误、简化 run() 错误处理
 - **v2.1.3** (2026-02-11) - refactor: xtrace EnableTrace 逻辑重构、测试覆盖率提升至 100%；EnableDebug 重命名为 EnableXOneDebug，环境变量改为 XONE_ENABLE_DEBUG

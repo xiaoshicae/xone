@@ -170,7 +170,7 @@ func TestRawLog(t *testing.T) {
 	mockey.PatchConvey("TestRawLog", t, func() {
 		mockey.PatchConvey("TestRawLog-WithOptions", func() {
 			ctx := context.Background()
-			RawLog(ctx, logrus.InfoLevel, "test message", "arg1", KVMap(map[string]any{"key": "value"}))
+			RawLog(ctx, logrus.InfoLevel, "test message %s", "arg1", KVMap(map[string]any{"key": "value"}))
 		})
 
 		mockey.PatchConvey("TestRawLog-NoArgs", func() {

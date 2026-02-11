@@ -1,7 +1,6 @@
 package xutil
 
 import (
-	"reflect"
 	"strings"
 	"time"
 
@@ -13,13 +12,10 @@ func ToPtr[T any](t T) *T {
 	return &t
 }
 
-// GetOrDefault 如果v为0值，则返回defaultV
-func GetOrDefault[T any](v T, defaultV T) T {
-	rv := reflect.ValueOf(v)
-	if !rv.IsValid() {
-		return defaultV
-	}
-	if rv.IsZero() {
+// GetOrDefault 如果v为零值，则返回defaultV（无反射，零分配）
+func GetOrDefault[T comparable](v T, defaultV T) T {
+	var zero T
+	if v == zero {
 		return defaultV
 	}
 	return v

@@ -43,7 +43,7 @@ func TestGetOrDefault(t *testing.T) {
 		})
 
 		mockey.PatchConvey("TestGetOrDefault-NilInterface", func() {
-			// nil interface → reflect.ValueOf 返回 invalid，走 !rv.IsValid() 分支
+			// nil interface → 零值比较，any 的零值为 nil
 			c.So(GetOrDefault[any](nil, "default"), c.ShouldEqual, "default")
 		})
 	})

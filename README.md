@@ -398,6 +398,7 @@ XGorm:
 
 ## 更新日志
 
+- **v2.1.4** (2026-02-11) - refactor: xserver 修复信号泄漏、修正拼写错误、简化 run() 错误处理
 - **v2.1.3** (2026-02-11) - refactor: xtrace EnableTrace 逻辑重构、测试覆盖率提升至 100%；EnableDebug 重命名为 EnableXOneDebug，环境变量改为 XONE_ENABLE_DEBUG
 - **v2.1.2** (2026-02-11) - refactor: xlog 模块优化，修复 asyncWriter 多次关闭、消除 consolePrint 重复栈回溯、interface{} 统一为 any
 - **v2.1.1** (2026-02-11) - refactor: xutil 全面重构，修复 ToPrt 拼写和 cmd.go 参数截断 bug，消除死代码，优化 log 正则合并，测试覆盖率提升至 100%

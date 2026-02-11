@@ -34,31 +34,20 @@ func run(server Server) error {
 	}
 
 	if server != nil {
-		var serverRunErr error
-		if err := runWithSever(server); err != nil { // 服务会以阻塞方式启动
-			serverRunErr = err
-		}
-
-		var beforeStopHookErr error
-		if err := xhook.InvokeBeforeStopHook(); err != nil {
-			beforeStopHookErr = err
-		}
-
-		if serverRunErr != nil || beforeStopHookErr != nil { // 任何错误发生，则合并成一个返回
-			return errors.Join(serverRunErr, beforeStopHookErr)
-		}
-
-		return nil
+		serverRunErr := runWithServer(server)             // 服务会以阻塞方式启动
+		beforeStopHookErr := xhook.InvokeBeforeStopHook() // 无论服务是否报错，都执行 stop hook
+		return errors.Join(serverRunErr, beforeStopHookErr)
 	}
 
 	// 如果不是Server，则只会执行InvokeBeforeStartHook，一般用于调试
 	return nil
 }
 
-func runWithSever(s Server) error {
+func runWithServer(s Server) error {
 	serverRunErrChan := make(chan error, 1)
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, quitSignals...)
+	defer signal.Stop(quit)
 
 	go func() {
 		safeInvokeServerRun(s, serverRunErrChan)
@@ -69,7 +58,7 @@ func runWithSever(s Server) error {
 		if err != nil {
 			return err // safeInvokeServerRun 已返回 xerror
 		}
-		xutil.WarnIfEnableDebug("XOne Run server unexpected stopped")
+		xutil.WarnIfEnableDebug("XOne Run server unexpectedly stopped")
 		return nil
 	case <-quit: // 接收到退出信号后，执行Server.Stop()
 		xutil.InfoIfEnableDebug("********** XOne Stop server begin **********")

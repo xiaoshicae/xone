@@ -2,7 +2,6 @@ package xserver
 
 import (
 	"errors"
-	"net/http"
 	"testing"
 	"time"
 
@@ -15,7 +14,7 @@ import (
 func TestRunServer(t *testing.T) {
 	PatchConvey("TestRunServer", t, func() {
 		Mock(xhook.BeforeStart).Return(nil).Build()
-		Mock(runWithSever).Return(errors.New("for test")).Build()
+		Mock(runWithServer).Return(errors.New("for test")).Build()
 		Mock(xhook.InvokeBeforeStopHook).Return(errors.New("for test 2")).Build()
 		err := run(MockServer{})
 		So(err.Error(), ShouldEqual, "for test\nfor test 2")
@@ -32,62 +31,66 @@ func (m MockServer) Stop() error {
 	return nil
 }
 
-func TestRunWithSeverRun(t *testing.T) {
-	PatchConvey("TestRunWithSeverRun-Panic", t, func() {
-		err := runWithSever(nil)
-		So(err.Error(), ShouldEqual, "XOne xserver run failed, err=[panic occurred, runtime error: invalid memory address or nil pointer dereference]")
-	})
+func TestRunWithServerRun(t *testing.T) {
+	PatchConvey("TestRunWithServerRun", t, func() {
+		PatchConvey("Panic-NilServer", func() {
+			err := runWithServer(nil)
+			So(err.Error(), ShouldEqual, "XOne xserver run failed, err=[panic occurred, runtime error: invalid memory address or nil pointer dereference]")
+		})
 
-	PatchConvey("TestRunWithSeverRun-Panic2", t, func() {
-		err := runWithSever(PanicRunServer{})
-		So(err.Error(), ShouldEqual, "XOne xserver run failed, err=[panic occurred, panic run]")
-	})
+		PatchConvey("Panic-UserPanic", func() {
+			err := runWithServer(PanicRunServer{})
+			So(err.Error(), ShouldEqual, "XOne xserver run failed, err=[panic occurred, panic run]")
+		})
 
-	PatchConvey("TestRunWithSeverRun-Err", t, func() {
-		err := runWithSever(ErrRunServer{})
-		So(err.Error(), ShouldEqual, "XOne xserver run failed, err=[err run]")
-	})
+		PatchConvey("RunError", func() {
+			err := runWithServer(ErrRunServer{})
+			So(err.Error(), ShouldEqual, "XOne xserver run failed, err=[err run]")
+		})
 
-	PatchConvey("TestRunWithSeverRun-ExistWitNil", t, func() {
-		err := runWithSever(NormalServer{})
-		So(err, ShouldBeNil)
+		PatchConvey("ExitWithNil", func() {
+			err := runWithServer(NormalServer{})
+			So(err, ShouldBeNil)
+		})
 	})
 }
 
 func TestSafeInvokeServerStop(t *testing.T) {
-	PatchConvey("TestRunWithSeverRun-Panic", t, func() {
-		err := safeInvokeServerStop(nil)
-		So(err.Error(), ShouldEqual, "XOne xserver stop failed, err=[panic occurred, runtime error: invalid memory address or nil pointer dereference]")
-	})
+	PatchConvey("TestSafeInvokeServerStop", t, func() {
+		PatchConvey("Panic-NilServer", func() {
+			err := safeInvokeServerStop(nil)
+			So(err.Error(), ShouldEqual, "XOne xserver stop failed, err=[panic occurred, runtime error: invalid memory address or nil pointer dereference]")
+		})
 
-	PatchConvey("TestRunWithSeverRun-Panic2", t, func() {
-		err := safeInvokeServerStop(PanicStopServer{})
-		So(err.Error(), ShouldEqual, "XOne xserver stop failed, err=[panic occurred, stop panic]")
-	})
+		PatchConvey("Panic-UserPanic", func() {
+			err := safeInvokeServerStop(PanicStopServer{})
+			So(err.Error(), ShouldEqual, "XOne xserver stop failed, err=[panic occurred, stop panic]")
+		})
 
-	PatchConvey("TestRunWithSeverRun-Err", t, func() {
-		err := safeInvokeServerStop(ErrStopServer{})
-		So(err.Error(), ShouldEqual, "XOne xserver stop failed, err=[stop err]")
-	})
+		PatchConvey("StopError", func() {
+			err := safeInvokeServerStop(ErrStopServer{})
+			So(err.Error(), ShouldEqual, "XOne xserver stop failed, err=[stop err]")
+		})
 
-	PatchConvey("TestRunWithSeverStop-ExistWitNil", t, func() {
-		err := safeInvokeServerStop(NormalServer{})
-		So(err, ShouldBeNil)
+		PatchConvey("ExitWithNil", func() {
+			err := safeInvokeServerStop(NormalServer{})
+			So(err, ShouldBeNil)
+		})
 	})
 }
 
-func TestRunWithSeverStopError(t *testing.T) {
+func TestRunWithServerStopError(t *testing.T) {
 	t.Skip("测试主动打断进程，退出err，需要手动执行")
-	PatchConvey("TestRunWithSeverStopError", t, func() {
-		err := runWithSever(DemoServerStopError{})
+	PatchConvey("TestRunWithServerStopError", t, func() {
+		err := runWithServer(DemoServerStopError{})
 		So(err.Error(), ShouldEqual, "XOne xserver stop failed, err=[stop err]")
 	})
 }
 
-func TestRunWithSeverStopSuccess(t *testing.T) {
+func TestRunWithServerStopSuccess(t *testing.T) {
 	t.Skip("测试主动打断进程，正常退出情况，需要手动执行")
-	PatchConvey("TestRunWithSeverStopSuccess", t, func() {
-		err := runWithSever(DemoServerStopSuccess{})
+	PatchConvey("TestRunWithServerStopSuccess", t, func() {
+		err := runWithServer(DemoServerStopSuccess{})
 		So(err, ShouldBeNil)
 	})
 }
@@ -223,6 +226,3 @@ func TestBlockingServerStopBeforeRun(t *testing.T) {
 		}
 	})
 }
-
-// 以下测试用到了 net/http 的 unused import，保留在这里但不导入
-var _ = http.ErrServerClosed

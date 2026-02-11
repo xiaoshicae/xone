@@ -156,4 +156,4 @@ flow := xflow.New[OrderData]("order-flow", ...)
 - `Process` 和 `Rollback` 中的 panic 会被自动捕获，转为错误返回
 - 弱依赖失败后也会加入回滚列表，后续强依赖失败时会一并回滚
 - `Monitor` 默认开启（使用 xlog 打印），可通过配置 `DisableMonitor: true` 关闭（零开销）
-- `Flow` 的配置方法（`AddProcessor` 等）非并发安全，必须在 `Execute` 前完成
+- `Flow` 的字段赋值非并发安全，必须在 `Execute` 前完成

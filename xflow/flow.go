@@ -23,17 +23,6 @@ func New[T any](name string, processors ...Processor[T]) *Flow[T] {
 	}
 }
 
-// SetName 设置 Name
-func (f *Flow[T]) SetName(name string) {
-	f.Name = name
-}
-
-// AddProcessor 添加 Processor
-// 注意：非并发安全，必须在 Execute 前完成配置
-func (f *Flow[T]) AddProcessor(processor Processor[T]) {
-	f.Processors = append(f.Processors, processor)
-}
-
 // Execute 执行流程，返回执行结果
 func (f *Flow[T]) Execute(ctx context.Context, data T) *ExecuteResult {
 	if ctx == nil {

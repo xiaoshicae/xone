@@ -12,18 +12,18 @@ import (
 func GinXSessionMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		ctx := c.Request.Context()
-		ctx = ctxWithKV(ctx, make(map[string]interface{}))
+		ctx = ctxWithKV(ctx, make(map[string]any))
 		c.Request = c.Request.WithContext(ctx)
 
 		c.Next() // 继续处理
 	}
 }
 
-func ctxWithKV(ctx context.Context, kvs map[string]interface{}) context.Context {
+func ctxWithKV(ctx context.Context, kvs map[string]any) context.Context {
 	if kvs == nil {
-		kvs = make(map[string]interface{})
+		kvs = make(map[string]any)
 	}
-	kvContainer, ok := ctx.Value(xlog.XLogCtxKVContainerKey).(map[string]interface{})
+	kvContainer, ok := ctx.Value(xlog.XLogCtxKVContainerKey).(map[string]any)
 	if !ok || kvContainer == nil {
 		return context.WithValue(ctx, xlog.XLogCtxKVContainerKey, kvs)
 	}

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 	"time"
 
@@ -11,6 +12,8 @@ import (
 	"github.com/swaggo/swag"
 	"github.com/xiaoshicae/xone/v2/xconfig"
 	"github.com/xiaoshicae/xone/v2/xgin/options"
+	"github.com/xiaoshicae/xone/v2/xgin/trans"
+	"github.com/xiaoshicae/xone/v2/xserver"
 
 	. "github.com/bytedance/mockey"
 	. "github.com/smartystreets/goconvey/convey"
@@ -538,4 +541,284 @@ func TestInjectSwaggerInfoWithUrlPrefix(t *testing.T) {
 
 	// 应该有响应（不是 404）
 	t.Logf("prefixed swagger route response code: %d", w.Code)
+}
+
+// ==================== config.go 测试 ====================
+
+func TestGetConfig_UnmarshalError(t *testing.T) {
+	PatchConvey("TestGetConfig-UnmarshalError", t, func() {
+		Mock(xconfig.UnmarshalConfig).Return(errors.New("not found")).Build()
+
+		config := GetConfig()
+		So(config, ShouldNotBeNil)
+		So(config.Host, ShouldEqual, defaultHost)
+		So(config.Port, ShouldEqual, defaultPort)
+	})
+}
+
+func TestGetConfig_Success(t *testing.T) {
+	PatchConvey("TestGetConfig-Success", t, func() {
+		Mock(xconfig.UnmarshalConfig).To(func(key string, conf any) error {
+			c := conf.(*Config)
+			c.Host = "10.0.0.1"
+			c.Port = 9090
+			return nil
+		}).Build()
+
+		config := GetConfig()
+		So(config, ShouldNotBeNil)
+		So(config.Host, ShouldEqual, "10.0.0.1")
+		So(config.Port, ShouldEqual, 9090)
+	})
+}
+
+func TestGetSwaggerConfig_UnmarshalError(t *testing.T) {
+	PatchConvey("TestGetSwaggerConfig-UnmarshalError", t, func() {
+		Mock(xconfig.UnmarshalConfig).Return(errors.New("not found")).Build()
+
+		config := GetSwaggerConfig()
+		So(config, ShouldNotBeNil)
+		So(config.Schemes, ShouldResemble, defaultSchemes)
+	})
+}
+
+func TestGetSwaggerConfig_Success(t *testing.T) {
+	PatchConvey("TestGetSwaggerConfig-Success", t, func() {
+		Mock(xconfig.UnmarshalConfig).To(func(key string, conf any) error {
+			c := conf.(*SwaggerConfig)
+			c.Host = "api.example.com"
+			c.Schemes = []string{"https"}
+			return nil
+		}).Build()
+
+		config := GetSwaggerConfig()
+		So(config, ShouldNotBeNil)
+		So(config.Host, ShouldEqual, "api.example.com")
+		So(config.Schemes, ShouldResemble, []string{"https"})
+	})
+}
+
+func TestConfigMergeDefault(t *testing.T) {
+	PatchConvey("TestConfigMergeDefault", t, func() {
+		PatchConvey("Nil", func() {
+			c := configMergeDefault(nil)
+			So(c, ShouldNotBeNil)
+			So(c.Host, ShouldEqual, defaultHost)
+			So(c.Port, ShouldEqual, defaultPort)
+		})
+
+		PatchConvey("CustomValues", func() {
+			c := configMergeDefault(&Config{Host: "10.0.0.1", Port: 9000})
+			So(c.Host, ShouldEqual, "10.0.0.1")
+			So(c.Port, ShouldEqual, 9000)
+		})
+
+		PatchConvey("WithSwagger", func() {
+			c := configMergeDefault(&Config{
+				Host:    "10.0.0.1",
+				Port:    9000,
+				Swagger: &SwaggerConfig{},
+			})
+			So(c.Swagger, ShouldNotBeNil)
+			So(c.Swagger.Schemes, ShouldResemble, defaultSchemes)
+		})
+
+		PatchConvey("NegativePort", func() {
+			c := configMergeDefault(&Config{Port: -1})
+			So(c.Port, ShouldEqual, defaultPort)
+		})
+	})
+}
+
+func TestSwaggerConfigMergeDefault(t *testing.T) {
+	PatchConvey("TestSwaggerConfigMergeDefault", t, func() {
+		PatchConvey("Nil", func() {
+			c := swaggerConfigMergeDefault(nil)
+			So(c, ShouldNotBeNil)
+			So(c.Schemes, ShouldResemble, defaultSchemes)
+		})
+
+		PatchConvey("CustomSchemes", func() {
+			c := swaggerConfigMergeDefault(&SwaggerConfig{Schemes: []string{"grpc"}})
+			So(c.Schemes, ShouldResemble, []string{"grpc"})
+		})
+	})
+}
+
+// ==================== xgin.go 补充测试 ====================
+
+func TestStart(t *testing.T) {
+	PatchConvey("TestStart", t, func() {
+		Mock(xserver.Run).Return(nil).Build()
+
+		g := New()
+		err := g.Start()
+		So(err, ShouldBeNil)
+	})
+}
+
+func TestSetGinMode_EnvSet(t *testing.T) {
+	PatchConvey("TestSetGinMode-EnvSet", t, func() {
+		oldMode := os.Getenv(gin.EnvGinMode)
+		os.Setenv(gin.EnvGinMode, gin.TestMode)
+		defer func() {
+			if oldMode == "" {
+				os.Unsetenv(gin.EnvGinMode)
+			} else {
+				os.Setenv(gin.EnvGinMode, oldMode)
+			}
+			gin.SetMode(gin.TestMode)
+		}()
+
+		// 先设为 test 模式
+		gin.SetMode(gin.TestMode)
+		setGinMode()
+		// 设置了 GIN_MODE 环境变量时，函数直接返回，不改变 mode
+		So(gin.Mode(), ShouldEqual, gin.TestMode)
+	})
+}
+
+func TestSetGinMode_DebugEnabled(t *testing.T) {
+	PatchConvey("TestSetGinMode-DebugEnabled", t, func() {
+		oldGinMode := os.Getenv(gin.EnvGinMode)
+		oldDebug := os.Getenv("SERVER_ENABLE_DEBUG")
+		os.Unsetenv(gin.EnvGinMode)
+		os.Setenv("SERVER_ENABLE_DEBUG", "true")
+		defer func() {
+			if oldGinMode == "" {
+				os.Unsetenv(gin.EnvGinMode)
+			} else {
+				os.Setenv(gin.EnvGinMode, oldGinMode)
+			}
+			if oldDebug == "" {
+				os.Unsetenv("SERVER_ENABLE_DEBUG")
+			} else {
+				os.Setenv("SERVER_ENABLE_DEBUG", oldDebug)
+			}
+			gin.SetMode(gin.TestMode) // 恢复测试模式
+		}()
+
+		setGinMode()
+		So(gin.Mode(), ShouldEqual, gin.DebugMode)
+	})
+}
+
+func TestSetGinMode_ReleaseDefault(t *testing.T) {
+	PatchConvey("TestSetGinMode-ReleaseDefault", t, func() {
+		oldGinMode := os.Getenv(gin.EnvGinMode)
+		oldDebug := os.Getenv("SERVER_ENABLE_DEBUG")
+		os.Unsetenv(gin.EnvGinMode)
+		os.Unsetenv("SERVER_ENABLE_DEBUG")
+		defer func() {
+			if oldGinMode != "" {
+				os.Setenv(gin.EnvGinMode, oldGinMode)
+			}
+			if oldDebug != "" {
+				os.Setenv("SERVER_ENABLE_DEBUG", oldDebug)
+			}
+			gin.SetMode(gin.TestMode)
+		}()
+
+		setGinMode()
+		So(gin.Mode(), ShouldEqual, gin.ReleaseMode)
+	})
+}
+
+func TestStopShutdownError(t *testing.T) {
+	PatchConvey("TestStopShutdownError", t, func() {
+		Mock((*http.Server).Shutdown).Return(errors.New("shutdown failed")).Build()
+
+		g := New()
+		g.srv = &http.Server{}
+
+		err := g.Stop()
+		So(err, ShouldNotBeNil)
+		So(err.Error(), ShouldEqual, "shutdown failed")
+	})
+}
+
+func TestBuildWithSwaggerInfo(t *testing.T) {
+	g := New(
+		options.EnableLogMiddleware(false),
+		options.EnableTraceMiddleware(false),
+	)
+
+	spec := &swag.Spec{
+		InfoInstanceName: "test-build",
+		SwaggerTemplate:  "{}",
+	}
+	g.WithSwagger(spec)
+	g.Build()
+
+	if !g.build {
+		t.Fatal("build should be true")
+	}
+	if g.swaggerInfo == nil {
+		t.Fatal("swaggerInfo should not be nil")
+	}
+}
+
+func TestBuildWithZHTranslationsError(t *testing.T) {
+	PatchConvey("TestBuildWithZHTranslationsError", t, func() {
+		Mock(trans.RegisterZHTranslations).Return(errors.New("translations failed")).Build()
+
+		g := New(
+			options.EnableLogMiddleware(false),
+			options.EnableTraceMiddleware(false),
+			options.EnableZHTranslations(true),
+		)
+		g.Build()
+
+		So(g.build, ShouldBeTrue)
+	})
+}
+
+func TestRunAutoBuilds(t *testing.T) {
+	PatchConvey("TestRunAutoBuilds", t, func() {
+		Mock(GetConfig).Return(&Config{Host: "127.0.0.1", Port: 0}).Build()
+		Mock((*http.Server).ListenAndServe).Return(http.ErrServerClosed).Build()
+
+		g := New(
+			options.EnableLogMiddleware(false),
+			options.EnableTraceMiddleware(false),
+		)
+		So(g.build, ShouldBeFalse)
+
+		err := g.Run()
+		So(err, ShouldBeNil)
+		So(g.build, ShouldBeTrue)
+	})
+}
+
+func TestRunWithSwaggerInfo(t *testing.T) {
+	PatchConvey("TestRunWithSwaggerInfo", t, func() {
+		Mock(GetConfig).Return(&Config{Host: "127.0.0.1", Port: 0}).Build()
+		Mock(GetSwaggerConfig).Return(&SwaggerConfig{
+			Host:    "localhost",
+			Schemes: []string{"https"},
+		}).Build()
+		Mock(xconfig.GetServerVersion).Return("v2.0.0").Build()
+		Mock((*http.Server).ListenAndServe).Return(http.ErrServerClosed).Build()
+
+		g := New(
+			options.EnableLogMiddleware(false),
+			options.EnableTraceMiddleware(false),
+		)
+		spec := &swag.Spec{InfoInstanceName: "test-run", SwaggerTemplate: "{}"}
+		g.WithSwagger(spec)
+
+		err := g.Run()
+		So(err, ShouldBeNil)
+	})
+}
+
+// ==================== banner.go 测试 ====================
+
+func TestPrintBanner_LongBanner(t *testing.T) {
+	PatchConvey("TestPrintBanner-LongBanner", t, func() {
+		// banner 行数超过 gradientColors 长度，覆盖 ci >= len(gradientColors) 分支
+		MockValue(&bannerTxt).To("\nL1\nL2\nL3\nL4\nL5\nL6\nL7\nL8\nL9")
+
+		PrintBanner() // 不应 panic
+	})
 }

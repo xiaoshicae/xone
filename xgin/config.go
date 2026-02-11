@@ -1,11 +1,19 @@
 package xgin
 
-import "github.com/xiaoshicae/xone/v2/xconfig"
+import (
+	"github.com/xiaoshicae/xone/v2/xconfig"
+	"github.com/xiaoshicae/xone/v2/xutil"
+)
 
 const (
 	ginConfigKey        = "XGin"
 	ginSwaggerConfigKey = "XGin.Swagger"
+
+	defaultHost = "0.0.0.0"
+	defaultPort = 8000
 )
+
+var defaultSchemes = []string{"https", "http"}
 
 // Config Gin 相关配置
 type Config struct {
@@ -61,14 +69,18 @@ type SwaggerConfig struct {
 // GetConfig 获取Gin相关配置
 func GetConfig() *Config {
 	config := &Config{}
-	_ = xconfig.UnmarshalConfig(ginConfigKey, config)
+	if err := xconfig.UnmarshalConfig(ginConfigKey, config); err != nil {
+		xutil.WarnIfEnableDebug("XGin GetConfig unmarshal failed, use default, err=[%v]", err)
+	}
 	return configMergeDefault(config)
 }
 
 // GetSwaggerConfig 获取Gin-Swagger相关配置
 func GetSwaggerConfig() *SwaggerConfig {
 	config := &SwaggerConfig{}
-	_ = xconfig.UnmarshalConfig(ginSwaggerConfigKey, config)
+	if err := xconfig.UnmarshalConfig(ginSwaggerConfigKey, config); err != nil {
+		xutil.WarnIfEnableDebug("XGin GetSwaggerConfig unmarshal failed, use default, err=[%v]", err)
+	}
 	return swaggerConfigMergeDefault(config)
 }
 
@@ -77,10 +89,10 @@ func configMergeDefault(c *Config) *Config {
 		c = &Config{}
 	}
 	if c.Host == "" {
-		c.Host = "0.0.0.0"
+		c.Host = defaultHost
 	}
 	if c.Port <= 0 {
-		c.Port = 8000
+		c.Port = defaultPort
 	}
 	if c.Swagger != nil {
 		c.Swagger = swaggerConfigMergeDefault(c.Swagger)
@@ -93,7 +105,7 @@ func swaggerConfigMergeDefault(c *SwaggerConfig) *SwaggerConfig {
 		c = &SwaggerConfig{}
 	}
 	if len(c.Schemes) == 0 {
-		c.Schemes = []string{"https", "http"}
+		c.Schemes = append([]string{}, defaultSchemes...)
 	}
 	return c
 }

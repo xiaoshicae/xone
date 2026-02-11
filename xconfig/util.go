@@ -20,7 +20,7 @@ const (
 	dotEnvFileName = ".env"
 )
 
-func UnmarshalConfig(key string, conf interface{}) error {
+func UnmarshalConfig(key string, conf any) error {
 	if err := checkParam(key, conf); err != nil {
 		return err
 	}
@@ -99,7 +99,7 @@ func getViperConfig() *viper.Viper {
 	return vip
 }
 
-func checkParam(key string, conf interface{}) error {
+func checkParam(key string, conf any) error {
 	if key == "" {
 		return xerror.Newf("xconfig", "checkParam", "param key is empty")
 	}

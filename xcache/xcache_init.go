@@ -1,7 +1,7 @@
 package xcache
 
 import (
-	"errors"
+	"sync"
 
 	"github.com/dgraph-io/ristretto"
 
@@ -74,7 +74,6 @@ func closeXCache() error {
 
 	// 用于去重，避免同一个 *Cache 被关闭多次（multi 模式下 default 指向第一个 named cache）
 	closed := make(map[*Cache]struct{})
-	var errs []error
 
 	for _, cache := range cacheMap {
 		if _, ok := closed[cache]; ok {
@@ -83,15 +82,18 @@ func closeXCache() error {
 		closed[cache] = struct{}{}
 		cache.Close()
 	}
+	clear(cacheMap)
 
 	// 关闭懒初始化的全局缓存
 	if globalCache != nil {
 		if _, ok := closed[globalCache]; !ok {
 			globalCache.Close()
 		}
+		globalCache = nil
+		globalOnce = sync.Once{}
 	}
 
-	return errors.Join(errs...)
+	return nil
 }
 
 func newCache(c *Config) (*Cache, error) {

@@ -3,11 +3,19 @@ package middleware
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
+
+	. "github.com/bytedance/mockey"
+	"github.com/gin-gonic/gin"
+	. "github.com/smartystreets/goconvey/convey"
+	"go.opentelemetry.io/otel/trace"
 )
 
 func TestParseRequestInfo(t *testing.T) {
@@ -534,4 +542,422 @@ func TestWithSkipPaths(t *testing.T) {
 	if opts.SkipPaths[0] != "/health" {
 		t.Errorf("expected /health, got %s", opts.SkipPaths[0])
 	}
+}
+
+// ==================== LogMiddleware 集成测试 ====================
+
+func TestLogMiddleware_NormalRequest(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(LogMiddleware())
+	r.GET("/test", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"message": "ok"})
+	})
+
+	req := httptest.NewRequest("GET", "/test", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+}
+
+func TestLogMiddleware_WithBody(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(LogMiddleware())
+	r.POST("/api/test", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"status": "ok"})
+	})
+
+	body := `{"username":"test","password":"secret"}`
+	req := httptest.NewRequest("POST", "/api/test", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+}
+
+func TestLogMiddleware_SkipPath(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(LogMiddleware(WithSkipPaths("/health")))
+	r.GET("/health", func(c *gin.Context) {
+		c.String(http.StatusOK, "ok")
+	})
+
+	req := httptest.NewRequest("GET", "/health", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+}
+
+func TestLogMiddleware_NonTextResponse(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(LogMiddleware())
+	r.GET("/binary", func(c *gin.Context) {
+		c.Data(http.StatusOK, "application/octet-stream", []byte{0x00, 0x01, 0x02})
+	})
+
+	req := httptest.NewRequest("GET", "/binary", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+}
+
+func TestLogMiddleware_NoRoute(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(LogMiddleware())
+
+	req := httptest.NewRequest("GET", "/not-found", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected 404, got %d", w.Code)
+	}
+}
+
+// ==================== responseBodyWriter.Write 测试 ====================
+
+func TestResponseBodyWriter_Write(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+
+	rbw := &responseBodyWriter{
+		ResponseWriter: c.Writer,
+		body:           &bytes.Buffer{},
+		captureBody:    true,
+	}
+
+	data := []byte("hello world")
+	n, err := rbw.Write(data)
+	if err != nil {
+		t.Fatalf("Write returned error: %v", err)
+	}
+	if n != len(data) {
+		t.Errorf("expected %d bytes written, got %d", len(data), n)
+	}
+	if rbw.body.String() != "hello world" {
+		t.Errorf("expected body 'hello world', got '%s'", rbw.body.String())
+	}
+}
+
+func TestResponseBodyWriter_Write_ExceedsLimit(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+
+	rbw := &responseBodyWriter{
+		ResponseWriter: c.Writer,
+		body:           &bytes.Buffer{},
+		captureBody:    true,
+	}
+
+	// 写入超过 maxResponseBodyCapture 的数据
+	bigData := make([]byte, maxResponseBodyCapture+1)
+	for i := range bigData {
+		bigData[i] = 'x'
+	}
+	_, err := rbw.Write(bigData)
+	if err != nil {
+		t.Fatalf("Write returned error: %v", err)
+	}
+	// body 不应被捕获（超过限制）
+	if rbw.body.Len() != 0 {
+		t.Errorf("expected empty body buffer, got %d bytes", rbw.body.Len())
+	}
+}
+
+func TestResponseBodyWriter_Write_NoCaptureBody(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+
+	rbw := &responseBodyWriter{
+		ResponseWriter: c.Writer,
+		body:           &bytes.Buffer{},
+		captureBody:    false,
+	}
+
+	data := []byte("hello")
+	_, err := rbw.Write(data)
+	if err != nil {
+		t.Fatalf("Write returned error: %v", err)
+	}
+	if rbw.body.Len() != 0 {
+		t.Errorf("expected empty body when captureBody=false, got %d bytes", rbw.body.Len())
+	}
+}
+
+// ==================== isTextContentType 测试 ====================
+
+func TestIsTextContentType(t *testing.T) {
+	tests := []struct {
+		contentType string
+		expected    bool
+	}{
+		{"application/json", true},
+		{"application/json; charset=utf-8", true},
+		{"text/html", true},
+		{"text/plain", true},
+		{"application/xml", true},
+		{"application/javascript", true},
+		{"APPLICATION/JSON", true},
+		{"application/octet-stream", false},
+		{"multipart/form-data", false},
+		{"image/png", false},
+		{"", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.contentType, func(t *testing.T) {
+			result := isTextContentType(tt.contentType)
+			if result != tt.expected {
+				t.Errorf("isTextContentType(%q) = %v, want %v", tt.contentType, result, tt.expected)
+			}
+		})
+	}
+}
+
+// ==================== formatElapsed 测试 ====================
+
+func TestFormatElapsed(t *testing.T) {
+	tests := []struct {
+		name     string
+		duration time.Duration
+		suffix   string
+	}{
+		{"microseconds", 500 * time.Microsecond, "us"},
+		{"milliseconds", 50 * time.Millisecond, "ms"},
+		{"seconds", 2 * time.Second, "s"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := formatElapsed(tt.duration)
+			if !strings.HasSuffix(result, tt.suffix) {
+				t.Errorf("formatElapsed(%v) = %s, want suffix %s", tt.duration, result, tt.suffix)
+			}
+		})
+	}
+}
+
+// ==================== getBodySnapshot 测试 ====================
+
+func TestGetBodySnapshot_NilRequest(t *testing.T) {
+	result := getBodySnapshot(nil)
+	if result != nil {
+		t.Error("nil request should return nil")
+	}
+}
+
+func TestGetBodySnapshot_NoBody(t *testing.T) {
+	req := httptest.NewRequest("GET", "/test", http.NoBody)
+	result := getBodySnapshot(req)
+	if result != nil {
+		t.Error("NoBody should return nil")
+	}
+}
+
+func TestGetBodySnapshot_NilBody(t *testing.T) {
+	req := httptest.NewRequest("GET", "/test", nil)
+	req.Body = nil
+	result := getBodySnapshot(req)
+	if result != nil {
+		t.Error("nil body should return nil")
+	}
+}
+
+func TestGetBodySnapshot_MultipartFormData(t *testing.T) {
+	req := httptest.NewRequest("POST", "/upload", strings.NewReader("file data"))
+	req.Header.Set("Content-Type", "multipart/form-data; boundary=xxx")
+
+	result := getBodySnapshot(req)
+	if string(result) != "[multipart/form-data body omitted]" {
+		t.Errorf("expected multipart omitted message, got %s", string(result))
+	}
+}
+
+func TestGetBodySnapshot_OctetStream(t *testing.T) {
+	req := httptest.NewRequest("POST", "/upload", strings.NewReader("binary data"))
+	req.Header.Set("Content-Type", "application/octet-stream")
+
+	result := getBodySnapshot(req)
+	if string(result) != "[binary body omitted]" {
+		t.Errorf("expected binary omitted message, got %s", string(result))
+	}
+}
+
+func TestGetBodySnapshot_WithGetBody(t *testing.T) {
+	bodyContent := `{"key":"value"}`
+	req := httptest.NewRequest("POST", "/test", strings.NewReader(bodyContent))
+	req.Header.Set("Content-Type", "application/json")
+	// httptest.NewRequest 不会自动设置 GetBody，需要显式设置
+	req.GetBody = func() (io.ReadCloser, error) {
+		return io.NopCloser(strings.NewReader(bodyContent)), nil
+	}
+
+	result := getBodySnapshot(req)
+	if string(result) != bodyContent {
+		t.Errorf("expected %s, got %s", bodyContent, string(result))
+	}
+}
+
+func TestGetBodySnapshot_WithoutGetBody(t *testing.T) {
+	bodyContent := `{"key":"value"}`
+	req := httptest.NewRequest("POST", "/test", strings.NewReader(bodyContent))
+	req.Header.Set("Content-Type", "application/json")
+	req.GetBody = nil // 清除 GetBody，走降级路径
+
+	result := getBodySnapshot(req)
+	if string(result) != bodyContent {
+		t.Errorf("expected %s, got %s", bodyContent, string(result))
+	}
+
+	// 验证 body 被重新包装
+	if req.Body == nil {
+		t.Error("body should be re-wrapped")
+	}
+	if req.GetBody == nil {
+		t.Error("GetBody should be set")
+	}
+
+	// 验证 GetBody 可以多次获取
+	body, err := req.GetBody()
+	if err != nil {
+		t.Fatalf("GetBody returned error: %v", err)
+	}
+	data, _ := io.ReadAll(body)
+	if string(data) != bodyContent {
+		t.Errorf("GetBody should return original body, got %s", string(data))
+	}
+}
+
+func TestGetBodySnapshot_GetBodyError(t *testing.T) {
+	bodyContent := `{"key":"value"}`
+	req := httptest.NewRequest("POST", "/test", strings.NewReader(bodyContent))
+	req.Header.Set("Content-Type", "application/json")
+	req.GetBody = func() (io.ReadCloser, error) {
+		return nil, errors.New("get body error")
+	}
+
+	// GetBody 失败时，降级为直接读取 Body
+	result := getBodySnapshot(req)
+	if string(result) != bodyContent {
+		t.Errorf("expected %s, got %s", bodyContent, string(result))
+	}
+}
+
+func TestGetBodySnapshot_ReadError(t *testing.T) {
+	req := httptest.NewRequest("POST", "/test", &errorReader{})
+	req.Header.Set("Content-Type", "application/json")
+	req.GetBody = nil
+
+	result := getBodySnapshot(req)
+	if result != nil {
+		t.Error("read error should return nil")
+	}
+}
+
+// errorReader 用于模拟读取错误
+type errorReader struct{}
+
+func (r *errorReader) Read(p []byte) (n int, err error) {
+	return 0, errors.New("read error")
+}
+
+func (r *errorReader) Close() error {
+	return nil
+}
+
+// ==================== GetTraceIDFromCtx 补充测试 ====================
+
+func TestGetTraceIDFromCtx_ValidSpan(t *testing.T) {
+	// 创建一个有效的 span context
+	traceID := trace.TraceID{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10}
+	spanID := trace.SpanID{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08}
+	sc := trace.NewSpanContext(trace.SpanContextConfig{
+		TraceID:    traceID,
+		SpanID:     spanID,
+		TraceFlags: trace.FlagsSampled,
+	})
+	ctx := trace.ContextWithSpanContext(context.Background(), sc)
+
+	result := GetTraceIDFromCtx(ctx)
+	if result != traceID.String() {
+		t.Errorf("expected trace ID %s, got %s", traceID.String(), result)
+	}
+}
+
+// ==================== isAnonymousFuncName 补充测试 ====================
+
+func TestIsAnonymousFuncName(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected bool
+	}{
+		{"func1", "func1", true},
+		{"func12", "func12", true},
+		{"func - exact 4 chars", "func", false},
+		{"empty", "", false},
+		{"not func", "handler", false},
+		{"func with letter", "funcA", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := isAnonymousFuncName(tt.input)
+			if result != tt.expected {
+				t.Errorf("isAnonymousFuncName(%q) = %v, want %v", tt.input, result, tt.expected)
+			}
+		})
+	}
+}
+
+// ==================== LogMiddleware 前缀跳过测试 ====================
+
+func TestLogMiddleware_PrefixSkipPath(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	// 使用以 "/" 结尾的路径，触发 prefixSkip 分支
+	r.Use(LogMiddleware(WithSkipPaths("/api/internal/")))
+	r.GET("/api/internal/health", func(c *gin.Context) {
+		c.String(http.StatusOK, "ok")
+	})
+
+	req := httptest.NewRequest("GET", "/api/internal/health", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+}
+
+// ==================== filterJSONBody json.Marshal 错误测试 ====================
+
+func TestFilterJSONBody_MarshalError(t *testing.T) {
+	PatchConvey("TestFilterJSONBody_MarshalError", t, func() {
+		Mock(json.Marshal).Return(nil, errors.New("marshal error")).Build()
+
+		body := []byte(`{"name":"test"}`)
+		result := filterJSONBody(body)
+		// json.Marshal 失败时，回退为去换行后的原始字符串
+		So(result, ShouldEqual, `{"name":"test"}`)
+	})
 }

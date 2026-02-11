@@ -91,7 +91,7 @@ func (g *XGin) Build() *XGin {
 	// 注册路由
 	g.registerRoute()
 
-	// 向*gin.Engine注入swaggar配置
+	// 向*gin.Engine注入swagger配置
 	if g.swaggerInfo != nil {
 		injectSwaggerInfo(g.swaggerInfo, g.engine, g.swaggerOpts...)
 	}

@@ -57,12 +57,8 @@ func customRecoveryWithWriter(handle gin.RecoveryFunc) gin.HandlerFunc {
 				logrus.WithContext(c.Request.Context()).WithFields(panicInfo).Errorf("panic recover, err=[%v]", err)
 
 				if brokenPipe {
-					// If the connection is dead, we can't write a status to it.
-					if e, ok := err.(error); ok {
-						_ = c.Error(e) //nolint: errcheck
-					} else {
-						_ = c.Error(fmt.Errorf("%v", err)) //nolint: errcheck
-					}
+					// brokenPipe 仅在 err 为 *net.OpError 时为 true，*net.OpError 实现了 error 接口
+					_ = c.Error(err.(*net.OpError)) //nolint: errcheck
 					c.Abort()
 					return
 				}

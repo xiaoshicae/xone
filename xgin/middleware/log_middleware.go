@@ -140,7 +140,7 @@ func rebuildHeadersCache() {
 
 // rbwPool 复用 responseBodyWriter，避免每请求分配
 var rbwPool = sync.Pool{
-	New: func() interface{} {
+	New: func() any {
 		return &responseBodyWriter{body: &bytes.Buffer{}}
 	},
 }
@@ -234,15 +234,15 @@ func shouldSkipLog(path string, exactSkip map[string]bool, prefixSkip []string) 
 	return false
 }
 
-func ParseRequestInfo(req *http.Request) map[string]interface{} {
+func ParseRequestInfo(req *http.Request) map[string]any {
 	return parseRequestInfo(req, nil)
 }
 
-func ParseRequestInfoWithBody(req *http.Request, bodyBytes []byte) map[string]interface{} {
+func ParseRequestInfoWithBody(req *http.Request, bodyBytes []byte) map[string]any {
 	return parseRequestInfo(req, bodyBytes)
 }
 
-func parseRequestInfo(req *http.Request, bodyBytes []byte) map[string]interface{} {
+func parseRequestInfo(req *http.Request, bodyBytes []byte) map[string]any {
 	contentType := req.Header.Get("Content-Type")
 
 	// 对 body 进行敏感字段过滤（全程保持 []byte，减少转换）
@@ -251,7 +251,7 @@ func parseRequestInfo(req *http.Request, bodyBytes []byte) map[string]interface{
 	// 对 header 进行敏感字段过滤
 	filteredHeader := filterSensitiveHeaders(req.Header)
 
-	return map[string]interface{}{
+	return map[string]any{
 		"request_method":      req.Method,
 		"request_urlPath":     req.URL.Path,
 		"request_uri":         req.RequestURI,
@@ -331,7 +331,7 @@ func ParseClientIP(req *http.Request) string {
 	return req.RemoteAddr
 }
 
-func ToJsonString(v interface{}) string {
+func ToJsonString(v any) string {
 	s, _ := json.Marshal(v)
 	return string(s)
 }
@@ -452,7 +452,7 @@ func filterSensitiveBody(bodyBytes []byte, contentType string) string {
 
 // filterJSONBody 过滤 JSON 格式 body 中的敏感字段，入参为 []byte 避免多余转换
 func filterJSONBody(bodyBytes []byte) string {
-	var data interface{}
+	var data any
 	if err := json.Unmarshal(bodyBytes, &data); err != nil {
 		// JSON 解析失败，回退为去换行后的字符串
 		return newlineReplacer.Replace(string(bodyBytes))
@@ -469,11 +469,11 @@ func filterJSONBody(bodyBytes []byte) string {
 	return string(result)
 }
 
-func filterAnySensitiveFields(data interface{}, fields []string) {
+func filterAnySensitiveFields(data any, fields []string) {
 	switch v := data.(type) {
-	case map[string]interface{}:
+	case map[string]any:
 		filterMapSensitiveFields(v, fields)
-	case []interface{}:
+	case []any:
 		for _, item := range v {
 			filterAnySensitiveFields(item, fields)
 		}
@@ -481,7 +481,7 @@ func filterAnySensitiveFields(data interface{}, fields []string) {
 }
 
 // filterMapSensitiveFields 递归过滤 map 中的敏感字段
-func filterMapSensitiveFields(data map[string]interface{}, fields []string) {
+func filterMapSensitiveFields(data map[string]any, fields []string) {
 	for key, value := range data {
 		// 检查当前字段是否敏感
 		if containsIgnoreCase(key, fields) {

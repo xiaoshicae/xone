@@ -29,7 +29,7 @@ func serverConfigMergeDefault(c *Server) *Server {
 		c = &Server{}
 	}
 	if c.Version == "" {
-		c.Version = "v0.0.1"
+		c.Version = defaultServerVersion
 	}
 	return c
 }

@@ -3,9 +3,16 @@ package trans
 import (
 	"errors"
 	"sort"
+	"sync"
 	"testing"
 
+	"github.com/gin-gonic/gin/binding"
+	ut "github.com/go-playground/universal-translator"
 	"github.com/go-playground/validator/v10"
+	zt "github.com/go-playground/validator/v10/translations/zh"
+
+	. "github.com/bytedance/mockey"
+	. "github.com/smartystreets/goconvey/convey"
 )
 
 func TestToZHErrNil(t *testing.T) {
@@ -263,4 +270,63 @@ func TestMultipleValidationErrors(t *testing.T) {
 	if zhErr.Msg == "" {
 		t.Error("ZHErr.Msg should contain multiple error messages")
 	}
+}
+
+// ==================== RegisterZHTranslations 错误路径测试 ====================
+
+// mockStructValidator 用于模拟非 *validator.Validate 的 Engine 返回值
+type mockStructValidator struct{}
+
+func (m *mockStructValidator) ValidateStruct(obj any) error { return nil }
+func (m *mockStructValidator) Engine() any                  { return "not a validator" }
+
+func TestToZHErr_NonValidationErrorWithTrans(t *testing.T) {
+	// 确保 trans 已初始化
+	RegisterZHTranslations()
+
+	err := errors.New("plain error")
+	result := ToZHErr(err)
+	if result != err {
+		t.Error("non-validation error should be returned as-is even with trans initialized")
+	}
+}
+
+func TestRegisterZHTranslations_GetTranslatorFail(t *testing.T) {
+	PatchConvey("TestRegisterZHTranslations-GetTranslatorFail", t, func() {
+		MockValue(&transOnce).To(sync.Once{})
+		MockValue(&trans).To(nil)
+		Mock((*ut.UniversalTranslator).GetTranslator).Return(nil, false).Build()
+
+		err := RegisterZHTranslations()
+		So(err, ShouldNotBeNil)
+		So(err.Error(), ShouldContainSubstring, "zh translator not found")
+	})
+}
+
+func TestRegisterZHTranslations_ValidatorEngineFail(t *testing.T) {
+	PatchConvey("TestRegisterZHTranslations-ValidatorEngineFail", t, func() {
+		MockValue(&transOnce).To(sync.Once{})
+		MockValue(&trans).To(nil)
+
+		// 替换 binding.Validator 为返回非 *validator.Validate 的 mock
+		origValidator := binding.Validator
+		binding.Validator = &mockStructValidator{}
+		defer func() { binding.Validator = origValidator }()
+
+		err := RegisterZHTranslations()
+		So(err, ShouldNotBeNil)
+		So(err.Error(), ShouldContainSubstring, "type assign")
+	})
+}
+
+func TestRegisterZHTranslations_RegisterDefaultTranslationsFail(t *testing.T) {
+	PatchConvey("TestRegisterZHTranslations-RegisterDefaultTranslationsFail", t, func() {
+		MockValue(&transOnce).To(sync.Once{})
+		MockValue(&trans).To(nil)
+		Mock(zt.RegisterDefaultTranslations).Return(errors.New("register failed")).Build()
+
+		err := RegisterZHTranslations()
+		So(err, ShouldNotBeNil)
+		So(err.Error(), ShouldEqual, "register failed")
+	})
 }

@@ -84,7 +84,7 @@ func parseConfig(configLocation string) (*viper.Viper, error) {
 	}
 
 	if baseViperConfig.GetString(serverNameConfigKey) == "" {
-		xutil.WarnIfEnableDebug("config Server.AppID should not be empty, as it is used by many modules")
+		xutil.WarnIfEnableDebug("config Server.Name should not be empty, as it is used by many modules")
 	}
 
 	// 展开环境变量占位符
@@ -132,9 +132,9 @@ func mergeProfilesViperConfig(vp1, vp2 *viper.Viper) *viper.Viper {
 	return vp
 }
 
-func getTopLevelConfigs(vp *viper.Viper) map[string]interface{} {
+func getTopLevelConfigs(vp *viper.Viper) map[string]any {
 	allSettings := vp.AllSettings()
-	topLevelConfigs := make(map[string]interface{})
+	topLevelConfigs := make(map[string]any)
 	for k, v := range allSettings {
 		if !isNestedKey(k) {
 			topLevelConfigs[k] = v
@@ -148,9 +148,9 @@ func isNestedKey(key string) bool {
 }
 
 // getTopLevelAndServerSecondLevelConfigs 获取所有一级key+server下的二级可以对应的配置
-func getTopLevelAndServerSecondLevelConfigs(vp *viper.Viper) map[string]interface{} {
+func getTopLevelAndServerSecondLevelConfigs(vp *viper.Viper) map[string]any {
 	serverSecondLevelKeySet := make(map[string]struct{})
-	configs := make(map[string]interface{})
+	configs := make(map[string]any)
 	for _, k := range vp.AllKeys() {
 		// 忽略profiles配置
 		if strings.Contains(k, "server.profiles") {
@@ -232,17 +232,17 @@ func expandEnvPlaceholders(vp *viper.Viper) {
 }
 
 // setNestedValue 在嵌套 map 中设置值，保持结构完整
-func setNestedValue(m map[string]interface{}, key string, value interface{}) {
+func setNestedValue(m map[string]any, key string, value any) {
 	keys := strings.Split(key, ".")
 	current := m
 
 	for i := 0; i < len(keys)-1; i++ {
 		k := keys[i]
-		if next, ok := current[k].(map[string]interface{}); ok {
+		if next, ok := current[k].(map[string]any); ok {
 			current = next
 		} else {
 			// 如果中间路径不存在，创建新的 map
-			newMap := make(map[string]interface{})
+			newMap := make(map[string]any)
 			current[k] = newMap
 			current = newMap
 		}

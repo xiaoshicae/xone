@@ -1,11 +1,17 @@
 package middleware
 
 import (
+	"errors"
+	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 
+	. "github.com/bytedance/mockey"
 	"github.com/gin-gonic/gin"
+	. "github.com/smartystreets/goconvey/convey"
 )
 
 func TestGinXRecoverMiddlewareWithDefaultHandler(t *testing.T) {
@@ -173,4 +179,65 @@ func TestGinXRecoverMiddlewarePanicWithError(t *testing.T) {
 	if w.Code != http.StatusInternalServerError {
 		t.Errorf("expected status 500, got %d", w.Code)
 	}
+}
+
+func TestGinXRecoverMiddlewareBrokenPipe(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(GinXRecoverMiddleware(nil))
+
+	r.GET("/broken-pipe", func(c *gin.Context) {
+		// 模拟 broken pipe 错误
+		panic(&net.OpError{
+			Op:  "write",
+			Net: "tcp",
+			Err: &os.SyscallError{
+				Syscall: "write",
+				Err:     fmt.Errorf("broken pipe"),
+			},
+		})
+	})
+
+	req := httptest.NewRequest("GET", "/broken-pipe", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	// brokenPipe 时直接 abort，不写 response
+	// status 默认 200 因为 httptest.NewRecorder 默认值
+}
+
+func TestGinXRecoverMiddlewareBrokenPipeNonError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(GinXRecoverMiddleware(nil))
+
+	r.GET("/broken-pipe-str", func(c *gin.Context) {
+		// 模拟 broken pipe 但 panic 值不是 error 类型的 OpError
+		// 这里我们直接 panic 一个 *net.OpError，它本身实现了 error 接口
+		// 所以走 brokenPipe=true, err.(error) 成功的分支
+		panic(&net.OpError{
+			Op:  "write",
+			Net: "tcp",
+			Err: &os.SyscallError{
+				Syscall: "write",
+				Err:     fmt.Errorf("connection reset by peer"),
+			},
+		})
+	})
+
+	req := httptest.NewRequest("GET", "/broken-pipe-str", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+}
+
+// ==================== stack() os.ReadFile 错误测试 ====================
+
+func TestStackFunction_ReadFileError(t *testing.T) {
+	PatchConvey("TestStackFunction_ReadFileError", t, func() {
+		Mock(os.ReadFile).Return(nil, errors.New("read error")).Build()
+
+		// 直接调用 stack()，os.ReadFile 返回错误时走 continue 分支
+		stackBytes := stack(0)
+		So(len(stackBytes), ShouldBeGreaterThan, 0)
+	})
 }

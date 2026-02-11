@@ -2,6 +2,13 @@ package xcache
 
 const XCacheConfigKey = "XCache"
 
+const (
+	defaultNumCounters = 1000000
+	defaultMaxCost     = 100000
+	defaultBufferItems = 64
+	defaultTTL         = "5m"
+)
+
 type Config struct {
 	// NumCounters 用于跟踪频率的键数量，建议设置为期望缓存条目数量的 10 倍
 	// optional default 1000000
@@ -29,16 +36,16 @@ func configMergeDefault(c *Config) *Config {
 		c = &Config{}
 	}
 	if c.NumCounters <= 0 {
-		c.NumCounters = 1000000
+		c.NumCounters = defaultNumCounters
 	}
 	if c.MaxCost <= 0 {
-		c.MaxCost = 100000
+		c.MaxCost = defaultMaxCost
 	}
 	if c.BufferItems <= 0 {
-		c.BufferItems = 64
+		c.BufferItems = defaultBufferItems
 	}
 	if c.DefaultTTL == "" {
-		c.DefaultTTL = "5m"
+		c.DefaultTTL = defaultTTL
 	}
 	return c
 }

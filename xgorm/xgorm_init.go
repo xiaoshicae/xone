@@ -106,6 +106,7 @@ func closeXGorm() error {
 			errs = append(errs, xerror.Newf("xgorm", "close", "close db failed, err=[%v]", err))
 		}
 	}
+	clear(clientMap)
 	return errors.Join(errs...)
 }
 

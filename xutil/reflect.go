@@ -7,19 +7,22 @@ import (
 )
 
 // IsSlice 是否为slice类型
-func IsSlice(v interface{}) bool {
+func IsSlice(v any) bool {
 	if v == nil {
 		return false
 	}
 	return reflect.TypeOf(v).Kind() == reflect.Slice
 }
 
-func GetFuncName(fc interface{}) (name string) {
+// GetFuncName 获取函数名称，传入 nil 或非函数类型时返回空字符串
+func GetFuncName(fc any) (name string) {
 	_, _, name = GetFuncInfo(fc)
 	return name
 }
 
-func GetFuncInfo(fc interface{}) (file string, line int, name string) {
+// GetFuncInfo 获取函数的源文件路径、行号和名称
+// 传入 nil 或非函数类型时返回零值
+func GetFuncInfo(fc any) (file string, line int, name string) {
 	if fc == nil {
 		return "", 0, ""
 	}
@@ -31,12 +34,7 @@ func GetFuncInfo(fc interface{}) (file string, line int, name string) {
 		return "", 0, ""
 	}
 
-	pc := f.Pointer()
-	if pc == 0 {
-		return "", 0, ""
-	}
-
-	fn := runtime.FuncForPC(pc)
+	fn := runtime.FuncForPC(f.Pointer())
 	if fn == nil {
 		return "", 0, ""
 	}
@@ -45,12 +43,12 @@ func GetFuncInfo(fc interface{}) (file string, line int, name string) {
 	if idx := strings.LastIndex(fullName, "/"); idx != -1 {
 		fullName = fullName[idx+1:]
 	}
-	if idx := strings.Index(fullName, "."); idx == -1 {
+	_, after, found := strings.Cut(fullName, ".")
+	if !found {
 		return "", 0, ""
-	} else {
-		name = fullName[idx+1:]
 	}
+	name = after
 
-	file, line = fn.FileLine(pc)
+	file, line = fn.FileLine(f.Pointer())
 	return file, line, name
 }

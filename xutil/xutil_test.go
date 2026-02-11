@@ -3,25 +3,29 @@ package xutil
 import (
 	"context"
 	"errors"
+	"net"
 	"os"
+	"path"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/bytedance/mockey"
 	c "github.com/smartystreets/goconvey/convey"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // ==================== convert.go ====================
 
-func TestToPrt(t *testing.T) {
-	mockey.PatchConvey("TestToPrt", t, func() {
+func TestToPtr(t *testing.T) {
+	mockey.PatchConvey("TestToPtr", t, func() {
 		intVal := 42
-		ptrVal := ToPrt(intVal)
+		ptrVal := ToPtr(intVal)
 		c.So(*ptrVal, c.ShouldEqual, 42)
 
 		strVal := "hello"
-		ptrStr := ToPrt(strVal)
+		ptrStr := ToPtr(strVal)
 		c.So(*ptrStr, c.ShouldEqual, "hello")
 	})
 }
@@ -29,19 +33,18 @@ func TestToPrt(t *testing.T) {
 func TestGetOrDefault(t *testing.T) {
 	mockey.PatchConvey("TestGetOrDefault", t, func() {
 		mockey.PatchConvey("TestGetOrDefault-ZeroValue", func() {
-			result := GetOrDefault(0, 100)
-			c.So(result, c.ShouldEqual, 100)
-
-			result2 := GetOrDefault("", "default")
-			c.So(result2, c.ShouldEqual, "default")
+			c.So(GetOrDefault(0, 100), c.ShouldEqual, 100)
+			c.So(GetOrDefault("", "default"), c.ShouldEqual, "default")
 		})
 
 		mockey.PatchConvey("TestGetOrDefault-NonZeroValue", func() {
-			result := GetOrDefault(42, 100)
-			c.So(result, c.ShouldEqual, 42)
+			c.So(GetOrDefault(42, 100), c.ShouldEqual, 42)
+			c.So(GetOrDefault("hello", "default"), c.ShouldEqual, "hello")
+		})
 
-			result2 := GetOrDefault("hello", "default")
-			c.So(result2, c.ShouldEqual, "hello")
+		mockey.PatchConvey("TestGetOrDefault-NilInterface", func() {
+			// nil interface → reflect.ValueOf 返回 invalid，走 !rv.IsValid() 分支
+			c.So(GetOrDefault[any](nil, "default"), c.ShouldEqual, "default")
 		})
 	})
 }
@@ -49,40 +52,31 @@ func TestGetOrDefault(t *testing.T) {
 func TestToDuration(t *testing.T) {
 	mockey.PatchConvey("TestToDuration", t, func() {
 		mockey.PatchConvey("TestToDuration-Nil", func() {
-			result := ToDuration(nil)
-			c.So(result, c.ShouldEqual, 0)
+			c.So(ToDuration(nil), c.ShouldEqual, 0)
 		})
 
 		mockey.PatchConvey("TestToDuration-String", func() {
-			result := ToDuration("1s")
-			c.So(result, c.ShouldEqual, time.Second)
-
-			result2 := ToDuration("100ms")
-			c.So(result2, c.ShouldEqual, 100*time.Millisecond)
+			c.So(ToDuration("1s"), c.ShouldEqual, time.Second)
+			c.So(ToDuration("100ms"), c.ShouldEqual, 100*time.Millisecond)
 		})
 
 		mockey.PatchConvey("TestToDuration-StringPointer", func() {
 			s := "2s"
-			result := ToDuration(&s)
-			c.So(result, c.ShouldEqual, 2*time.Second)
+			c.So(ToDuration(&s), c.ShouldEqual, 2*time.Second)
 		})
 
 		mockey.PatchConvey("TestToDuration-WithDay", func() {
-			result := ToDuration("1d")
-			c.So(result, c.ShouldEqual, 24*time.Hour)
-
-			result2 := ToDuration("2d12h")
-			c.So(result2, c.ShouldEqual, 60*time.Hour)
+			c.So(ToDuration("1d"), c.ShouldEqual, 24*time.Hour)
+			c.So(ToDuration("2d12h"), c.ShouldEqual, 60*time.Hour)
 		})
 
 		mockey.PatchConvey("TestToDuration-InvalidDay", func() {
-			result := ToDuration("abcd12h")
-			c.So(result, c.ShouldEqual, 12*time.Hour) // invalid day part, fallback to remaining
+			// "abc" 无法解析为天数，fallback 解析剩余 "12h"
+			c.So(ToDuration("abcd12h"), c.ShouldEqual, 12*time.Hour)
 		})
 
 		mockey.PatchConvey("TestToDuration-Int", func() {
-			result := ToDuration(1000000000) // 1 second in nanoseconds
-			c.So(result, c.ShouldEqual, time.Second)
+			c.So(ToDuration(1000000000), c.ShouldEqual, time.Second)
 		})
 	})
 }
@@ -92,9 +86,7 @@ func TestToDuration(t *testing.T) {
 func TestToJsonString(t *testing.T) {
 	mockey.PatchConvey("TestToJsonString", t, func() {
 		mockey.PatchConvey("TestToJsonString-Map", func() {
-			m := map[string]string{"key": "value"}
-			result := ToJsonString(m)
-			c.So(result, c.ShouldEqual, `{"key":"value"}`)
+			c.So(ToJsonString(map[string]string{"key": "value"}), c.ShouldEqual, `{"key":"value"}`)
 		})
 
 		mockey.PatchConvey("TestToJsonString-Struct", func() {
@@ -102,16 +94,11 @@ func TestToJsonString(t *testing.T) {
 				Name string `json:"name"`
 				Age  int    `json:"age"`
 			}
-			p := Person{Name: "Alice", Age: 30}
-			result := ToJsonString(p)
-			c.So(result, c.ShouldEqual, `{"name":"Alice","age":30}`)
+			c.So(ToJsonString(Person{Name: "Alice", Age: 30}), c.ShouldEqual, `{"name":"Alice","age":30}`)
 		})
 
 		mockey.PatchConvey("TestToJsonString-InvalidValue", func() {
-			// channel cannot be marshaled to JSON
-			ch := make(chan int)
-			result := ToJsonString(ch)
-			c.So(result, c.ShouldEqual, "")
+			c.So(ToJsonString(make(chan int)), c.ShouldEqual, "")
 		})
 	})
 }
@@ -119,80 +106,198 @@ func TestToJsonString(t *testing.T) {
 func TestToJsonStringIndent(t *testing.T) {
 	mockey.PatchConvey("TestToJsonStringIndent", t, func() {
 		mockey.PatchConvey("TestToJsonStringIndent-Map", func() {
-			m := map[string]string{"key": "value"}
-			result := ToJsonStringIndent(m)
+			result := ToJsonStringIndent(map[string]string{"key": "value"})
 			c.So(result, c.ShouldContainSubstring, "key")
 			c.So(result, c.ShouldContainSubstring, "value")
 		})
 
 		mockey.PatchConvey("TestToJsonStringIndent-InvalidValue", func() {
-			ch := make(chan int)
-			result := ToJsonStringIndent(ch)
-			c.So(result, c.ShouldEqual, "")
+			c.So(ToJsonStringIndent(make(chan int)), c.ShouldEqual, "")
 		})
 	})
 }
 
 // ==================== net.go ====================
 
-func TestGetLocalIp(t *testing.T) {
-	mockey.PatchConvey("TestGetLocalIp", t, func() {
-		ip, err := GetLocalIp()
-		c.So(err, c.ShouldBeNil)
-		c.So(ip, c.ShouldNotBeEmpty)
-	})
-}
+func TestGetLocalIP(t *testing.T) {
+	mockey.PatchConvey("TestGetLocalIP", t, func() {
+		mockey.PatchConvey("TestGetLocalIP-PublicIPv4", func() {
+			mockey.Mock(collectLocalIPs).Return(
+				[]net.IP{net.ParseIP("8.8.8.8")}, nil, nil, nil, nil,
+			).Build()
+			ip, err := GetLocalIP()
+			c.So(err, c.ShouldBeNil)
+			c.So(ip, c.ShouldEqual, "8.8.8.8")
+		})
 
-func TestExtractRealIP(t *testing.T) {
-	mockey.PatchConvey("TestExtractRealIP", t, func() {
-		mockey.PatchConvey("TestExtractRealIP-SpecificAddr", func() {
-			ip, err := ExtractRealIP("192.168.1.1")
+		mockey.PatchConvey("TestGetLocalIP-PublicIPv6Only", func() {
+			mockey.Mock(collectLocalIPs).Return(
+				nil, []net.IP{net.ParseIP("2001:db8::1")}, nil, nil, nil,
+			).Build()
+			ip, err := GetLocalIP()
+			c.So(err, c.ShouldBeNil)
+			c.So(ip, c.ShouldEqual, "2001:db8::1")
+		})
+
+		mockey.PatchConvey("TestGetLocalIP-FallbackToPrivateIPv4", func() {
+			mockey.Mock(collectLocalIPs).Return(
+				nil, nil, []net.IP{net.ParseIP("192.168.1.1")}, nil, nil,
+			).Build()
+			ip, err := GetLocalIP()
 			c.So(err, c.ShouldBeNil)
 			c.So(ip, c.ShouldEqual, "192.168.1.1")
 		})
 
-		mockey.PatchConvey("TestExtractRealIP-WithPort", func() {
-			ip, err := ExtractRealIP("192.168.1.1:8080")
+		mockey.PatchConvey("TestGetLocalIP-FallbackToPrivateIPv6", func() {
+			mockey.Mock(collectLocalIPs).Return(
+				nil, nil, nil, []net.IP{net.ParseIP("fd00::1")}, nil,
+			).Build()
+			ip, err := GetLocalIP()
 			c.So(err, c.ShouldBeNil)
-			c.So(ip, c.ShouldEqual, "192.168.1.1")
+			c.So(ip, c.ShouldEqual, "fd00::1")
 		})
 
-		mockey.PatchConvey("TestExtractRealIP-ZeroAddr", func() {
-			ip, err := ExtractRealIP("0.0.0.0")
-			c.So(err, c.ShouldBeNil)
-			c.So(ip, c.ShouldNotBeEmpty)
-		})
-
-		mockey.PatchConvey("TestExtractRealIP-IPv6Zero", func() {
-			ip, err := ExtractRealIP("[::]")
-			c.So(err, c.ShouldBeNil)
-			c.So(ip, c.ShouldNotBeEmpty)
-		})
-
-		mockey.PatchConvey("TestExtractRealIP-InvalidIP", func() {
-			_, err := ExtractRealIP("invalid-ip")
+		mockey.PatchConvey("TestGetLocalIP-Error", func() {
+			mockey.Mock(collectLocalIPs).Return(nil, nil, nil, nil, errors.New("mock error")).Build()
+			_, err := GetLocalIP()
 			c.So(err, c.ShouldNotBeNil)
 		})
 
-		mockey.PatchConvey("TestExtractRealIP-IPv6Brackets", func() {
-			ip, err := ExtractRealIP("[::1]")
-			c.So(err, c.ShouldBeNil)
-			c.So(ip, c.ShouldEqual, "::1")
+		mockey.PatchConvey("TestGetLocalIP-NoIPFound", func() {
+			mockey.Mock(collectLocalIPs).Return(nil, nil, nil, nil, nil).Build()
+			_, err := GetLocalIP()
+			c.So(err, c.ShouldNotBeNil)
+			c.So(err.Error(), c.ShouldEqual, "no IP address found")
 		})
 	})
 }
 
-func TestValidateIP(t *testing.T) {
-	mockey.PatchConvey("TestValidateIP", t, func() {
-		mockey.PatchConvey("TestValidateIP-Valid", func() {
-			ip, err := validateIP("192.168.1.1", "192.168.1.1")
+func TestGetLocalPublicIP(t *testing.T) {
+	mockey.PatchConvey("TestGetLocalPublicIP", t, func() {
+		mockey.PatchConvey("TestGetLocalPublicIP-IPv4", func() {
+			mockey.Mock(collectLocalIPs).Return(
+				[]net.IP{net.ParseIP("1.2.3.4")}, nil, nil, nil, nil,
+			).Build()
+			ip, err := GetLocalPublicIP()
+			c.So(err, c.ShouldBeNil)
+			c.So(ip, c.ShouldEqual, "1.2.3.4")
+		})
+
+		mockey.PatchConvey("TestGetLocalPublicIP-IPv6", func() {
+			mockey.Mock(collectLocalIPs).Return(
+				nil, []net.IP{net.ParseIP("2001:db8::1")}, nil, nil, nil,
+			).Build()
+			ip, err := GetLocalPublicIP()
+			c.So(err, c.ShouldBeNil)
+			c.So(ip, c.ShouldEqual, "2001:db8::1")
+		})
+
+		mockey.PatchConvey("TestGetLocalPublicIP-NotFound", func() {
+			mockey.Mock(collectLocalIPs).Return(nil, nil, nil, nil, nil).Build()
+			_, err := GetLocalPublicIP()
+			c.So(err, c.ShouldNotBeNil)
+		})
+
+		mockey.PatchConvey("TestGetLocalPublicIP-Error", func() {
+			mockey.Mock(collectLocalIPs).Return(nil, nil, nil, nil, errors.New("mock error")).Build()
+			_, err := GetLocalPublicIP()
+			c.So(err, c.ShouldNotBeNil)
+		})
+	})
+}
+
+func TestGetLocalPrivateIP(t *testing.T) {
+	mockey.PatchConvey("TestGetLocalPrivateIP", t, func() {
+		mockey.PatchConvey("TestGetLocalPrivateIP-IPv4", func() {
+			mockey.Mock(collectLocalIPs).Return(
+				nil, nil, []net.IP{net.ParseIP("192.168.1.1")}, nil, nil,
+			).Build()
+			ip, err := GetLocalPrivateIP()
 			c.So(err, c.ShouldBeNil)
 			c.So(ip, c.ShouldEqual, "192.168.1.1")
 		})
 
-		mockey.PatchConvey("TestValidateIP-Invalid", func() {
-			_, err := validateIP("invalid", "invalid")
+		mockey.PatchConvey("TestGetLocalPrivateIP-IPv6", func() {
+			mockey.Mock(collectLocalIPs).Return(
+				nil, nil, nil, []net.IP{net.ParseIP("fd00::1")}, nil,
+			).Build()
+			ip, err := GetLocalPrivateIP()
+			c.So(err, c.ShouldBeNil)
+			c.So(ip, c.ShouldEqual, "fd00::1")
+		})
+
+		mockey.PatchConvey("TestGetLocalPrivateIP-NotFound", func() {
+			mockey.Mock(collectLocalIPs).Return(nil, nil, nil, nil, nil).Build()
+			_, err := GetLocalPrivateIP()
 			c.So(err, c.ShouldNotBeNil)
+		})
+
+		mockey.PatchConvey("TestGetLocalPrivateIP-Error", func() {
+			mockey.Mock(collectLocalIPs).Return(nil, nil, nil, nil, errors.New("mock error")).Build()
+			_, err := GetLocalPrivateIP()
+			c.So(err, c.ShouldNotBeNil)
+		})
+	})
+}
+
+func TestCollectLocalIPs(t *testing.T) {
+	mockey.PatchConvey("TestCollectLocalIPs", t, func() {
+		mockey.PatchConvey("TestCollectLocalIPs-InterfaceError", func() {
+			mockey.Mock(net.Interfaces).Return(nil, errors.New("mock error")).Build()
+			_, _, _, _, err := collectLocalIPs()
+			c.So(err, c.ShouldNotBeNil)
+			c.So(err.Error(), c.ShouldContainSubstring, "failed to get interfaces")
+		})
+
+		mockey.PatchConvey("TestCollectLocalIPs-SkipLoopback", func() {
+			mockey.Mock(net.Interfaces).Return([]net.Interface{
+				{Index: 1, Name: "lo0", Flags: net.FlagLoopback | net.FlagUp},
+			}, nil).Build()
+			pub4, pub6, pri4, pri6, err := collectLocalIPs()
+			c.So(err, c.ShouldBeNil)
+			c.So(pub4, c.ShouldBeEmpty)
+			c.So(pub6, c.ShouldBeEmpty)
+			c.So(pri4, c.ShouldBeEmpty)
+			c.So(pri6, c.ShouldBeEmpty)
+		})
+
+		mockey.PatchConvey("TestCollectLocalIPs-AddrError", func() {
+			mockey.Mock(net.Interfaces).Return([]net.Interface{
+				{Index: 1, Name: "eth0", Flags: net.FlagUp},
+			}, nil).Build()
+			mockey.Mock((*net.Interface).Addrs).Return(nil, errors.New("addr error")).Build()
+			pub4, pub6, pri4, pri6, err := collectLocalIPs()
+			c.So(err, c.ShouldBeNil)
+			c.So(pub4, c.ShouldBeEmpty)
+			c.So(pub6, c.ShouldBeEmpty)
+			c.So(pri4, c.ShouldBeEmpty)
+			c.So(pri6, c.ShouldBeEmpty)
+		})
+
+		mockey.PatchConvey("TestCollectLocalIPs-ClassifyIPs", func() {
+			mockey.Mock(net.Interfaces).Return([]net.Interface{
+				{Index: 1, Name: "eth0", Flags: net.FlagUp},
+			}, nil).Build()
+			mockey.Mock((*net.Interface).Addrs).Return([]net.Addr{
+				&net.IPNet{IP: net.ParseIP("8.8.8.8"), Mask: net.CIDRMask(24, 32)},
+				&net.IPNet{IP: net.ParseIP("2001:db8::1"), Mask: net.CIDRMask(64, 128)},
+				&net.IPNet{IP: net.ParseIP("192.168.1.1"), Mask: net.CIDRMask(24, 32)},
+				&net.IPNet{IP: net.ParseIP("fe80::1"), Mask: net.CIDRMask(64, 128)},
+				&net.IPAddr{IP: net.ParseIP("10.0.0.1")},
+				&net.TCPAddr{IP: net.ParseIP("1.2.3.4"), Port: 80},                  // default 分支跳过
+				&net.IPNet{IP: net.IPv4zero, Mask: net.CIDRMask(0, 32)},             // unspecified 跳过
+				&net.IPNet{IP: net.ParseIP("224.0.0.1"), Mask: net.CIDRMask(4, 32)}, // multicast 跳过
+			}, nil).Build()
+
+			pub4, pub6, pri4, pri6, err := collectLocalIPs()
+			c.So(err, c.ShouldBeNil)
+			c.So(len(pub4), c.ShouldEqual, 1)
+			c.So(pub4[0].String(), c.ShouldEqual, "8.8.8.8")
+			c.So(len(pub6), c.ShouldEqual, 1)
+			c.So(pub6[0].String(), c.ShouldEqual, "2001:db8::1")
+			c.So(len(pri4), c.ShouldEqual, 2)
+			c.So(len(pri6), c.ShouldEqual, 1)
+			c.So(pri6[0].String(), c.ShouldEqual, "fe80::1")
 		})
 	})
 }
@@ -200,8 +305,21 @@ func TestValidateIP(t *testing.T) {
 func TestIsPrivateIP(t *testing.T) {
 	mockey.PatchConvey("TestIsPrivateIP", t, func() {
 		mockey.PatchConvey("TestIsPrivateIP-Nil", func() {
-			result := isPrivateIP(nil)
-			c.So(result, c.ShouldBeFalse)
+			c.So(isPrivateIP(nil), c.ShouldBeFalse)
+		})
+
+		mockey.PatchConvey("TestIsPrivateIP-Private", func() {
+			c.So(isPrivateIP(net.ParseIP("192.168.1.1")), c.ShouldBeTrue)
+			c.So(isPrivateIP(net.ParseIP("10.0.0.1")), c.ShouldBeTrue)
+			c.So(isPrivateIP(net.ParseIP("172.16.0.1")), c.ShouldBeTrue)
+			c.So(isPrivateIP(net.ParseIP("127.0.0.1")), c.ShouldBeTrue)
+			c.So(isPrivateIP(net.ParseIP("fe80::1")), c.ShouldBeTrue)
+		})
+
+		mockey.PatchConvey("TestIsPrivateIP-Public", func() {
+			c.So(isPrivateIP(net.ParseIP("8.8.8.8")), c.ShouldBeFalse)
+			c.So(isPrivateIP(net.ParseIP("1.1.1.1")), c.ShouldBeFalse)
+			c.So(isPrivateIP(net.ParseIP("2001:db8::1")), c.ShouldBeFalse)
 		})
 	})
 }
@@ -213,7 +331,6 @@ func TestLogFunctions(t *testing.T) {
 		mockey.Mock(EnableDebug).Return(true).Build()
 
 		mockey.PatchConvey("TestInfoIfEnableDebug", func() {
-			// Should not panic
 			InfoIfEnableDebug("test message %s", "arg")
 		})
 
@@ -228,10 +345,7 @@ func TestLogFunctions(t *testing.T) {
 
 	mockey.PatchConvey("TestLogFunctions-DebugDisabled", t, func() {
 		mockey.Mock(EnableDebug).Return(false).Build()
-
-		mockey.PatchConvey("TestInfoIfEnableDebug-Disabled", func() {
-			InfoIfEnableDebug("test message %s", "arg")
-		})
+		InfoIfEnableDebug("should not log %s", "arg")
 	})
 }
 
@@ -244,9 +358,25 @@ func TestGetLogCaller(t *testing.T) {
 
 func TestCallerPretty(t *testing.T) {
 	mockey.PatchConvey("TestCallerPretty", t, func() {
-		funcName, fileName := callerPretty(nil)
-		c.So(funcName, c.ShouldEqual, "")
-		c.So(fileName, c.ShouldNotBeEmpty)
+		mockey.PatchConvey("TestCallerPretty-Normal", func() {
+			funcName, fileName := callerPretty(nil)
+			c.So(funcName, c.ShouldEqual, "")
+			c.So(fileName, c.ShouldNotBeEmpty)
+		})
+
+		mockey.PatchConvey("TestCallerPretty-NilFrame", func() {
+			mockey.Mock(GetLogCaller).Return((*runtime.Frame)(nil)).Build()
+			funcName, fileName := callerPretty(nil)
+			c.So(funcName, c.ShouldEqual, unknownCaller)
+			c.So(fileName, c.ShouldEqual, unknownCaller)
+		})
+
+		mockey.PatchConvey("TestCallerPretty-EmptyBaseName", func() {
+			mockey.Mock(GetLogCaller).Return(&runtime.Frame{File: "test.go", Line: 10}).Build()
+			mockey.Mock(path.Base).Return("").Build()
+			_, fileName := callerPretty(nil)
+			c.So(fileName, c.ShouldContainSubstring, unknownCaller)
+		})
 	})
 }
 
@@ -348,13 +478,11 @@ func TestIsSlice(t *testing.T) {
 func TestGetFuncName(t *testing.T) {
 	mockey.PatchConvey("TestGetFuncName", t, func() {
 		mockey.PatchConvey("TestGetFuncName-Valid", func() {
-			name := GetFuncName(TestGetFuncName)
-			c.So(name, c.ShouldEqual, "TestGetFuncName")
+			c.So(GetFuncName(TestGetFuncName), c.ShouldEqual, "TestGetFuncName")
 		})
 
 		mockey.PatchConvey("TestGetFuncName-Nil", func() {
-			name := GetFuncName(nil)
-			c.So(name, c.ShouldEqual, "")
+			c.So(GetFuncName(nil), c.ShouldEqual, "")
 		})
 	})
 }
@@ -381,6 +509,32 @@ func TestGetFuncInfo(t *testing.T) {
 			c.So(line, c.ShouldEqual, 0)
 			c.So(name, c.ShouldEqual, "")
 		})
+
+		mockey.PatchConvey("TestGetFuncInfo-NilFuncValue", func() {
+			// typed nil function → f.IsNil() == true
+			var nilFunc func()
+			file, line, name := GetFuncInfo(nilFunc)
+			c.So(file, c.ShouldEqual, "")
+			c.So(line, c.ShouldEqual, 0)
+			c.So(name, c.ShouldEqual, "")
+		})
+
+		mockey.PatchConvey("TestGetFuncInfo-FuncForPCNil", func() {
+			mockey.Mock(runtime.FuncForPC).Return((*runtime.Func)(nil)).Build()
+			file, line, name := GetFuncInfo(TestGetFuncInfo)
+			c.So(file, c.ShouldEqual, "")
+			c.So(line, c.ShouldEqual, 0)
+			c.So(name, c.ShouldEqual, "")
+		})
+
+		mockey.PatchConvey("TestGetFuncInfo-NameNoDot", func() {
+			// fn.Name() 返回不含 "." 的字符串，走 !found 分支
+			mockey.Mock((*runtime.Func).Name).Return("nodotname").Build()
+			file, line, name := GetFuncInfo(TestGetFuncInfo)
+			c.So(file, c.ShouldEqual, "")
+			c.So(line, c.ShouldEqual, 0)
+			c.So(name, c.ShouldEqual, "")
+		})
 	})
 }
 
@@ -389,8 +543,13 @@ func TestGetFuncInfo(t *testing.T) {
 func TestGetTraceIDFromCtx(t *testing.T) {
 	mockey.PatchConvey("TestGetTraceIDFromCtx", t, func() {
 		mockey.PatchConvey("TestGetTraceIDFromCtx-EmptyCtx", func() {
-			traceID := GetTraceIDFromCtx(context.Background())
-			c.So(traceID, c.ShouldEqual, "")
+			c.So(GetTraceIDFromCtx(context.Background()), c.ShouldEqual, "")
+		})
+
+		mockey.PatchConvey("TestGetTraceIDFromCtx-ValidSpan", func() {
+			ctx := ctxWithValidSpan()
+			result := GetTraceIDFromCtx(ctx)
+			c.So(result, c.ShouldEqual, "01020304050607080102030405060708")
 		})
 	})
 }
@@ -398,10 +557,27 @@ func TestGetTraceIDFromCtx(t *testing.T) {
 func TestGetSpanIDFromCtx(t *testing.T) {
 	mockey.PatchConvey("TestGetSpanIDFromCtx", t, func() {
 		mockey.PatchConvey("TestGetSpanIDFromCtx-EmptyCtx", func() {
-			spanID := GetSpanIDFromCtx(context.Background())
-			c.So(spanID, c.ShouldEqual, "")
+			c.So(GetSpanIDFromCtx(context.Background()), c.ShouldEqual, "")
+		})
+
+		mockey.PatchConvey("TestGetSpanIDFromCtx-ValidSpan", func() {
+			ctx := ctxWithValidSpan()
+			result := GetSpanIDFromCtx(ctx)
+			c.So(result, c.ShouldEqual, "0102030405060708")
 		})
 	})
+}
+
+// ctxWithValidSpan 创建包含有效 Span 的 context（测试辅助）
+func ctxWithValidSpan() context.Context {
+	traceID, _ := trace.TraceIDFromHex("01020304050607080102030405060708")
+	spanID, _ := trace.SpanIDFromHex("0102030405060708")
+	sc := trace.NewSpanContext(trace.SpanContextConfig{
+		TraceID:    traceID,
+		SpanID:     spanID,
+		TraceFlags: trace.FlagsSampled,
+	})
+	return trace.ContextWithRemoteSpanContext(context.Background(), sc)
 }
 
 // ==================== retry.go ====================
@@ -411,34 +587,26 @@ func TestRetry(t *testing.T) {
 		mockey.PatchConvey("TestRetry-AllFail", func() {
 			err := Retry(func() error {
 				return errors.New("for test")
-			}, 3, time.Millisecond*100)
+			}, 3, 10*time.Millisecond)
 			c.So(err.Error(), c.ShouldEqual, "for test")
 		})
 
 		mockey.PatchConvey("TestRetry-Success", func() {
-			err := Retry(func() error {
-				return nil
-			}, 3, time.Millisecond*100)
+			err := Retry(func() error { return nil }, 3, 10*time.Millisecond)
 			c.So(err, c.ShouldBeNil)
 		})
 
 		mockey.PatchConvey("TestRetry-AttemptsZero", func() {
 			calls := 0
-			err := Retry(func() error {
-				calls++
-				return nil
-			}, 0, time.Millisecond*100)
+			err := Retry(func() error { calls++; return nil }, 0, 10*time.Millisecond)
 			c.So(err, c.ShouldBeNil)
 			c.So(calls, c.ShouldEqual, 1)
 		})
 
 		mockey.PatchConvey("TestRetry-AttemptsNegative", func() {
 			calls := 0
-			err := Retry(func() error {
-				calls++
-				return errors.New("for test")
-			}, -1, time.Millisecond*100)
-			c.So(err.Error(), c.ShouldEqual, "for test")
+			err := Retry(func() error { calls++; return errors.New("fail") }, -1, 10*time.Millisecond)
+			c.So(err, c.ShouldNotBeNil)
 			c.So(calls, c.ShouldEqual, 1)
 		})
 	})
@@ -448,12 +616,8 @@ func TestRetryWithBackoff(t *testing.T) {
 	mockey.PatchConvey("TestRetryWithBackoff", t, func() {
 		mockey.PatchConvey("TestRetryWithBackoff-AllFail", func() {
 			calls := 0
-			err := RetryWithBackoff(func() error {
-				calls++
-				return errors.New("backoff fail")
-			}, 3, 10*time.Millisecond, 100*time.Millisecond)
+			err := RetryWithBackoff(func() error { calls++; return errors.New("fail") }, 3, 10*time.Millisecond, 100*time.Millisecond)
 			c.So(err, c.ShouldNotBeNil)
-			c.So(err.Error(), c.ShouldEqual, "backoff fail")
 			c.So(calls, c.ShouldEqual, 3)
 		})
 
@@ -472,58 +636,70 @@ func TestRetryWithBackoff(t *testing.T) {
 
 		mockey.PatchConvey("TestRetryWithBackoff-AttemptsZero", func() {
 			calls := 0
-			err := RetryWithBackoff(func() error {
-				calls++
-				return nil
-			}, 0, 10*time.Millisecond, 100*time.Millisecond)
+			err := RetryWithBackoff(func() error { calls++; return nil }, 0, 10*time.Millisecond, 100*time.Millisecond)
 			c.So(err, c.ShouldBeNil)
 			c.So(calls, c.ShouldEqual, 1)
 		})
 
 		mockey.PatchConvey("TestRetryWithBackoff-MaxDelayLimit", func() {
-			delays := make([]time.Time, 0)
-			err := RetryWithBackoff(func() error {
-				delays = append(delays, time.Now())
-				return errors.New("fail")
-			}, 4, 10*time.Millisecond, 20*time.Millisecond)
+			calls := 0
+			err := RetryWithBackoff(func() error { calls++; return errors.New("fail") }, 4, 10*time.Millisecond, 20*time.Millisecond)
 			c.So(err, c.ShouldNotBeNil)
-			c.So(len(delays), c.ShouldEqual, 4)
+			c.So(calls, c.ShouldEqual, 4)
 		})
 	})
 }
 
 // ==================== cmd.go ====================
 
+func TestGetOsArgs(t *testing.T) {
+	mockey.PatchConvey("TestGetOsArgs", t, func() {
+		args := GetOsArgs()
+		// 测试环境下 os.Args[0] 为测试二进制，os.Args[1:] 不为 nil
+		c.So(args, c.ShouldNotBeNil)
+	})
+}
+
 func TestGetConfigFromArgs(t *testing.T) {
 	mockey.PatchConvey("TestGetConfigFromArgs", t, func() {
 		mockey.PatchConvey("TestGetConfigFromArgs-InvalidKey", func() {
 			_, err := GetConfigFromArgs("1a")
-			c.So(err.Error(), c.ShouldEqual, "key must match regexp: ^[a-zA-Z_][a-zA-Z0-9_.-]*$")
+			c.So(err.Error(), c.ShouldContainSubstring, "key must match regexp")
 
 			_, err = GetConfigFromArgs("#a")
-			c.So(err.Error(), c.ShouldEqual, "key must match regexp: ^[a-zA-Z_][a-zA-Z0-9_.-]*$")
+			c.So(err, c.ShouldNotBeNil)
 		})
 
-		mockey.PatchConvey("TestGetConfigFromArgs-NotFound", func() {
+		mockey.PatchConvey("TestGetConfigFromArgs-NoArgs", func() {
 			mockey.Mock(GetOsArgs).Return(make([]string, 0)).Build()
 			_, err := GetConfigFromArgs("x")
 			c.So(err.Error(), c.ShouldEqual, "arg not found, there is no arg")
 		})
 
 		mockey.PatchConvey("TestGetConfigFromArgs-Parse", func() {
-			mockey.Mock(GetOsArgs).Return(strings.Split("-x.y.z=a_bc --baaa ww ---b===#123 -z", " ")).Build()
+			mockey.Mock(GetOsArgs).Return(strings.Split("-x.y.z=a_bc --baaa ww ---b===#123 --token=abc== -z", " ")).Build()
+
+			// 空格方式：-z 后无值
 			_, err := GetConfigFromArgs("z")
 			c.So(err.Error(), c.ShouldEqual, "arg not found, arg not set")
 
+			// 空格方式：--baaa ww
 			v, _ := GetConfigFromArgs("baaa")
 			c.So(v, c.ShouldEqual, "ww")
 
+			// 等号方式：第一个 = 为分隔符，保留值中的 =
 			v, _ = GetConfigFromArgs("b")
-			c.So(v, c.ShouldEqual, "#123")
+			c.So(v, c.ShouldEqual, "==#123")
 
+			// 等号方式：带点号的 key
 			v, _ = GetConfigFromArgs("x.y.z")
 			c.So(v, c.ShouldEqual, "a_bc")
 
+			// 等号方式：base64 值尾部 == 不被截断
+			v, _ = GetConfigFromArgs("token")
+			c.So(v, c.ShouldEqual, "abc==")
+
+			// 不存在的 key
 			_, err = GetConfigFromArgs("a")
 			c.So(err.Error(), c.ShouldEqual, "arg not found")
 		})

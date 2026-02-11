@@ -23,7 +23,7 @@ func configMergeDefault(c *Config) *Config {
 	// Enable 使用指针类型，区分"未配置"和"配置为false"
 	// 未配置时默认开启，只有明确配置 Enable: false 才关闭
 	if c.Enable == nil {
-		c.Enable = xutil.ToPrt(true)
+		c.Enable = xutil.ToPtr(true)
 	}
 	return c
 }

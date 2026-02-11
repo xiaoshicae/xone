@@ -3,105 +3,111 @@ package xutil
 import (
 	"fmt"
 	"net"
-	"strings"
 )
 
-// GetLocalIp 获取本机ip，优先返回内网ip
-func GetLocalIp() (string, error) {
-	return ExtractRealIP("0.0.0.0")
+// GetLocalIP 获取本机 IP，优先外网 IPv4
+// 优先级：public IPv4 → public IPv6 → private IPv4 → private IPv6
+func GetLocalIP() (string, error) {
+	pub4, pub6, pri4, pri6, err := collectLocalIPs()
+	if err != nil {
+		return "", err
+	}
+	if len(pub4) > 0 {
+		return pub4[0].String(), nil
+	}
+	if len(pub6) > 0 {
+		return pub6[0].String(), nil
+	}
+	if len(pri4) > 0 {
+		return pri4[0].String(), nil
+	}
+	if len(pri6) > 0 {
+		return pri6[0].String(), nil
+	}
+	return "", fmt.Errorf("no IP address found")
 }
 
-// ExtractRealIP returns a real ip
-func ExtractRealIP(addr string) (string, error) {
-	// if addr specified then its returned
-	if len(addr) > 0 && (addr != "0.0.0.0" && addr != "[::]" && addr != "::") {
-		candidate := strings.TrimSpace(addr)
-		if host, _, err := net.SplitHostPort(candidate); err == nil {
-			candidate = host
-		}
-		candidate = strings.TrimPrefix(candidate, "[")
-		candidate = strings.TrimSuffix(candidate, "]")
-
-		return validateIP(candidate, addr)
+// GetLocalPublicIP 获取本机外网 IP，优先 IPv4
+// 优先级：public IPv4 → public IPv6
+func GetLocalPublicIP() (string, error) {
+	pub4, pub6, _, _, err := collectLocalIPs()
+	if err != nil {
+		return "", err
 	}
+	if len(pub4) > 0 {
+		return pub4[0].String(), nil
+	}
+	if len(pub6) > 0 {
+		return pub6[0].String(), nil
+	}
+	return "", fmt.Errorf("no public IP address found")
+}
 
+// GetLocalPrivateIP 获取本机内网 IP，优先 IPv4
+// 优先级：private IPv4 → private IPv6
+func GetLocalPrivateIP() (string, error) {
+	_, _, pri4, pri6, err := collectLocalIPs()
+	if err != nil {
+		return "", err
+	}
+	if len(pri4) > 0 {
+		return pri4[0].String(), nil
+	}
+	if len(pri6) > 0 {
+		return pri6[0].String(), nil
+	}
+	return "", fmt.Errorf("no private IP address found")
+}
+
+// collectLocalIPs 遍历网卡，按类型和协议分 4 组收集 IP
+// 跳过 loopback、unspecified、multicast 地址
+func collectLocalIPs() (public4, public6, private4, private6 []net.IP, err error) {
 	iFaces, err := net.Interfaces()
 	if err != nil {
-		return "", fmt.Errorf("failed to get interfaces, error: %v", err)
+		return nil, nil, nil, nil, fmt.Errorf("failed to get interfaces, error: %v", err)
 	}
-
-	// 预分配容量
-	addrs := make([]net.Addr, 0, len(iFaces)*2)
-	loAddrs := make([]net.Addr, 0, len(iFaces))
 
 	for _, iface := range iFaces {
-		ifaceAddrs, err := iface.Addrs()
-		if err != nil {
-			// ignore error, interface can disappear from system
-			continue
-		}
+		// 跳过 loopback 网卡
 		if iface.Flags&net.FlagLoopback != 0 {
-			loAddrs = append(loAddrs, ifaceAddrs...)
 			continue
 		}
-		addrs = append(addrs, ifaceAddrs...)
-	}
-	addrs = append(addrs, loAddrs...)
-
-	var ipAddr string
-	var publicIP string
-
-	for _, rawAddr := range addrs {
-		var ip net.IP
-		switch addr := rawAddr.(type) {
-		case *net.IPAddr:
-			ip = addr.IP
-		case *net.IPNet:
-			ip = addr.IP
-		default:
+		addrs, addrErr := iface.Addrs()
+		if addrErr != nil {
 			continue
 		}
-
-		// Skip non-IPv4 addresses
-		if ip.To4() == nil {
-			continue
-		}
-
-		if ip.IsUnspecified() || ip.IsMulticast() {
-			continue
-		}
-
-		if !isPrivateIP(ip) {
-			if publicIP == "" {
-				publicIP = ip.String()
+		for _, addr := range addrs {
+			var ip net.IP
+			switch v := addr.(type) {
+			case *net.IPAddr:
+				ip = v.IP
+			case *net.IPNet:
+				ip = v.IP
+			default:
+				continue
 			}
-			continue
+
+			if ip.IsUnspecified() || ip.IsMulticast() || ip.IsLoopback() {
+				continue
+			}
+
+			isV4 := ip.To4() != nil
+			if isPrivateIP(ip) {
+				if isV4 {
+					private4 = append(private4, ip)
+				} else {
+					private6 = append(private6, ip)
+				}
+			} else {
+				if isV4 {
+					public4 = append(public4, ip)
+				} else {
+					public6 = append(public6, ip)
+				}
+			}
 		}
-
-		ipAddr = ip.String()
-		break
 	}
-
-	// return private ip
-	if len(ipAddr) > 0 {
-		return validateIP(ipAddr, ipAddr)
-	}
-
-	// return public or virtual ip
-	if len(publicIP) > 0 {
-		return validateIP(publicIP, publicIP)
-	}
-
-	return "", fmt.Errorf("no IP address found, and explicit IP not provided")
-}
-
-// validateIP 验证并解析 IP 地址，减少重复代码
-func validateIP(candidate, original string) (string, error) {
-	a := net.ParseIP(candidate)
-	if a == nil {
-		return "", fmt.Errorf("ip addr %s is invalid", original)
-	}
-	return a.String(), nil
+	return
 }
 
 func isPrivateIP(ip net.IP) bool {

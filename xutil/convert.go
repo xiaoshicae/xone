@@ -8,8 +8,8 @@ import (
 	"github.com/spf13/cast"
 )
 
-// ToPrt 获取指针
-func ToPrt[T any](t T) *T {
+// ToPtr 获取值的指针
+func ToPtr[T any](t T) *T {
 	return &t
 }
 
@@ -26,7 +26,7 @@ func GetOrDefault[T any](v T, defaultV T) T {
 }
 
 // ToDuration 兼容d类型时长，如"1d"
-func ToDuration(i interface{}) time.Duration {
+func ToDuration(i any) time.Duration {
 	if i == nil {
 		return 0
 	}
@@ -43,18 +43,16 @@ func ToDuration(i interface{}) time.Duration {
 }
 
 func strToDuration(duration string) time.Duration {
-	if strings.Contains(duration, "d") {
-		day, left, found := strings.Cut(duration, "d")
-		if !found {
-			return cast.ToDuration(duration)
-		}
-		dayDuration, err := cast.ToIntE(day)
-		if err != nil {
-			// 天数解析失败时记录日志，尝试解析剩余部分
-			ErrorIfEnableDebug("strToDuration parse day failed, day=[%s], err=[%v], fallback to parse left=[%s]", day, err, left)
-			return cast.ToDuration(left)
-		}
-		return time.Duration(dayDuration)*24*time.Hour + cast.ToDuration(left)
+	if !strings.Contains(duration, "d") {
+		return cast.ToDuration(duration)
 	}
-	return cast.ToDuration(duration)
+
+	day, left, _ := strings.Cut(duration, "d")
+	dayDuration, err := cast.ToIntE(day)
+	if err != nil {
+		// 天数解析失败时记录日志，尝试解析剩余部分
+		ErrorIfEnableDebug("strToDuration parse day failed, day=[%s], err=[%v], fallback to parse left=[%s]", day, err, left)
+		return cast.ToDuration(left)
+	}
+	return time.Duration(dayDuration)*24*time.Hour + cast.ToDuration(left)
 }

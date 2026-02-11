@@ -33,13 +33,14 @@ func GetConfigFromArgs(key string) (string, error) {
 
 		// 等号配置方式 --config=c
 		if strings.HasPrefix(arg, key+"=") {
-			return strings.Trim(arg[len(key):], "="), nil
+			return arg[len(key)+1:], nil
 		}
 	}
 
 	return "", fmt.Errorf("arg not found")
 }
 
+// GetOsArgs 获取启动命令参数（排除程序名）
 func GetOsArgs() []string {
 	return os.Args[1:]
 }

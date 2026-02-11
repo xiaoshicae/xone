@@ -5,7 +5,7 @@ import (
 )
 
 // ToJsonString 转换为json字符串
-func ToJsonString(v interface{}) string {
+func ToJsonString(v any) string {
 	vv, err := json.Marshal(v)
 	if err != nil {
 		ErrorIfEnableDebug("ToJsonString failed, err=[%v]", err)
@@ -15,7 +15,7 @@ func ToJsonString(v interface{}) string {
 }
 
 // ToJsonStringIndent 转换为json字符串，带\t格式化
-func ToJsonStringIndent(v interface{}) string {
+func ToJsonStringIndent(v any) string {
 	vv, err := json.MarshalIndent(v, "", "\t")
 	if err != nil {
 		ErrorIfEnableDebug("ToJsonStringIndent failed, err=[%v]", err)

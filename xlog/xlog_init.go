@@ -87,7 +87,7 @@ func initXLogByConfig(c *Config) error {
 		Location: loc,
 	})
 
-	localIP, _ := xutil.GetLocalIp()
+	localIP, _ := xutil.GetLocalIP()
 	localIP = xutil.GetOrDefault(localIP, "0.0.0.0")
 
 	// 自定义hook，进行日志format和打印到屏幕

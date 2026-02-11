@@ -7,42 +7,42 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
-	"sync"
 
 	"github.com/sirupsen/logrus"
 )
 
 // 日志相关的方法，注意这里的日志主要用来做XOne debug用，因此只会打印在屏幕上
 
-var (
-	logger    *logrus.Logger
-	initOnce  sync.Once // 确保初始化只执行一次
-	regexOnce sync.Once // 确保正则编译只执行一次
-)
+var logger *logrus.Logger
 
 func init() {
-	initOnce.Do(initLogger)
-	regexOnce.Do(initCallerIgnoreFileName)
+	initLogger()
+	initCallerIgnoreRegList()
 }
 
-func ErrorIfEnableDebug(msg string, args ...interface{}) {
+// ErrorIfEnableDebug 当开启 debug 模式时输出 Error 级别日志
+func ErrorIfEnableDebug(msg string, args ...any) {
 	LogIfEnableDebug(logrus.ErrorLevel, msg, args...)
 }
 
-func InfoIfEnableDebug(msg string, args ...interface{}) {
+// InfoIfEnableDebug 当开启 debug 模式时输出 Info 级别日志
+func InfoIfEnableDebug(msg string, args ...any) {
 	LogIfEnableDebug(logrus.InfoLevel, msg, args...)
 }
 
-func WarnIfEnableDebug(msg string, args ...interface{}) {
+// WarnIfEnableDebug 当开启 debug 模式时输出 Warn 级别日志
+func WarnIfEnableDebug(msg string, args ...any) {
 	LogIfEnableDebug(logrus.WarnLevel, msg, args...)
 }
 
-func LogIfEnableDebug(level logrus.Level, msg string, args ...interface{}) {
+// LogIfEnableDebug 当开启 debug 模式时按指定级别输出日志
+func LogIfEnableDebug(level logrus.Level, msg string, args ...any) {
 	if EnableDebug() {
 		logger.Logf(level, msg, args...)
 	}
 }
 
+// GetLogCaller 获取日志调用方的栈帧，跳过 suffixToIgnore 和内置忽略列表中匹配的文件
 func GetLogCaller(callDepth int, suffixToIgnore []string) (frame *runtime.Frame) {
 	pcs := make([]uintptr, maximumCallerDepth)
 	depth := runtime.Callers(minimumCallerDepth+callDepth, pcs)
@@ -51,14 +51,14 @@ OUTER:
 	for f, hasMore := frames.Next(); hasMore; f, hasMore = frames.Next() {
 		frame = &f
 
-		// If the caller isn't part of this package, we're done
+		// 跳过匹配忽略列表的调用帧
 		for _, s := range suffixToIgnore {
 			if strings.HasSuffix(f.File, s) {
 				continue OUTER
 			}
 		}
-		for _, s := range defaultSuffixedRegList {
-			if s.MatchString(f.File) {
+		for _, r := range callerIgnoreRegList {
+			if r.MatchString(f.File) {
 				continue OUTER
 			}
 		}
@@ -70,54 +70,44 @@ OUTER:
 
 const (
 	currentFilePath        = "/xutil/log.go"
+	unknownCaller          = "???"
 	maximumCallerDepth int = 25
-	minimumCallerDepth int = 5 // should be logrus.entry.go:237
+	minimumCallerDepth int = 5 // logrus.entry.go:237
 )
 
 func callerPretty(_ *runtime.Frame) (string, string) {
 	frame := GetLogCaller(0, []string{currentFilePath})
 	if frame == nil {
-		return "???", "???"
+		return unknownCaller, unknownCaller
 	}
-	// funcVal := path.Base(frame.Function)
 	fName := path.Base(frame.File)
 	if fName == "" {
-		fName = "???"
+		fName = unknownCaller
 	}
-	fileName := fmt.Sprintf("%s:%d", fName, frame.Line)
-	coloredFileName := fmt.Sprintf(" \x1b[34m%s\x1b[0m", fileName)
-	return "", coloredFileName
+	return "", fmt.Sprintf(" \x1b[34m%s:%d\x1b[0m", fName, frame.Line)
 }
 
-var (
-	defaultSuffixedRegList        []*regexp.Regexp
-	defaultSuffixesRegPatternList = []string{
-		`go-redis/(.*)/string_commands\.go`,
-		`go-redis/(.*)/redis\.go`,
-		`xmysql(|@v.*)/logger\.go`,
-		`xredis(|@v.*)/logger\.go`,
-		`logrus(|@v.*)/hooks\.go`,
-		`logrus(|@v.*)/entry\.go`,
-		`logrus(|@v.*)/logger\.go`,
-		`logrus(|@v.*)/exported\.go`,
-		`gorm(|@v.*)/callbacks\.go`,
-		`gorm(|@v.*)/finisher_api\.go`,
-		`mongo-driver(|@v.*)/operation.*go$`,
-		`mongo-driver(|@v.*)/database\.go`,
-		`mongo-driver(|@v.*)/client\.go`,
-		`mongo-driver(|@v.*)/collection\.go`,
-		`mongo-driver(|@v.*)/cursor\.go`,
-		`asm_amd64\.s`,
-	}
-)
+// callerIgnoreRegList 预编译的调用栈忽略正则列表
+var callerIgnoreRegList []*regexp.Regexp
+
+// callerIgnorePatterns 需要从调用栈中过滤的第三方库文件模式
+// 同一库的多个文件合并为一个正则，减少匹配次数
+var callerIgnorePatterns = []string{
+	`go-redis/(.*)/(?:string_commands|redis)\.go`,
+	`(?:xmysql|xredis)(|@v.*)/logger\.go`,
+	`logrus(|@v.*)/(?:hooks|entry|logger|exported)\.go`,
+	`gorm(|@v.*)/(?:callbacks|finisher_api)\.go`,
+	`mongo-driver(|@v.*)/(?:operation|database|client|collection|cursor).*\.go`,
+	`asm_\w+\.s`,
+}
 
 func initLogger() {
 	l := logrus.New()
 	l.Formatter = &logrus.TextFormatter{
-		ForceColors:      true,                      // 强制输出颜色
-		FullTimestamp:    true,                      // 完整的时间戳
-		TimestampFormat:  "2006-01-02 15:04:05.999", // 自定义时间戳格式
-		CallerPrettyfier: callerPretty,              // 自定义文件名和行号格式
+		ForceColors:      true,
+		FullTimestamp:    true,
+		TimestampFormat:  "2006-01-02 15:04:05.999",
+		CallerPrettyfier: callerPretty,
 	}
 	l.SetReportCaller(true)
 	l.SetLevel(logrus.InfoLevel)
@@ -125,10 +115,10 @@ func initLogger() {
 	logger = l
 }
 
-// initCallerIgnoreFileName 初始化获取caller忽略的文件名
-func initCallerIgnoreFileName() {
-	defaultSuffixedRegList = make([]*regexp.Regexp, 0, len(defaultSuffixesRegPatternList))
-	for _, pattern := range defaultSuffixesRegPatternList {
-		defaultSuffixedRegList = append(defaultSuffixedRegList, regexp.MustCompile(pattern))
+// initCallerIgnoreRegList 预编译调用栈忽略正则
+func initCallerIgnoreRegList() {
+	callerIgnoreRegList = make([]*regexp.Regexp, len(callerIgnorePatterns))
+	for i, pattern := range callerIgnorePatterns {
+		callerIgnoreRegList[i] = regexp.MustCompile(pattern)
 	}
 }

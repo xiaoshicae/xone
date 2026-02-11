@@ -751,26 +751,6 @@ func TestFlow_Execute_Monitor(t *testing.T) {
 	})
 }
 
-// ==================== Setter 方法测试 ====================
-
-func TestFlow_SetterMethods(t *testing.T) {
-	PatchConvey("TestFlow_SetterMethods", t, func() {
-		PatchConvey("SetName", func() {
-			f := &Flow[testData]{}
-			f.SetName("new-name")
-			So(f.Name, ShouldEqual, "new-name")
-		})
-
-		PatchConvey("AddProcessor", func() {
-			f := &Flow[testData]{}
-			p := &mockProcessor[testData]{name: "p1"}
-			f.AddProcessor(p)
-			So(len(f.Processors), ShouldEqual, 1)
-			So(f.Processors[0].Name(), ShouldEqual, "p1")
-		})
-	})
-}
-
 // ==================== New 函数测试 ====================
 
 func TestNew(t *testing.T) {

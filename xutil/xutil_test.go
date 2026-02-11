@@ -2,7 +2,9 @@ package xutil
 
 import (
 	"context"
+	"errors"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -398,6 +400,132 @@ func TestGetSpanIDFromCtx(t *testing.T) {
 		mockey.PatchConvey("TestGetSpanIDFromCtx-EmptyCtx", func() {
 			spanID := GetSpanIDFromCtx(context.Background())
 			c.So(spanID, c.ShouldEqual, "")
+		})
+	})
+}
+
+// ==================== retry.go ====================
+
+func TestRetry(t *testing.T) {
+	mockey.PatchConvey("TestRetry", t, func() {
+		mockey.PatchConvey("TestRetry-AllFail", func() {
+			err := Retry(func() error {
+				return errors.New("for test")
+			}, 3, time.Millisecond*100)
+			c.So(err.Error(), c.ShouldEqual, "for test")
+		})
+
+		mockey.PatchConvey("TestRetry-Success", func() {
+			err := Retry(func() error {
+				return nil
+			}, 3, time.Millisecond*100)
+			c.So(err, c.ShouldBeNil)
+		})
+
+		mockey.PatchConvey("TestRetry-AttemptsZero", func() {
+			calls := 0
+			err := Retry(func() error {
+				calls++
+				return nil
+			}, 0, time.Millisecond*100)
+			c.So(err, c.ShouldBeNil)
+			c.So(calls, c.ShouldEqual, 1)
+		})
+
+		mockey.PatchConvey("TestRetry-AttemptsNegative", func() {
+			calls := 0
+			err := Retry(func() error {
+				calls++
+				return errors.New("for test")
+			}, -1, time.Millisecond*100)
+			c.So(err.Error(), c.ShouldEqual, "for test")
+			c.So(calls, c.ShouldEqual, 1)
+		})
+	})
+}
+
+func TestRetryWithBackoff(t *testing.T) {
+	mockey.PatchConvey("TestRetryWithBackoff", t, func() {
+		mockey.PatchConvey("TestRetryWithBackoff-AllFail", func() {
+			calls := 0
+			err := RetryWithBackoff(func() error {
+				calls++
+				return errors.New("backoff fail")
+			}, 3, 10*time.Millisecond, 100*time.Millisecond)
+			c.So(err, c.ShouldNotBeNil)
+			c.So(err.Error(), c.ShouldEqual, "backoff fail")
+			c.So(calls, c.ShouldEqual, 3)
+		})
+
+		mockey.PatchConvey("TestRetryWithBackoff-SecondSuccess", func() {
+			calls := 0
+			err := RetryWithBackoff(func() error {
+				calls++
+				if calls < 2 {
+					return errors.New("not yet")
+				}
+				return nil
+			}, 5, 10*time.Millisecond, 1*time.Second)
+			c.So(err, c.ShouldBeNil)
+			c.So(calls, c.ShouldEqual, 2)
+		})
+
+		mockey.PatchConvey("TestRetryWithBackoff-AttemptsZero", func() {
+			calls := 0
+			err := RetryWithBackoff(func() error {
+				calls++
+				return nil
+			}, 0, 10*time.Millisecond, 100*time.Millisecond)
+			c.So(err, c.ShouldBeNil)
+			c.So(calls, c.ShouldEqual, 1)
+		})
+
+		mockey.PatchConvey("TestRetryWithBackoff-MaxDelayLimit", func() {
+			delays := make([]time.Time, 0)
+			err := RetryWithBackoff(func() error {
+				delays = append(delays, time.Now())
+				return errors.New("fail")
+			}, 4, 10*time.Millisecond, 20*time.Millisecond)
+			c.So(err, c.ShouldNotBeNil)
+			c.So(len(delays), c.ShouldEqual, 4)
+		})
+	})
+}
+
+// ==================== cmd.go ====================
+
+func TestGetConfigFromArgs(t *testing.T) {
+	mockey.PatchConvey("TestGetConfigFromArgs", t, func() {
+		mockey.PatchConvey("TestGetConfigFromArgs-InvalidKey", func() {
+			_, err := GetConfigFromArgs("1a")
+			c.So(err.Error(), c.ShouldEqual, "key must match regexp: ^[a-zA-Z_][a-zA-Z0-9_.-]*$")
+
+			_, err = GetConfigFromArgs("#a")
+			c.So(err.Error(), c.ShouldEqual, "key must match regexp: ^[a-zA-Z_][a-zA-Z0-9_.-]*$")
+		})
+
+		mockey.PatchConvey("TestGetConfigFromArgs-NotFound", func() {
+			mockey.Mock(GetOsArgs).Return(make([]string, 0)).Build()
+			_, err := GetConfigFromArgs("x")
+			c.So(err.Error(), c.ShouldEqual, "arg not found, there is no arg")
+		})
+
+		mockey.PatchConvey("TestGetConfigFromArgs-Parse", func() {
+			mockey.Mock(GetOsArgs).Return(strings.Split("-x.y.z=a_bc --baaa ww ---b===#123 -z", " ")).Build()
+			_, err := GetConfigFromArgs("z")
+			c.So(err.Error(), c.ShouldEqual, "arg not found, arg not set")
+
+			v, _ := GetConfigFromArgs("baaa")
+			c.So(v, c.ShouldEqual, "ww")
+
+			v, _ = GetConfigFromArgs("b")
+			c.So(v, c.ShouldEqual, "#123")
+
+			v, _ = GetConfigFromArgs("x.y.z")
+			c.So(v, c.ShouldEqual, "a_bc")
+
+			_, err = GetConfigFromArgs("a")
+			c.So(err.Error(), c.ShouldEqual, "arg not found")
 		})
 	})
 }

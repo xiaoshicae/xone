@@ -37,7 +37,7 @@ func WarnIfEnableDebug(msg string, args ...any) {
 
 // LogIfEnableDebug 当开启 debug 模式时按指定级别输出日志
 func LogIfEnableDebug(level logrus.Level, msg string, args ...any) {
-	if EnableDebug() {
+	if EnableXOneDebug() {
 		logger.Logf(level, msg, args...)
 	}
 }

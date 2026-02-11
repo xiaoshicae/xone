@@ -109,7 +109,7 @@ func printFinalConfig(vp *viper.Viper) {
 **********************************************************************************************
 
 `
-	if xutil.EnableDebug() {
+	if xutil.EnableXOneDebug() {
 		fmt.Printf(debugMsg, xutil.ToJsonStringIndent(vp.AllSettings()))
 	}
 }

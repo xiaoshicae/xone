@@ -1,75 +1,63 @@
 package xtrace
 
 import (
-	"context"
 	"errors"
-	"log"
 	"testing"
 
 	"github.com/xiaoshicae/xone/v2/xconfig"
+	"github.com/xiaoshicae/xone/v2/xutil"
 
-	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/stdout/stdouttrace"
 	"go.opentelemetry.io/otel/sdk/resource"
-	"go.opentelemetry.io/otel/sdk/trace"
-	semconv "go.opentelemetry.io/otel/semconv/v1.21.0"
 
 	. "github.com/bytedance/mockey"
 	. "github.com/smartystreets/goconvey/convey"
 )
 
-func TestXTraceConfig(t *testing.T) {
-	PatchConvey("TestXTraceConfig-configMergeDefault-Param-Nil", t, func() {
-		c := configMergeDefault(nil)
-		So(c.Enable, ShouldNotBeNil)
-		So(*c.Enable, ShouldBeTrue)
-		So(c.Console, ShouldBeFalse)
-	})
-	PatchConvey("TestXTraceConfig-configMergeDefault-Param-Exist", t, func() {
-		enableFalse := false
-		c := configMergeDefault(&Config{
-			Enable:  &enableFalse,
-			Console: true,
+// ==================== config.go ====================
+
+func TestConfigMergeDefault(t *testing.T) {
+	PatchConvey("TestConfigMergeDefault", t, func() {
+		PatchConvey("Nil", func() {
+			c := configMergeDefault(nil)
+			So(c.Enable, ShouldNotBeNil)
+			So(*c.Enable, ShouldBeTrue)
+			So(c.Console, ShouldBeFalse)
 		})
-		So(c.Enable, ShouldNotBeNil)
-		So(*c.Enable, ShouldBeFalse)
-		So(c.Console, ShouldBeTrue)
+
+		PatchConvey("ExistingValues", func() {
+			enableFalse := false
+			c := configMergeDefault(&Config{Enable: &enableFalse, Console: true})
+			So(*c.Enable, ShouldBeFalse)
+			So(c.Console, ShouldBeTrue)
+		})
 	})
 }
+
+// ==================== util.go ====================
 
 func TestEnableTrace(t *testing.T) {
-	PatchConvey("TestEnableTrace-default enabled", t, func() {
-		Mock(xconfig.GetString).Return("").Build()
-		So(EnableTrace(), ShouldBeTrue)
-	})
+	PatchConvey("TestEnableTrace", t, func() {
+		PatchConvey("NotConfigured", func() {
+			Mock(xconfig.ContainKey).Return(false).Build()
+			So(EnableTrace(), ShouldBeTrue)
+		})
 
-	PatchConvey("TestEnableTrace-explicit false", t, func() {
-		Mock(xconfig.GetString).Return("false").Build()
-		So(EnableTrace(), ShouldBeFalse)
-	})
+		PatchConvey("ExplicitFalse", func() {
+			Mock(xconfig.ContainKey).Return(true).Build()
+			Mock(xconfig.GetBool).Return(false).Build()
+			So(EnableTrace(), ShouldBeFalse)
+		})
 
-	PatchConvey("TestEnableTrace-explicit true", t, func() {
-		Mock(xconfig.GetString).Return("true").Build()
-		So(EnableTrace(), ShouldBeTrue)
-	})
-}
-
-func TestShutdownXTraceIdempotent(t *testing.T) {
-	PatchConvey("TestShutdownXTraceIdempotent", t, func() {
-		// 重置状态
-		shutdownExecuted.Store(false)
-		calls := 0
-		xTraceShutdownFunc = func() error {
-			calls++
-			return nil
-		}
-
-		So(shutdownXTrace(), ShouldBeNil)
-		So(shutdownXTrace(), ShouldBeNil)
-		So(calls, ShouldEqual, 1)
+		PatchConvey("ExplicitTrue", func() {
+			Mock(xconfig.ContainKey).Return(true).Build()
+			Mock(xconfig.GetBool).Return(true).Build()
+			So(EnableTrace(), ShouldBeTrue)
+		})
 	})
 }
+
+// ==================== xtrace_init.go ====================
 
 func TestGetTracer(t *testing.T) {
 	PatchConvey("TestGetTracer", t, func() {
@@ -78,109 +66,124 @@ func TestGetTracer(t *testing.T) {
 	})
 }
 
-func TestGetConfigXTrace(t *testing.T) {
-	PatchConvey("TestGetConfig-UnmarshalFail", t, func() {
-		Mock(xconfig.UnmarshalConfig).Return(errors.New("unmarshal failed")).Build()
+func TestGetConfig(t *testing.T) {
+	PatchConvey("TestGetConfig", t, func() {
+		PatchConvey("UnmarshalFail", func() {
+			Mock(xconfig.UnmarshalConfig).Return(errors.New("unmarshal failed")).Build()
+			config, err := getConfig()
+			So(err, ShouldNotBeNil)
+			So(config, ShouldBeNil)
+		})
 
-		config, err := getConfig()
-		So(err, ShouldNotBeNil)
-		So(config, ShouldBeNil)
-	})
-
-	PatchConvey("TestGetConfig-Success", t, func() {
-		Mock(xconfig.UnmarshalConfig).Return(nil).Build()
-
-		config, err := getConfig()
-		So(err, ShouldBeNil)
-		So(config, ShouldNotBeNil)
-		So(*config.Enable, ShouldBeTrue) // 默认值
+		PatchConvey("Success", func() {
+			Mock(xconfig.UnmarshalConfig).Return(nil).Build()
+			config, err := getConfig()
+			So(err, ShouldBeNil)
+			So(config, ShouldNotBeNil)
+			So(*config.Enable, ShouldBeTrue)
+		})
 	})
 }
 
 func TestInitXTrace(t *testing.T) {
-	PatchConvey("TestInitXTrace-GetConfigFail", t, func() {
-		Mock(getConfig).Return(nil, errors.New("config failed")).Build()
+	PatchConvey("TestInitXTrace", t, func() {
+		PatchConvey("GetConfigFail", func() {
+			Mock(getConfig).Return(nil, errors.New("config failed")).Build()
+			err := initXTrace()
+			So(err, ShouldNotBeNil)
+			So(err.Error(), ShouldContainSubstring, "getConfig failed")
+		})
 
-		err := initXTrace()
-		So(err, ShouldNotBeNil)
-		So(err.Error(), ShouldContainSubstring, "getConfig failed")
-	})
+		PatchConvey("Disabled", func() {
+			enableFalse := false
+			Mock(getConfig).Return(&Config{Enable: &enableFalse}, nil).Build()
+			err := initXTrace()
+			So(err, ShouldBeNil)
+		})
 
-	PatchConvey("TestInitXTrace-Disabled", t, func() {
-		enableFalse := false
-		Mock(getConfig).Return(&Config{Enable: &enableFalse}, nil).Build()
+		PatchConvey("Enabled", func() {
+			enableTrue := true
+			Mock(getConfig).Return(&Config{Enable: &enableTrue}, nil).Build()
+			Mock(xconfig.GetServerName).Return("test-svc").Build()
+			Mock(xconfig.GetServerVersion).Return("v1.0.0").Build()
+			Mock(xutil.InfoIfEnableDebug).Return().Build()
+			Mock(initXTraceByConfig).Return(nil).Build()
 
-		err := initXTrace()
-		So(err, ShouldBeNil)
+			err := initXTrace()
+			So(err, ShouldBeNil)
+		})
+
+		PatchConvey("EnabledButInitFail", func() {
+			enableTrue := true
+			Mock(getConfig).Return(&Config{Enable: &enableTrue}, nil).Build()
+			Mock(xconfig.GetServerName).Return("test-svc").Build()
+			Mock(xconfig.GetServerVersion).Return("v1.0.0").Build()
+			Mock(xutil.InfoIfEnableDebug).Return().Build()
+			Mock(initXTraceByConfig).Return(errors.New("init failed")).Build()
+
+			err := initXTrace()
+			So(err, ShouldNotBeNil)
+		})
 	})
 }
 
 func TestInitXTraceByConfig(t *testing.T) {
-	PatchConvey("TestInitXTraceByConfig-Success", t, func() {
-		config := &Config{Console: false}
-		err := initXTraceByConfig(config, "test-service", "v1.0.0")
-		So(err, ShouldBeNil)
-	})
+	PatchConvey("TestInitXTraceByConfig", t, func() {
+		PatchConvey("Success", func() {
+			err := initXTraceByConfig(&Config{Console: false}, "test-svc", "v1.0.0")
+			So(err, ShouldBeNil)
+		})
 
-	PatchConvey("TestInitXTraceByConfig-WithConsole", t, func() {
-		config := &Config{Console: true}
-		err := initXTraceByConfig(config, "test-service", "v1.0.0")
-		So(err, ShouldBeNil)
+		PatchConvey("WithConsole", func() {
+			err := initXTraceByConfig(&Config{Console: true}, "test-svc", "v1.0.0")
+			So(err, ShouldBeNil)
+		})
+
+		PatchConvey("ResourceNewFail", func() {
+			Mock(resource.New).Return(nil, errors.New("resource failed")).Build()
+			err := initXTraceByConfig(&Config{Console: false}, "test-svc", "v1.0.0")
+			So(err, ShouldNotBeNil)
+			So(err.Error(), ShouldContainSubstring, "resource.New failed")
+		})
+
+		PatchConvey("ExporterFail", func() {
+			Mock(stdouttrace.New).Return(nil, errors.New("exporter failed")).Build()
+			err := initXTraceByConfig(&Config{Console: true}, "test-svc", "v1.0.0")
+			So(err, ShouldNotBeNil)
+			So(err.Error(), ShouldContainSubstring, "init exporter failed")
+		})
 	})
 }
 
-// TestConsolePrintTraceDemo 本地测试，打印上报内容到屏幕
-func TestConsolePrintTraceDemo(t *testing.T) {
-	t.Skip("本地测试，打印上报内容到屏幕")
+func TestShutdownXTrace(t *testing.T) {
+	PatchConvey("TestShutdownXTrace", t, func() {
+		PatchConvey("Idempotent", func() {
+			shutdownExecuted.Store(false)
+			calls := 0
+			xTraceShutdownFunc = func() error {
+				calls++
+				return nil
+			}
+			So(shutdownXTrace(), ShouldBeNil)
+			So(shutdownXTrace(), ShouldBeNil)
+			So(calls, ShouldEqual, 1)
+		})
 
-	ctx := context.Background()
+		PatchConvey("NilFunc", func() {
+			// fn == nil 路径
+			shutdownExecuted.Store(false)
+			xTraceShutdownFunc = nil
+			So(shutdownXTrace(), ShouldBeNil)
+		})
 
-	// 初始化TracerProvider
-	exporter, err := stdouttrace.New(stdouttrace.WithPrettyPrint())
-	if err != nil {
-		log.Fatalf("failed to initialize stdouttrace export pipeline: %v", err)
-	}
-
-	// 自定义资源属性
-	r, err := resource.New(ctx,
-		resource.WithFromEnv(),
-		resource.WithProcess(),
-		resource.WithTelemetrySDK(),
-		resource.WithHost(),
-		resource.WithAttributes(
-			semconv.ServiceNameKey.String("MyServiceName"),
-			semconv.ServiceVersionKey.String("MyServiceVersion"),
-			attribute.String("custom.attribute", "customValue"),
-		),
-	)
-	if err != nil {
-		log.Fatalf("failed to create resource: %v", err)
-	}
-
-	tp := trace.NewTracerProvider(
-		trace.WithBatcher(exporter),
-		trace.WithSampler(trace.AlwaysSample()),
-		trace.WithResource(r),
-	)
-	otel.SetTracerProvider(tp)
-
-	// 创建Tracer
-	tracer := otel.Tracer("my-package-name")
-
-	// 创建并启动一个Span
-	ctx, span := tracer.Start(ctx, "mySpan")
-
-	// 添加自定义Span属性
-	span.SetAttributes(attribute.String("customSpanAttribute", "customValue"))
-
-	span.End()
-	// 添加自定义事件
-	//span.AddEvent("customEvent", trace.WithAttributes(attribute.String("eventAttribute", "eventValue")))
-
-	// 业务逻辑...
-
-	// 确保所有上报逻辑完成后再关闭TracerProvider
-	if err := tp.Shutdown(ctx); err != nil {
-		log.Fatalf("error shutting down tracer provider: %v", err)
-	}
+		PatchConvey("AfterInit", func() {
+			// 覆盖 shutdown 闭包内 tp.Shutdown 的执行
+			shutdownExecuted.Store(false)
+			xTraceShutdownFunc = nil
+			err := initXTraceByConfig(&Config{Console: false}, "test-svc", "v1.0.0")
+			So(err, ShouldBeNil)
+			// initXTraceByConfig 设置了 xTraceShutdownFunc，执行 shutdown
+			So(shutdownXTrace(), ShouldBeNil)
+		})
+	})
 }

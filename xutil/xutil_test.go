@@ -328,7 +328,7 @@ func TestIsPrivateIP(t *testing.T) {
 
 func TestLogFunctions(t *testing.T) {
 	mockey.PatchConvey("TestLogFunctions", t, func() {
-		mockey.Mock(EnableDebug).Return(true).Build()
+		mockey.Mock(EnableXOneDebug).Return(true).Build()
 
 		mockey.PatchConvey("TestInfoIfEnableDebug", func() {
 			InfoIfEnableDebug("test message %s", "arg")
@@ -344,7 +344,7 @@ func TestLogFunctions(t *testing.T) {
 	})
 
 	mockey.PatchConvey("TestLogFunctions-DebugDisabled", t, func() {
-		mockey.Mock(EnableDebug).Return(false).Build()
+		mockey.Mock(EnableXOneDebug).Return(false).Build()
 		InfoIfEnableDebug("should not log %s", "arg")
 	})
 }
@@ -387,36 +387,36 @@ func TestEnableDebug(t *testing.T) {
 		mockey.PatchConvey("TestEnableDebug-True", func() {
 			os.Setenv(DebugKey, "true")
 			defer os.Unsetenv(DebugKey)
-			c.So(EnableDebug(), c.ShouldBeTrue)
+			c.So(EnableXOneDebug(), c.ShouldBeTrue)
 		})
 
 		mockey.PatchConvey("TestEnableDebug-1", func() {
 			os.Setenv(DebugKey, "1")
 			defer os.Unsetenv(DebugKey)
-			c.So(EnableDebug(), c.ShouldBeTrue)
+			c.So(EnableXOneDebug(), c.ShouldBeTrue)
 		})
 
 		mockey.PatchConvey("TestEnableDebug-Yes", func() {
 			os.Setenv(DebugKey, "yes")
 			defer os.Unsetenv(DebugKey)
-			c.So(EnableDebug(), c.ShouldBeTrue)
+			c.So(EnableXOneDebug(), c.ShouldBeTrue)
 		})
 
 		mockey.PatchConvey("TestEnableDebug-On", func() {
 			os.Setenv(DebugKey, "on")
 			defer os.Unsetenv(DebugKey)
-			c.So(EnableDebug(), c.ShouldBeTrue)
+			c.So(EnableXOneDebug(), c.ShouldBeTrue)
 		})
 
 		mockey.PatchConvey("TestEnableDebug-False", func() {
 			os.Setenv(DebugKey, "false")
 			defer os.Unsetenv(DebugKey)
-			c.So(EnableDebug(), c.ShouldBeFalse)
+			c.So(EnableXOneDebug(), c.ShouldBeFalse)
 		})
 
 		mockey.PatchConvey("TestEnableDebug-Empty", func() {
 			os.Unsetenv(DebugKey)
-			c.So(EnableDebug(), c.ShouldBeFalse)
+			c.So(EnableXOneDebug(), c.ShouldBeFalse)
 		})
 	})
 }

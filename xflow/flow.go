@@ -13,8 +13,6 @@ type Flow[T any] struct {
 	Name string
 	// Processors 按执行顺序排列的处理器列表
 	Processors []Processor[T]
-	// Monitor 可选自定义监控实现，nil 时使用全局默认 Monitor
-	Monitor Monitor
 }
 
 // New 函数式构建 Flow
@@ -28,11 +26,6 @@ func New[T any](name string, processors ...Processor[T]) *Flow[T] {
 // SetName 设置 Name
 func (f *Flow[T]) SetName(name string) {
 	f.Name = name
-}
-
-// SetMonitor 设置自定义 Monitor
-func (f *Flow[T]) SetMonitor(monitor Monitor) {
-	f.Monitor = monitor
 }
 
 // AddProcessor 添加 Processor
@@ -149,9 +142,6 @@ func (f *Flow[T]) rollback(ctx context.Context, data T, succeeded []Processor[T]
 func (f *Flow[T]) resolveMonitor() Monitor {
 	if GetConfig().DisableMonitor {
 		return nil
-	}
-	if f.Monitor != nil {
-		return f.Monitor
 	}
 	return GetDefaultMonitor()
 }

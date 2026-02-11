@@ -8,6 +8,7 @@ import (
 
 	. "github.com/bytedance/mockey"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/xiaoshicae/xone/v2/xconfig"
 )
 
 // ==================== 测试用 Processor 实现 ====================
@@ -899,9 +900,33 @@ func TestFlow_Execute_WeakProcessPanic(t *testing.T) {
 // ==================== Config 测试 ====================
 
 func TestGetConfig(t *testing.T) {
-	PatchConvey("TestGetConfig-默认值", t, func() {
+	PatchConvey("TestGetConfig-UnmarshalConfig 成功", t, func() {
 		c := GetConfig()
 		So(c, ShouldNotBeNil)
 		So(c.DisableMonitor, ShouldBeFalse)
+	})
+
+	PatchConvey("TestGetConfig-UnmarshalConfig 失败返回默认值", t, func() {
+		Mock(xconfig.UnmarshalConfig).To(func(key string, conf any) error {
+			return errors.New("unmarshal failed")
+		}).Build()
+		c := GetConfig()
+		So(c, ShouldNotBeNil)
+		So(c.DisableMonitor, ShouldBeFalse)
+	})
+}
+
+func TestConfigMergeDefault(t *testing.T) {
+	PatchConvey("TestConfigMergeDefault-nil 输入", t, func() {
+		c := configMergeDefault(nil)
+		So(c, ShouldNotBeNil)
+		So(c.DisableMonitor, ShouldBeFalse)
+	})
+
+	PatchConvey("TestConfigMergeDefault-非 nil 输入", t, func() {
+		input := &Config{DisableMonitor: true}
+		c := configMergeDefault(input)
+		So(c, ShouldEqual, input)
+		So(c.DisableMonitor, ShouldBeTrue)
 	})
 }

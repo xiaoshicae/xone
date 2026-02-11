@@ -14,7 +14,7 @@ import (
 )
 
 func TestXHttp(t *testing.T) {
-	// t.Skip("真实环境测试，如果client能连通，可以注释掉该Skip进行测试")
+	t.Skip("集成测试，需手动运行")
 
 	if err := xserver.R(); err != nil {
 		panic(err)
@@ -73,7 +73,7 @@ func (*MySpan) SpanContext() trace.SpanContext {
 
 // TestRawClient 测试 RawClient 用于流式请求场景
 func TestRawClient(t *testing.T) {
-	// t.Skip("真实环境测试，如果client能连通，可以注释掉该Skip进行测试")
+	t.Skip("集成测试，需手动运行")
 
 	if err := xserver.R(); err != nil {
 		panic(err)

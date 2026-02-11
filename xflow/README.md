@@ -94,17 +94,29 @@ func main() {
 }
 ```
 
-#### 启用监控
+#### 监控
+
+监控默认开启，使用 xlog 打印日志。可通过 YAML 配置禁用：
+
+```yaml
+XFlow:
+  DisableMonitor: true
+```
+
+自定义全局 Monitor 实现：
+
+```go
+xflow.SetDefaultMonitor(myMonitor)
+```
+
+也可为单个 Flow 设置独立的 Monitor：
 
 ```go
 flow := xflow.New[*OrderData]("create-order",
     &ValidateProcessor{},
     &PayProcessor{},
 )
-flow.SetEnableMonitor(true)
-
-// 可选：自定义 Monitor 实现
-// flow.SetMonitor(myMonitor)
+flow.SetMonitor(myMonitor)
 
 result := flow.Execute(context.Background(), data)
 ```
@@ -155,5 +167,5 @@ flow := xflow.New[OrderData]("order-flow", ...)
 
 - `Process` 和 `Rollback` 中的 panic 会被自动捕获，转为错误返回
 - 弱依赖失败后也会加入回滚列表，后续强依赖失败时会一并回滚
-- `Monitor` 默认关闭（`EnableMonitor=false`），不产生任何开销
+- `Monitor` 默认开启（使用 xlog 打印），可通过配置 `DisableMonitor: true` 关闭（零开销）
 - `Flow` 的配置方法（`AddProcessor`、`SetMonitor` 等）非并发安全，必须在 `Execute` 前完成

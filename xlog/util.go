@@ -11,23 +11,23 @@ import (
 
 const XLogCtxKVContainerKey = "__xlog__ctx__kv__container__"
 
-func Error(ctx context.Context, msg string, args ...interface{}) {
+func Error(ctx context.Context, msg string, args ...any) {
 	RawLog(ctx, logrus.ErrorLevel, msg, args...)
 }
 
-func Warn(ctx context.Context, msg string, args ...interface{}) {
+func Warn(ctx context.Context, msg string, args ...any) {
 	RawLog(ctx, logrus.WarnLevel, msg, args...)
 }
 
-func Info(ctx context.Context, msg string, args ...interface{}) {
+func Info(ctx context.Context, msg string, args ...any) {
 	RawLog(ctx, logrus.InfoLevel, msg, args...)
 }
 
-func Debug(ctx context.Context, msg string, args ...interface{}) {
+func Debug(ctx context.Context, msg string, args ...any) {
 	RawLog(ctx, logrus.DebugLevel, msg, args...)
 }
 
-func RawLog(ctx context.Context, level logrus.Level, msg string, args ...interface{}) {
+func RawLog(ctx context.Context, level logrus.Level, msg string, args ...any) {
 	if ctx == nil {
 		return
 	}
@@ -37,7 +37,7 @@ func RawLog(ctx context.Context, level logrus.Level, msg string, args ...interfa
 	if estimatedCap < 1 {
 		estimatedCap = 1
 	}
-	logArgs := make([]interface{}, 0, estimatedCap)
+	logArgs := make([]any, 0, estimatedCap)
 	opts := make([]Option, 0, estimatedCap)
 
 	for _, arg := range args {
@@ -64,21 +64,21 @@ func RawLog(ctx context.Context, level logrus.Level, msg string, args ...interfa
 
 // CtxWithKV 向ctx注入kv，在记录日志时会以json格式同时记录下来
 // 每次调用都会创建新的map副本，保证并发安全
-func CtxWithKV(ctx context.Context, kvs map[string]interface{}) context.Context {
+func CtxWithKV(ctx context.Context, kvs map[string]any) context.Context {
 	if kvs == nil {
-		kvs = make(map[string]interface{})
+		kvs = make(map[string]any)
 	}
-	kvContainer, ok := ctx.Value(XLogCtxKVContainerKey).(map[string]interface{})
+	kvContainer, ok := ctx.Value(XLogCtxKVContainerKey).(map[string]any)
 	if !ok || kvContainer == nil {
 		// 创建副本避免外部修改影响
-		newKvs := make(map[string]interface{}, len(kvs))
+		newKvs := make(map[string]any, len(kvs))
 		for k, v := range kvs {
 			newKvs[k] = v
 		}
 		return context.WithValue(ctx, XLogCtxKVContainerKey, newKvs)
 	}
 	// 合并已有的和新的kv，创建新map保证并发安全
-	newContainer := make(map[string]interface{}, len(kvContainer)+len(kvs))
+	newContainer := make(map[string]any, len(kvContainer)+len(kvs))
 	for k, v := range kvContainer {
 		newContainer[k] = v
 	}

@@ -1,12 +1,12 @@
 package xlog
 
-func KV(k string, v interface{}) Option {
+func KV(k string, v any) Option {
 	return func(o *options) {
 		o.KV[k] = v
 	}
 }
 
-func KVMap(m map[string]interface{}) Option {
+func KVMap(m map[string]any) Option {
 	return func(o *options) {
 		for k, v := range m {
 			o.KV[k] = v
@@ -17,11 +17,11 @@ func KVMap(m map[string]interface{}) Option {
 type Option func(*options)
 
 type options struct {
-	KV map[string]interface{}
+	KV map[string]any
 }
 
 func defaultOptions() *options {
 	return &options{
-		KV: make(map[string]interface{}),
+		KV: make(map[string]any),
 	}
 }

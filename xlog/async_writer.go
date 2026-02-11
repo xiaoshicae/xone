@@ -13,10 +13,11 @@ const (
 // asyncWriter 异步写入器，通过 channel + goroutine 将同步写入转为异步
 // 实现 io.WriteCloser 接口
 type asyncWriter struct {
-	ch     chan []byte
-	writer io.WriteCloser
-	wg     sync.WaitGroup
-	once   sync.Once
+	ch       chan []byte
+	writer   io.WriteCloser
+	wg       sync.WaitGroup
+	once     sync.Once
+	closeErr error
 }
 
 // newAsyncWriter 创建异步写入器
@@ -43,12 +44,14 @@ func (aw *asyncWriter) Write(p []byte) (int, error) {
 }
 
 // Close 关闭 channel，等待所有数据写完，再关闭底层 writer
+// 多次调用安全，底层 writer 只关闭一次
 func (aw *asyncWriter) Close() error {
 	aw.once.Do(func() {
 		close(aw.ch)
+		aw.wg.Wait()
+		aw.closeErr = aw.writer.Close()
 	})
-	aw.wg.Wait()
-	return aw.writer.Close()
+	return aw.closeErr
 }
 
 // loop 消费 channel 中的数据，写入底层 writer

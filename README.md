@@ -398,6 +398,7 @@ XGorm:
 
 ## 更新日志
 
+- **v2.1.2** (2026-02-11) - refactor: xlog 模块优化，修复 asyncWriter 多次关闭、消除 consolePrint 重复栈回溯、interface{} 统一为 any
 - **v2.1.1** (2026-02-11) - refactor: xutil 全面重构，修复 ToPrt 拼写和 cmd.go 参数截断 bug，消除死代码，优化 log 正则合并，测试覆盖率提升至 100%
 - **v2.1.0** (2026-02-10) - feat: 新增 xerror 统一错误模块；全局 fmt.Errorf 替换为 xerror；xhook 新增 Hook 去重和个体超时；日志中间件增加响应 body 捕获；xutil 新增 RetryWithBackoff；UseHttp2 重命名为 UseH2C
 - **v2.0.6** (2026-02-10) - refactor: 移除 ginServer/ginTLSServer，统一为 XGin Builder；新增 Start() 快捷启动；TLS/HTTP2 通过 YAML 配置启用

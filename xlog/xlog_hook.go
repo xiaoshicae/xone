@@ -18,7 +18,7 @@ import (
 // 常量统一定义
 const (
 	// Context key
-	timeFormatedCtxKey = "__time_formated__"
+	timeFormattedCtxKey = "__time_formatted__"
 
 	// 控制台颜色
 	colorRed    = 31
@@ -65,21 +65,19 @@ func (m *xLogHook) Fire(entry *logrus.Entry) error {
 
 	// 打印到控制台
 	if m.Console {
-		return m.ConsolePrint(entry)
+		return m.consolePrint(entry, caller)
 	}
 
 	return nil
 }
 
-func (m *xLogHook) ConsolePrint(entry *logrus.Entry) error {
+func (m *xLogHook) consolePrint(entry *logrus.Entry, caller *runtime.Frame) error {
 	line, err := entry.Bytes()
 	if err != nil {
 		return err
 	}
 
-	// 获取文件名和行号
-	caller := m.ensureCaller(entry)
-	_, fileName := callerPretty(caller)
+	fileName := callerPretty(caller)
 
 	levelColor := getLogConsoleLogColor(entry.Level)
 	levelText := strings.ToUpper(entry.Level.String())
@@ -94,11 +92,9 @@ func (m *xLogHook) ConsolePrint(entry *logrus.Entry) error {
 	if m.ConsoleFormatIsRaw {
 		msg = append(msg, line...)
 	} else {
-		prefix := fmt.Sprintf("\x1b[%dm%s\x1b[0m[%s] \x1b[34m%s\x1b[0m %s ", levelColor, levelText, logTimeText, fileName, traceId)
-		msg = append([]byte(prefix), []byte(entry.Message)...)
-		msg = append(msg, '\n')
+		msg = fmt.Appendf(msg, "\x1b[%dm%s\x1b[0m[%s] \x1b[34m%s\x1b[0m %s %s\n", levelColor, levelText, logTimeText, fileName, traceId, entry.Message)
 		if panicStack != nil {
-			msg = append(msg, []byte(fmt.Sprintf("%v", panicStack))...)
+			msg = fmt.Appendf(msg, "%v", panicStack)
 		}
 	}
 
@@ -125,7 +121,7 @@ type timeFormatter struct {
 }
 
 // Format 时间format
-// 由于可能会存在多个writer，每个write都会调用该Format，可能会导致重复处理，最终导致时间正确，因此需要修正
+// 由于可能会存在多个writer，每个writer都会调用该Format，可能会导致重复处理，最终导致时间不正确，因此需要修正
 func (t timeFormatter) Format(e *logrus.Entry) ([]byte, error) {
 	// 初始化
 	if ctx := e.Context; ctx == nil {
@@ -133,7 +129,7 @@ func (t timeFormatter) Format(e *logrus.Entry) ([]byte, error) {
 	}
 
 	// 如果已经format过了，则不用再次处理
-	v, ok := e.Context.Value(timeFormatedCtxKey).(bool)
+	v, ok := e.Context.Value(timeFormattedCtxKey).(bool)
 	if ok && v {
 		return t.Formatter.Format(e)
 	}
@@ -144,7 +140,7 @@ func (t timeFormatter) Format(e *logrus.Entry) ([]byte, error) {
 	}
 
 	// 设置一下标记，防止多次处理
-	e.Context = context.WithValue(e.Context, timeFormatedCtxKey, true)
+	e.Context = context.WithValue(e.Context, timeFormattedCtxKey, true)
 
 	return t.Formatter.Format(e)
 }
@@ -162,17 +158,15 @@ func getLogConsoleLogColor(l logrus.Level) int {
 	}
 }
 
-func callerPretty(f *runtime.Frame) (string, string) {
+func callerPretty(f *runtime.Frame) string {
 	if f == nil {
-		return "???", "???"
+		return "???"
 	}
-	funcVal := path.Base(f.Function)
-	fileVal := fmt.Sprintf("%s:%d", path.Base(f.File), f.Line)
-	return fmt.Sprintf("%s()", funcVal), fileVal
+	return fmt.Sprintf("%s:%d", path.Base(f.File), f.Line)
 }
 
-func getXLogContainerFromCtx(ctx context.Context) map[string]interface{} {
-	kvContainer, ok := ctx.Value(XLogCtxKVContainerKey).(map[string]interface{})
+func getXLogContainerFromCtx(ctx context.Context) map[string]any {
+	kvContainer, ok := ctx.Value(XLogCtxKVContainerKey).(map[string]any)
 	if !ok || kvContainer == nil {
 		return nil
 	}

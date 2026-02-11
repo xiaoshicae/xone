@@ -106,17 +106,17 @@ func TestCtxWithKV(t *testing.T) {
 	mockey.PatchConvey("TestCtxWithKV", t, func() {
 		mockey.PatchConvey("TestCtxWithKV-NewCtx", func() {
 			ctx := context.Background()
-			newCtx := CtxWithKV(ctx, map[string]interface{}{"key": "value"})
+			newCtx := CtxWithKV(ctx, map[string]any{"key": "value"})
 			c.So(newCtx, c.ShouldNotBeNil)
-			kv := newCtx.Value(XLogCtxKVContainerKey).(map[string]interface{})
+			kv := newCtx.Value(XLogCtxKVContainerKey).(map[string]any)
 			c.So(kv["key"], c.ShouldEqual, "value")
 		})
 
 		mockey.PatchConvey("TestCtxWithKV-MergeKV", func() {
 			ctx := context.Background()
-			ctx = CtxWithKV(ctx, map[string]interface{}{"key1": "value1"})
-			ctx = CtxWithKV(ctx, map[string]interface{}{"key2": "value2"})
-			kv := ctx.Value(XLogCtxKVContainerKey).(map[string]interface{})
+			ctx = CtxWithKV(ctx, map[string]any{"key1": "value1"})
+			ctx = CtxWithKV(ctx, map[string]any{"key2": "value2"})
+			kv := ctx.Value(XLogCtxKVContainerKey).(map[string]any)
 			c.So(kv["key1"], c.ShouldEqual, "value1")
 			c.So(kv["key2"], c.ShouldEqual, "value2")
 		})
@@ -170,7 +170,7 @@ func TestRawLog(t *testing.T) {
 	mockey.PatchConvey("TestRawLog", t, func() {
 		mockey.PatchConvey("TestRawLog-WithOptions", func() {
 			ctx := context.Background()
-			RawLog(ctx, logrus.InfoLevel, "test message", "arg1", KVMap(map[string]interface{}{"key": "value"}))
+			RawLog(ctx, logrus.InfoLevel, "test message", "arg1", KVMap(map[string]any{"key": "value"}))
 		})
 
 		mockey.PatchConvey("TestRawLog-NoArgs", func() {
@@ -195,7 +195,7 @@ func TestOptions(t *testing.T) {
 
 		mockey.PatchConvey("TestKVMap", func() {
 			opt := defaultOptions()
-			KVMap(map[string]interface{}{"k1": "v1", "k2": "v2"})(opt)
+			KVMap(map[string]any{"k1": "v1", "k2": "v2"})(opt)
 			c.So(opt.KV["k1"], c.ShouldEqual, "v1")
 			c.So(opt.KV["k2"], c.ShouldEqual, "v2")
 		})
@@ -251,8 +251,7 @@ func TestGetLogConsoleLogColor(t *testing.T) {
 func TestCallerPretty(t *testing.T) {
 	mockey.PatchConvey("TestCallerPretty", t, func() {
 		mockey.PatchConvey("TestCallerPretty-Nil", func() {
-			funcVal, fileVal := callerPretty(nil)
-			c.So(funcVal, c.ShouldEqual, "???")
+			fileVal := callerPretty(nil)
 			c.So(fileVal, c.ShouldEqual, "???")
 		})
 	})
@@ -268,7 +267,7 @@ func TestGetXLogContainerFromCtx(t *testing.T) {
 
 		mockey.PatchConvey("TestGetXLogContainerFromCtx-WithKV", func() {
 			ctx := context.Background()
-			ctx = CtxWithKV(ctx, map[string]interface{}{"key": "value"})
+			ctx = CtxWithKV(ctx, map[string]any{"key": "value"})
 			result := getXLogContainerFromCtx(ctx)
 			c.So(result, c.ShouldNotBeNil)
 			c.So(result["key"], c.ShouldEqual, "value")
@@ -330,7 +329,7 @@ func TestXLogHook(t *testing.T) {
 				ServerName: "test-server",
 				PidStr:     "12345",
 			}
-			ctx := CtxWithKV(context.Background(), map[string]interface{}{"custom": "value"})
+			ctx := CtxWithKV(context.Background(), map[string]any{"custom": "value"})
 			entry := &logrus.Entry{
 				Logger:  logrus.New(),
 				Data:    logrus.Fields{},
@@ -396,6 +395,12 @@ func (m *mockWriter) Write(p []byte) (n int, err error) {
 
 func TestXLogHookConsolePrint(t *testing.T) {
 	mockey.PatchConvey("TestXLogHookConsolePrint", t, func() {
+		testCaller := &runtime.Frame{
+			Function: "test.TestFunc",
+			File:     "/test/file.go",
+			Line:     100,
+		}
+
 		mockey.PatchConvey("TestConsolePrint-Raw", func() {
 			writer := &mockWriter{}
 			hook := &xLogHook{
@@ -416,7 +421,7 @@ func TestXLogHookConsolePrint(t *testing.T) {
 				Level:   logrus.InfoLevel,
 				Message: "test message",
 			}
-			err := hook.ConsolePrint(entry)
+			err := hook.consolePrint(entry, testCaller)
 			c.So(err, c.ShouldBeNil)
 			c.So(len(writer.written), c.ShouldBeGreaterThan, 0)
 		})
@@ -441,7 +446,7 @@ func TestXLogHookConsolePrint(t *testing.T) {
 				Level:   logrus.InfoLevel,
 				Message: "test message",
 			}
-			err := hook.ConsolePrint(entry)
+			err := hook.consolePrint(entry, testCaller)
 			c.So(err, c.ShouldBeNil)
 			c.So(len(writer.written), c.ShouldBeGreaterThan, 0)
 		})
@@ -466,7 +471,7 @@ func TestXLogHookConsolePrint(t *testing.T) {
 				Level:   logrus.ErrorLevel,
 				Message: "panic message",
 			}
-			err := hook.ConsolePrint(entry)
+			err := hook.consolePrint(entry, testCaller)
 			c.So(err, c.ShouldBeNil)
 			c.So(string(writer.written), c.ShouldContainSubstring, "panic message")
 		})
@@ -517,7 +522,7 @@ func TestTimeFormatter(t *testing.T) {
 				Formatter: &logrus.JSONFormatter{},
 				Location:  nil,
 			}
-			ctx := context.WithValue(context.Background(), timeFormatedCtxKey, true)
+			ctx := context.WithValue(context.Background(), timeFormattedCtxKey, true)
 			entry := &logrus.Entry{
 				Logger:  logrus.New(),
 				Data:    logrus.Fields{},

@@ -15,23 +15,23 @@ import (
 type mockProcessor[T any] struct {
 	name       string
 	dependency Dependency
-	processFn  func(fc *FlowContext[T]) error
-	rollbackFn func(fc *FlowContext[T]) error
+	processFn  func(ctx context.Context, data T) error
+	rollbackFn func(ctx context.Context, data T) error
 }
 
 func (m *mockProcessor[T]) Name() string           { return m.name }
 func (m *mockProcessor[T]) Dependency() Dependency { return m.dependency }
 
-func (m *mockProcessor[T]) Process(fc *FlowContext[T]) error {
+func (m *mockProcessor[T]) Process(ctx context.Context, data T) error {
 	if m.processFn != nil {
-		return m.processFn(fc)
+		return m.processFn(ctx, data)
 	}
 	return nil
 }
 
-func (m *mockProcessor[T]) Rollback(fc *FlowContext[T]) error {
+func (m *mockProcessor[T]) Rollback(ctx context.Context, data T) error {
 	if m.rollbackFn != nil {
-		return m.rollbackFn(fc)
+		return m.rollbackFn(ctx, data)
 	}
 	return nil
 }
@@ -121,34 +121,6 @@ func (m *testMonitor) flowDoneCalls() []monitorCall {
 type testData struct {
 	Value   string
 	Counter int
-}
-
-// ==================== FlowContext 测试 ====================
-
-func TestNewFlowContext(t *testing.T) {
-	PatchConvey("TestNewFlowContext-正常创建", t, func() {
-		ctx := context.Background()
-		data := testData{Value: "hello"}
-		fc := NewFlowContext(ctx, data)
-
-		So(fc, ShouldNotBeNil)
-		So(fc.Data.Value, ShouldEqual, "hello")
-		So(fc.Context, ShouldEqual, ctx)
-	})
-
-	PatchConvey("TestNewFlowContext-nil ctx 自动填充 Background", t, func() {
-		fc := NewFlowContext[testData](nil, testData{Value: "test"})
-
-		So(fc, ShouldNotBeNil)
-		So(fc.Context, ShouldNotBeNil)
-		So(fc.Data.Value, ShouldEqual, "test")
-	})
-
-	PatchConvey("TestNewFlowContext-Data 可读写", t, func() {
-		fc := NewFlowContext(context.Background(), testData{Counter: 0})
-		fc.Data.Counter = 42
-		So(fc.Data.Counter, ShouldEqual, 42)
-	})
 }
 
 // ==================== Dependency 测试 ====================
@@ -252,8 +224,7 @@ func TestExecuteResult(t *testing.T) {
 func TestFlow_Execute_EmptyProcessors(t *testing.T) {
 	PatchConvey("TestFlow_Execute-空流程", t, func() {
 		flow := &Flow[testData]{Name: "empty"}
-		fc := NewFlowContext(context.Background(), testData{})
-		result := flow.Execute(fc)
+		result := flow.Execute(context.Background(), testData{})
 
 		So(result.Success(), ShouldBeTrue)
 		So(result.Rolled, ShouldBeFalse)
@@ -271,8 +242,7 @@ func TestFlow_Execute_AllSuccess(t *testing.T) {
 				&mockProcessor[testData]{name: "p3", dependency: Weak},
 			},
 		}
-		fc := NewFlowContext(context.Background(), testData{})
-		result := flow.Execute(fc)
+		result := flow.Execute(context.Background(), testData{})
 
 		So(result.Success(), ShouldBeTrue)
 		So(result.Rolled, ShouldBeFalse)
@@ -290,7 +260,7 @@ func TestFlow_Execute_StrongDependencyFail(t *testing.T) {
 				&mockProcessor[testData]{
 					name:       "p1",
 					dependency: Strong,
-					rollbackFn: func(fc *FlowContext[testData]) error {
+					rollbackFn: func(ctx context.Context, data testData) error {
 						rollbackOrder = append(rollbackOrder, "p1")
 						return nil
 					},
@@ -298,7 +268,7 @@ func TestFlow_Execute_StrongDependencyFail(t *testing.T) {
 				&mockProcessor[testData]{
 					name:       "p2",
 					dependency: Strong,
-					rollbackFn: func(fc *FlowContext[testData]) error {
+					rollbackFn: func(ctx context.Context, data testData) error {
 						rollbackOrder = append(rollbackOrder, "p2")
 						return nil
 					},
@@ -306,14 +276,13 @@ func TestFlow_Execute_StrongDependencyFail(t *testing.T) {
 				&mockProcessor[testData]{
 					name:       "p3",
 					dependency: Strong,
-					processFn: func(fc *FlowContext[testData]) error {
+					processFn: func(ctx context.Context, data testData) error {
 						return errors.New("p3 failed")
 					},
 				},
 			},
 		}
-		fc := NewFlowContext(context.Background(), testData{})
-		result := flow.Execute(fc)
+		result := flow.Execute(context.Background(), testData{})
 
 		So(result.Success(), ShouldBeFalse)
 		So(result.Rolled, ShouldBeTrue)
@@ -340,7 +309,7 @@ func TestFlow_Execute_WeakDependencySkip(t *testing.T) {
 				&mockProcessor[testData]{
 					name:       "p1",
 					dependency: Strong,
-					processFn: func(fc *FlowContext[testData]) error {
+					processFn: func(ctx context.Context, data testData) error {
 						executed = append(executed, "p1")
 						return nil
 					},
@@ -348,7 +317,7 @@ func TestFlow_Execute_WeakDependencySkip(t *testing.T) {
 				&mockProcessor[testData]{
 					name:       "weak1",
 					dependency: Weak,
-					processFn: func(fc *FlowContext[testData]) error {
+					processFn: func(ctx context.Context, data testData) error {
 						executed = append(executed, "weak1")
 						return errors.New("weak error")
 					},
@@ -356,15 +325,14 @@ func TestFlow_Execute_WeakDependencySkip(t *testing.T) {
 				&mockProcessor[testData]{
 					name:       "p3",
 					dependency: Strong,
-					processFn: func(fc *FlowContext[testData]) error {
+					processFn: func(ctx context.Context, data testData) error {
 						executed = append(executed, "p3")
 						return nil
 					},
 				},
 			},
 		}
-		fc := NewFlowContext(context.Background(), testData{})
-		result := flow.Execute(fc)
+		result := flow.Execute(context.Background(), testData{})
 
 		So(result.Success(), ShouldBeTrue)
 		So(result.HasSkippedErrors(), ShouldBeTrue)
@@ -386,7 +354,7 @@ func TestFlow_Execute_WeakAndStrongMixedFail(t *testing.T) {
 				&mockProcessor[testData]{
 					name:       "p1",
 					dependency: Strong,
-					rollbackFn: func(fc *FlowContext[testData]) error {
+					rollbackFn: func(ctx context.Context, data testData) error {
 						rollbackOrder = append(rollbackOrder, "p1")
 						return nil
 					},
@@ -394,10 +362,10 @@ func TestFlow_Execute_WeakAndStrongMixedFail(t *testing.T) {
 				&mockProcessor[testData]{
 					name:       "weak1",
 					dependency: Weak,
-					processFn: func(fc *FlowContext[testData]) error {
+					processFn: func(ctx context.Context, data testData) error {
 						return errors.New("weak error")
 					},
-					rollbackFn: func(fc *FlowContext[testData]) error {
+					rollbackFn: func(ctx context.Context, data testData) error {
 						rollbackOrder = append(rollbackOrder, "weak1")
 						return nil
 					},
@@ -405,14 +373,13 @@ func TestFlow_Execute_WeakAndStrongMixedFail(t *testing.T) {
 				&mockProcessor[testData]{
 					name:       "p3",
 					dependency: Strong,
-					processFn: func(fc *FlowContext[testData]) error {
+					processFn: func(ctx context.Context, data testData) error {
 						return errors.New("strong error")
 					},
 				},
 			},
 		}
-		fc := NewFlowContext(context.Background(), testData{})
-		result := flow.Execute(fc)
+		result := flow.Execute(context.Background(), testData{})
 
 		So(result.Success(), ShouldBeFalse)
 		So(result.Rolled, ShouldBeTrue)
@@ -432,14 +399,13 @@ func TestFlow_Execute_ProcessPanic(t *testing.T) {
 				&mockProcessor[testData]{
 					name:       "panic-processor",
 					dependency: Strong,
-					processFn: func(fc *FlowContext[testData]) error {
+					processFn: func(ctx context.Context, data testData) error {
 						panic("unexpected panic")
 					},
 				},
 			},
 		}
-		fc := NewFlowContext(context.Background(), testData{})
-		result := flow.Execute(fc)
+		result := flow.Execute(context.Background(), testData{})
 
 		So(result.Success(), ShouldBeFalse)
 		var se *StepError
@@ -458,7 +424,7 @@ func TestFlow_Execute_RollbackFail(t *testing.T) {
 				&mockProcessor[testData]{
 					name:       "p1",
 					dependency: Strong,
-					rollbackFn: func(fc *FlowContext[testData]) error {
+					rollbackFn: func(ctx context.Context, data testData) error {
 						rollbackOrder = append(rollbackOrder, "p1")
 						return nil
 					},
@@ -466,7 +432,7 @@ func TestFlow_Execute_RollbackFail(t *testing.T) {
 				&mockProcessor[testData]{
 					name:       "p2",
 					dependency: Strong,
-					rollbackFn: func(fc *FlowContext[testData]) error {
+					rollbackFn: func(ctx context.Context, data testData) error {
 						rollbackOrder = append(rollbackOrder, "p2")
 						return errors.New("rollback error")
 					},
@@ -474,14 +440,13 @@ func TestFlow_Execute_RollbackFail(t *testing.T) {
 				&mockProcessor[testData]{
 					name:       "p3",
 					dependency: Strong,
-					processFn: func(fc *FlowContext[testData]) error {
+					processFn: func(ctx context.Context, data testData) error {
 						return errors.New("p3 failed")
 					},
 				},
 			},
 		}
-		fc := NewFlowContext(context.Background(), testData{})
-		result := flow.Execute(fc)
+		result := flow.Execute(context.Background(), testData{})
 
 		So(result.Success(), ShouldBeFalse)
 		So(result.Rolled, ShouldBeTrue)
@@ -502,21 +467,20 @@ func TestFlow_Execute_RollbackPanic(t *testing.T) {
 				&mockProcessor[testData]{
 					name:       "p1",
 					dependency: Strong,
-					rollbackFn: func(fc *FlowContext[testData]) error {
+					rollbackFn: func(ctx context.Context, data testData) error {
 						panic("rollback panic")
 					},
 				},
 				&mockProcessor[testData]{
 					name:       "p2",
 					dependency: Strong,
-					processFn: func(fc *FlowContext[testData]) error {
+					processFn: func(ctx context.Context, data testData) error {
 						return errors.New("p2 failed")
 					},
 				},
 			},
 		}
-		fc := NewFlowContext(context.Background(), testData{})
-		result := flow.Execute(fc)
+		result := flow.Execute(context.Background(), testData{})
 
 		So(result.Success(), ShouldBeFalse)
 		So(result.Rolled, ShouldBeTrue)
@@ -526,38 +490,38 @@ func TestFlow_Execute_RollbackPanic(t *testing.T) {
 }
 
 func TestFlow_Execute_DataPassBetweenProcessors(t *testing.T) {
-	PatchConvey("TestFlow_Execute-Processor 间数据传递", t, func() {
-		flow := &Flow[testData]{
+	PatchConvey("TestFlow_Execute-Processor 间数据传递（指针类型）", t, func() {
+		flow := &Flow[*testData]{
 			Name: "data-pass",
-			Processors: []Processor[testData]{
-				&mockProcessor[testData]{
+			Processors: []Processor[*testData]{
+				&mockProcessor[*testData]{
 					name:       "writer",
 					dependency: Strong,
-					processFn: func(fc *FlowContext[testData]) error {
-						fc.Data.Value = "written"
-						fc.Data.Counter = 10
+					processFn: func(ctx context.Context, data *testData) error {
+						data.Value = "written"
+						data.Counter = 10
 						return nil
 					},
 				},
-				&mockProcessor[testData]{
+				&mockProcessor[*testData]{
 					name:       "reader",
 					dependency: Strong,
-					processFn: func(fc *FlowContext[testData]) error {
-						if fc.Data.Value != "written" || fc.Data.Counter != 10 {
+					processFn: func(ctx context.Context, data *testData) error {
+						if data.Value != "written" || data.Counter != 10 {
 							return errors.New("data not passed")
 						}
-						fc.Data.Counter = 20
+						data.Counter = 20
 						return nil
 					},
 				},
 			},
 		}
-		fc := NewFlowContext(context.Background(), testData{})
-		result := flow.Execute(fc)
+		data := &testData{}
+		result := flow.Execute(context.Background(), data)
 
 		So(result.Success(), ShouldBeTrue)
-		So(fc.Data.Value, ShouldEqual, "written")
-		So(fc.Data.Counter, ShouldEqual, 20)
+		So(data.Value, ShouldEqual, "written")
+		So(data.Counter, ShouldEqual, 20)
 	})
 }
 
@@ -575,8 +539,7 @@ func TestFlow_Execute_MonitorDisabled(t *testing.T) {
 				&mockProcessor[testData]{name: "p1", dependency: Strong},
 			},
 		}
-		fc := NewFlowContext(context.Background(), testData{})
-		result := flow.Execute(fc)
+		result := flow.Execute(context.Background(), testData{})
 
 		So(result.Success(), ShouldBeTrue)
 		// EnableMonitor=false 时 Monitor 不被调用
@@ -597,8 +560,7 @@ func TestFlow_Execute_MonitorEnabled(t *testing.T) {
 				&mockProcessor[testData]{name: "p2", dependency: Weak},
 			},
 		}
-		fc := NewFlowContext(context.Background(), testData{})
-		result := flow.Execute(fc)
+		result := flow.Execute(context.Background(), testData{})
 
 		So(result.Success(), ShouldBeTrue)
 
@@ -633,8 +595,7 @@ func TestFlow_Execute_MonitorDuration(t *testing.T) {
 				&mockProcessor[testData]{name: "p1", dependency: Strong},
 			},
 		}
-		fc := NewFlowContext(context.Background(), testData{})
-		flow.Execute(fc)
+		flow.Execute(context.Background(), testData{})
 
 		// OnProcessDone duration >= 0（执行非常快，但不应为负数）
 		processCalls := mon.processDoneCalls()
@@ -660,19 +621,18 @@ func TestFlow_Execute_MonitorWithFailure(t *testing.T) {
 				&mockProcessor[testData]{
 					name:       "p1",
 					dependency: Strong,
-					rollbackFn: func(fc *FlowContext[testData]) error { return nil },
+					rollbackFn: func(ctx context.Context, data testData) error { return nil },
 				},
 				&mockProcessor[testData]{
 					name:       "p2",
 					dependency: Strong,
-					processFn: func(fc *FlowContext[testData]) error {
+					processFn: func(ctx context.Context, data testData) error {
 						return errors.New("p2 failed")
 					},
 				},
 			},
 		}
-		fc := NewFlowContext(context.Background(), testData{})
-		result := flow.Execute(fc)
+		result := flow.Execute(context.Background(), testData{})
 
 		So(result.Success(), ShouldBeFalse)
 
@@ -711,15 +671,14 @@ func TestFlow_Execute_MonitorWeakSkip(t *testing.T) {
 				&mockProcessor[testData]{
 					name:       "weak1",
 					dependency: Weak,
-					processFn: func(fc *FlowContext[testData]) error {
+					processFn: func(ctx context.Context, data testData) error {
 						return errors.New("weak error")
 					},
 				},
 				&mockProcessor[testData]{name: "p3", dependency: Strong},
 			},
 		}
-		fc := NewFlowContext(context.Background(), testData{})
-		result := flow.Execute(fc)
+		result := flow.Execute(context.Background(), testData{})
 
 		So(result.Success(), ShouldBeTrue)
 
@@ -747,10 +706,9 @@ func TestFlow_Execute_MonitorDefaultImpl(t *testing.T) {
 				&mockProcessor[testData]{name: "p1", dependency: Strong},
 			},
 		}
-		fc := NewFlowContext(context.Background(), testData{})
 
 		// 不 panic 即可
-		So(func() { flow.Execute(fc) }, ShouldNotPanic)
+		So(func() { flow.Execute(context.Background(), testData{}) }, ShouldNotPanic)
 	})
 }
 
@@ -788,17 +746,19 @@ func TestFlow_SetterMethods(t *testing.T) {
 	})
 }
 
-// ==================== nil FlowContext 测试 ====================
+// ==================== nil ctx 测试 ====================
 
-func TestFlow_Execute_NilFlowContext(t *testing.T) {
-	PatchConvey("TestFlow_Execute-nil FlowContext 返回错误", t, func() {
-		flow := &Flow[testData]{Name: "nil-fc"}
-		result := flow.Execute(nil)
+func TestFlow_Execute_NilCtx(t *testing.T) {
+	PatchConvey("TestFlow_Execute-nil ctx 自动填充 Background", t, func() {
+		flow := &Flow[testData]{
+			Name: "nil-ctx",
+			Processors: []Processor[testData]{
+				&mockProcessor[testData]{name: "p1", dependency: Strong},
+			},
+		}
+		result := flow.Execute(nil, testData{})
 
-		So(result.Success(), ShouldBeFalse)
-		So(result.Err, ShouldNotBeNil)
-		So(result.Err.Error(), ShouldContainSubstring, "FlowContext must not be nil")
-		So(result.Rolled, ShouldBeFalse)
+		So(result.Success(), ShouldBeTrue)
 	})
 }
 
@@ -816,8 +776,7 @@ func TestNew(t *testing.T) {
 		So(flow.EnableMonitor, ShouldBeFalse)
 
 		// 验证可正常执行
-		fc := NewFlowContext(context.Background(), testData{})
-		result := flow.Execute(fc)
+		result := flow.Execute(context.Background(), testData{})
 		So(result.Success(), ShouldBeTrue)
 	})
 }
@@ -834,7 +793,7 @@ func TestFlow_Execute_WeakFailRollbackIncluded(t *testing.T) {
 				&mockProcessor[testData]{
 					name:       "strong1",
 					dependency: Strong,
-					rollbackFn: func(fc *FlowContext[testData]) error {
+					rollbackFn: func(ctx context.Context, data testData) error {
 						rollbackOrder = append(rollbackOrder, "strong1")
 						return nil
 					},
@@ -842,10 +801,10 @@ func TestFlow_Execute_WeakFailRollbackIncluded(t *testing.T) {
 				&mockProcessor[testData]{
 					name:       "weak1",
 					dependency: Weak,
-					processFn: func(fc *FlowContext[testData]) error {
+					processFn: func(ctx context.Context, data testData) error {
 						return errors.New("weak fail")
 					},
-					rollbackFn: func(fc *FlowContext[testData]) error {
+					rollbackFn: func(ctx context.Context, data testData) error {
 						rollbackOrder = append(rollbackOrder, "weak1")
 						return nil
 					},
@@ -853,7 +812,7 @@ func TestFlow_Execute_WeakFailRollbackIncluded(t *testing.T) {
 				&mockProcessor[testData]{
 					name:       "strong2",
 					dependency: Strong,
-					rollbackFn: func(fc *FlowContext[testData]) error {
+					rollbackFn: func(ctx context.Context, data testData) error {
 						rollbackOrder = append(rollbackOrder, "strong2")
 						return nil
 					},
@@ -861,14 +820,13 @@ func TestFlow_Execute_WeakFailRollbackIncluded(t *testing.T) {
 				&mockProcessor[testData]{
 					name:       "strong3",
 					dependency: Strong,
-					processFn: func(fc *FlowContext[testData]) error {
+					processFn: func(ctx context.Context, data testData) error {
 						return errors.New("strong fail")
 					},
 				},
 			},
 		}
-		fc := NewFlowContext(context.Background(), testData{})
-		result := flow.Execute(fc)
+		result := flow.Execute(context.Background(), testData{})
 
 		So(result.Success(), ShouldBeFalse)
 		So(result.Rolled, ShouldBeTrue)
@@ -887,7 +845,7 @@ func TestFlow_Execute_WeakProcessPanic(t *testing.T) {
 				&mockProcessor[testData]{
 					name:       "weak-panic",
 					dependency: Weak,
-					processFn: func(fc *FlowContext[testData]) error {
+					processFn: func(ctx context.Context, data testData) error {
 						panic("weak panic")
 					},
 				},
@@ -897,8 +855,7 @@ func TestFlow_Execute_WeakProcessPanic(t *testing.T) {
 				},
 			},
 		}
-		fc := NewFlowContext(context.Background(), testData{})
-		result := flow.Execute(fc)
+		result := flow.Execute(context.Background(), testData{})
 
 		So(result.Success(), ShouldBeTrue)
 		So(result.HasSkippedErrors(), ShouldBeTrue)

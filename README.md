@@ -127,6 +127,7 @@ func main() {
 | [xhttp](./xhttp/README.md)     | [go-resty](https://github.com/go-resty/resty)                       | HTTP 客户端（重试 + 连接池）               | -   | ✅     |
 | [xgorm](./xgorm/README.md)     | [gorm](https://gorm.io/)                                            | 数据库（MySQL / PostgreSQL，多数据源）     | ✅   | ✅     |
 | [xcache](./xcache/README.md)   | [ristretto](https://github.com/dgraph-io/ristretto)                 | 本地缓存（支持 TTL / 泛型）               | -   | -     |
+| [xflow](./xflow/README.md)    | -                                                                   | 流程编排（强弱依赖 + 自动回滚 + 监控）        | -   | -     |
 | xserver                        | -                                                                   | 服务运行和生命周期管理                      | -   | -     |
 | [xgin](./xgin/README.md)       | [gin](https://github.com/gin-gonic/gin)                             | Gin Web 框架集成（Builder 模式 + 内置中间件） | ✅   | ✅     |
 
@@ -398,6 +399,7 @@ XGorm:
 
 ## 更新日志
 
+- **v2.2.1** (2026-02-11) - refactor: xflow 移除 FlowContext，Processor 接口简化为 (ctx, T) 双参数
 - **v2.2.0** (2026-02-11) - feat: 新增 xflow 流程编排模块，支持强弱依赖、自动回滚、Monitor 监控
 - **v2.1.6** (2026-02-11) - perf: 跨模块性能优化，xerror/xgorm/xlog/xutil 热路径减少内存分配
 - **v2.1.5** (2026-02-11) - perf: xgin 中间件性能优化，减少热路径内存分配和字符串转换

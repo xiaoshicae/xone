@@ -1,6 +1,7 @@
 package xflow
 
 import (
+	"context"
 	"fmt"
 	"runtime/debug"
 	"time"
@@ -48,9 +49,9 @@ func (f *Flow[T]) AddProcessor(processor Processor[T]) {
 }
 
 // Execute 执行流程，返回执行结果
-func (f *Flow[T]) Execute(fc *FlowContext[T]) *ExecuteResult {
-	if fc == nil {
-		return &ExecuteResult{Err: fmt.Errorf("flow=[%s] FlowContext must not be nil", f.Name)}
+func (f *Flow[T]) Execute(ctx context.Context, data T) *ExecuteResult {
+	if ctx == nil {
+		ctx = context.Background()
 	}
 
 	monitor := f.resolveMonitor()
@@ -70,7 +71,7 @@ func (f *Flow[T]) Execute(fc *FlowContext[T]) *ExecuteResult {
 			start = time.Now()
 		}
 
-		err := safeProcess(p, fc)
+		err := safeProcess(p, ctx, data)
 
 		if monitor != nil {
 			monitor.OnProcessDone(f.Name, p.Name(), p.Dependency(), err, time.Since(start))
@@ -92,7 +93,7 @@ func (f *Flow[T]) Execute(fc *FlowContext[T]) *ExecuteResult {
 
 			// 强依赖：中断流程，触发回滚
 			result.Err = se
-			f.rollback(fc, succeeded, result, monitor)
+			f.rollback(ctx, data, succeeded, result, monitor)
 
 			if monitor != nil {
 				monitor.OnFlowDone(f.Name, result, time.Since(flowStart))
@@ -111,7 +112,7 @@ func (f *Flow[T]) Execute(fc *FlowContext[T]) *ExecuteResult {
 }
 
 // rollback 逆序回滚已成功的处理器
-func (f *Flow[T]) rollback(fc *FlowContext[T], succeeded []Processor[T], result *ExecuteResult, monitor Monitor) {
+func (f *Flow[T]) rollback(ctx context.Context, data T, succeeded []Processor[T], result *ExecuteResult, monitor Monitor) {
 	result.Rolled = true
 
 	for i := len(succeeded) - 1; i >= 0; i-- {
@@ -122,7 +123,7 @@ func (f *Flow[T]) rollback(fc *FlowContext[T], succeeded []Processor[T], result 
 			start = time.Now()
 		}
 
-		err := safeRollback(p, fc)
+		err := safeRollback(p, ctx, data)
 
 		if monitor != nil {
 			monitor.OnRollbackDone(f.Name, p.Name(), p.Dependency(), err, time.Since(start))
@@ -151,21 +152,21 @@ func (f *Flow[T]) resolveMonitor() Monitor {
 }
 
 // safeProcess 安全执行 Process，捕获 panic 并附带堆栈
-func safeProcess[T any](p Processor[T], fc *FlowContext[T]) (err error) {
+func safeProcess[T any](p Processor[T], ctx context.Context, data T) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("panic: %v\n%s", r, debug.Stack())
 		}
 	}()
-	return p.Process(fc)
+	return p.Process(ctx, data)
 }
 
 // safeRollback 安全执行 Rollback，捕获 panic 并附带堆栈
-func safeRollback[T any](p Processor[T], fc *FlowContext[T]) (err error) {
+func safeRollback[T any](p Processor[T], ctx context.Context, data T) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("panic: %v\n%s", r, debug.Stack())
 		}
 	}()
-	return p.Rollback(fc)
+	return p.Rollback(ctx, data)
 }

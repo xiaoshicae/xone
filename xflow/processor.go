@@ -1,5 +1,7 @@
 package xflow
 
+import "context"
+
 // Dependency 依赖类型，标记 Processor 的依赖强弱
 type Dependency int
 
@@ -29,7 +31,7 @@ type Processor[T any] interface {
 	// Dependency 返回依赖类型
 	Dependency() Dependency
 	// Process 执行处理逻辑
-	Process(fc *FlowContext[T]) error
+	Process(ctx context.Context, data T) error
 	// Rollback 回滚逻辑，强依赖失败时逆序调用已成功的处理器
-	Rollback(fc *FlowContext[T]) error
+	Rollback(ctx context.Context, data T) error
 }

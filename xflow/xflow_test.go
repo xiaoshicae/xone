@@ -52,34 +52,34 @@ type testMonitor struct {
 	calls []monitorCall
 }
 
-func (m *testMonitor) OnProcessDone(ctx context.Context, flowName, processorName string, dependency Dependency, err error, duration time.Duration) {
+func (m *testMonitor) OnProcessDone(_ context.Context, e *StepEvent) {
 	m.calls = append(m.calls, monitorCall{
 		method:        "OnProcessDone",
-		flowName:      flowName,
-		processorName: processorName,
-		dependency:    dependency,
-		err:           err,
-		duration:      duration,
+		flowName:      e.FlowName,
+		processorName: e.ProcessorName,
+		dependency:    e.Dependency,
+		err:           e.Err,
+		duration:      e.Duration,
 	})
 }
 
-func (m *testMonitor) OnRollbackDone(ctx context.Context, flowName, processorName string, dependency Dependency, err error, duration time.Duration) {
+func (m *testMonitor) OnRollbackDone(_ context.Context, e *StepEvent) {
 	m.calls = append(m.calls, monitorCall{
 		method:        "OnRollbackDone",
-		flowName:      flowName,
-		processorName: processorName,
-		dependency:    dependency,
-		err:           err,
-		duration:      duration,
+		flowName:      e.FlowName,
+		processorName: e.ProcessorName,
+		dependency:    e.Dependency,
+		err:           e.Err,
+		duration:      e.Duration,
 	})
 }
 
-func (m *testMonitor) OnFlowDone(ctx context.Context, flowName string, result *ExecuteResult, duration time.Duration) {
+func (m *testMonitor) OnFlowDone(_ context.Context, e *FlowEvent) {
 	m.calls = append(m.calls, monitorCall{
 		method:   "OnFlowDone",
-		flowName: flowName,
-		result:   result,
-		duration: duration,
+		flowName: e.FlowName,
+		result:   e.Result,
+		duration: e.Duration,
 	})
 }
 
@@ -147,12 +147,17 @@ func TestDefaultMonitor(t *testing.T) {
 		ctx := context.Background()
 		result := &ExecuteResult{}
 
-		So(func() { m.OnProcessDone(ctx, "flow", "proc", Strong, nil, time.Millisecond) }, ShouldNotPanic)
-		So(func() { m.OnProcessDone(ctx, "flow", "proc", Strong, errors.New("err"), time.Millisecond) }, ShouldNotPanic)
-		So(func() { m.OnRollbackDone(ctx, "flow", "proc", Strong, nil, time.Millisecond) }, ShouldNotPanic)
-		So(func() { m.OnRollbackDone(ctx, "flow", "proc", Strong, errors.New("err"), time.Millisecond) }, ShouldNotPanic)
-		So(func() { m.OnFlowDone(ctx, "flow", result, time.Millisecond) }, ShouldNotPanic)
-		So(func() { m.OnFlowDone(ctx, "flow", &ExecuteResult{Err: errors.New("fail")}, time.Millisecond) }, ShouldNotPanic)
+		se := &StepEvent{FlowName: "flow", ProcessorName: "proc", Dependency: Strong, Duration: time.Millisecond}
+		seErr := &StepEvent{FlowName: "flow", ProcessorName: "proc", Dependency: Strong, Err: errors.New("err"), Duration: time.Millisecond}
+		fe := &FlowEvent{FlowName: "flow", Result: result, Duration: time.Millisecond}
+		feErr := &FlowEvent{FlowName: "flow", Result: &ExecuteResult{Err: errors.New("fail")}, Duration: time.Millisecond}
+
+		So(func() { m.OnProcessDone(ctx, se) }, ShouldNotPanic)
+		So(func() { m.OnProcessDone(ctx, seErr) }, ShouldNotPanic)
+		So(func() { m.OnRollbackDone(ctx, se) }, ShouldNotPanic)
+		So(func() { m.OnRollbackDone(ctx, seErr) }, ShouldNotPanic)
+		So(func() { m.OnFlowDone(ctx, fe) }, ShouldNotPanic)
+		So(func() { m.OnFlowDone(ctx, feErr) }, ShouldNotPanic)
 	})
 }
 

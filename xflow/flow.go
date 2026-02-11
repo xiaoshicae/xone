@@ -67,7 +67,13 @@ func (f *Flow[T]) Execute(ctx context.Context, data T) *ExecuteResult {
 		err := safeProcess(p, ctx, data)
 
 		if monitor != nil {
-			monitor.OnProcessDone(ctx, f.Name, p.Name(), p.Dependency(), err, time.Since(start))
+			monitor.OnProcessDone(ctx, &StepEvent{
+				FlowName:      f.Name,
+				ProcessorName: p.Name(),
+				Dependency:    p.Dependency(),
+				Err:           err,
+				Duration:      time.Since(start),
+			})
 		}
 
 		if err != nil {
@@ -89,7 +95,7 @@ func (f *Flow[T]) Execute(ctx context.Context, data T) *ExecuteResult {
 			f.rollback(ctx, data, succeeded, result, monitor)
 
 			if monitor != nil {
-				monitor.OnFlowDone(ctx, f.Name, result, time.Since(flowStart))
+				monitor.OnFlowDone(ctx, &FlowEvent{FlowName: f.Name, Result: result, Duration: time.Since(flowStart)})
 			}
 			return result
 		}
@@ -98,7 +104,7 @@ func (f *Flow[T]) Execute(ctx context.Context, data T) *ExecuteResult {
 	}
 
 	if monitor != nil {
-		monitor.OnFlowDone(ctx, f.Name, result, time.Since(flowStart))
+		monitor.OnFlowDone(ctx, &FlowEvent{FlowName: f.Name, Result: result, Duration: time.Since(flowStart)})
 	}
 
 	return result
@@ -119,7 +125,13 @@ func (f *Flow[T]) rollback(ctx context.Context, data T, succeeded []Processor[T]
 		err := safeRollback(p, ctx, data)
 
 		if monitor != nil {
-			monitor.OnRollbackDone(ctx, f.Name, p.Name(), p.Dependency(), err, time.Since(start))
+			monitor.OnRollbackDone(ctx, &StepEvent{
+				FlowName:      f.Name,
+				ProcessorName: p.Name(),
+				Dependency:    p.Dependency(),
+				Err:           err,
+				Duration:      time.Since(start),
+			})
 		}
 
 		if err != nil {

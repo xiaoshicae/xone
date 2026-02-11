@@ -1,8 +1,6 @@
 package middleware
 
 import (
-	"fmt"
-
 	"github.com/gin-gonic/gin"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -33,7 +31,7 @@ func GinXTraceMiddleware() gin.HandlerFunc {
 			trace.WithAttributes(semconv.HTTPRoute(fullPath)),
 		}
 
-		spanName := fmt.Sprintf("%v %v", c.Request.Method, fullPath)
+		spanName := c.Request.Method + " " + fullPath
 
 		ctx, span := otel.Tracer(tracerName).Start(ctx, spanName, opts...)
 		defer span.End()

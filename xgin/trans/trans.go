@@ -4,12 +4,16 @@ import (
 	"errors"
 	"sort"
 	"strings"
+	"sync"
 
 	ut "github.com/go-playground/universal-translator"
 	"github.com/go-playground/validator/v10"
 )
 
-var trans ut.Translator
+var (
+	transOnce sync.Once
+	trans     ut.Translator
+)
 
 // ToZHErrMsg 翻译错误信息字符串
 func ToZHErrMsg(err error) string {

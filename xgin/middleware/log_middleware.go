@@ -4,10 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -26,6 +26,9 @@ const (
 	// maxResponseBodyCapture 响应 body 捕获上限 4KB
 	maxResponseBodyCapture = 4 * 1024
 )
+
+// newlineReplacer 复用的换行符替换器，避免每请求创建新实例
+var newlineReplacer = strings.NewReplacer("\r\n", "", "\r", "", "\n", "")
 
 // responseBodyWriter 包装 gin.ResponseWriter，捕获响应 body（仅文本类型且 <= 4KB）
 type responseBodyWriter struct {
@@ -53,12 +56,12 @@ func isTextContentType(contentType string) bool {
 // formatElapsed 将耗时格式化为人性化字符串
 func formatElapsed(d time.Duration) string {
 	if d < time.Millisecond {
-		return fmt.Sprintf("%.2fus", float64(d.Microseconds()))
+		return strconv.FormatFloat(float64(d.Microseconds()), 'f', 2, 64) + "us"
 	}
 	if d < time.Second {
-		return fmt.Sprintf("%.2fms", float64(d.Microseconds())/1000.0)
+		return strconv.FormatFloat(float64(d.Microseconds())/1000.0, 'f', 2, 64) + "ms"
 	}
-	return fmt.Sprintf("%.2fs", d.Seconds())
+	return strconv.FormatFloat(d.Seconds(), 'f', 2, 64) + "s"
 }
 
 // 默认敏感字段列表（用于 request body）
@@ -75,10 +78,14 @@ var defaultSensitiveHeaders = []string{
 var (
 	// sensitiveMu 保护敏感字段列表的读写
 	sensitiveMu sync.RWMutex
-	// SensitiveFields 敏感字段列表，支持用户自定义追加
+	// sensitiveFields 敏感字段列表，支持用户自定义追加
 	sensitiveFields = make([]string, 0)
-	// SensitiveHeaders 敏感头列表，支持用户自定义追加
+	// sensitiveHeaders 敏感头列表，支持用户自定义追加
 	sensitiveHeaders = make([]string, 0)
+	// cachedAllFields 缓存合并后的敏感字段，写入时重建
+	cachedAllFields []string
+	// cachedAllHeaders 缓存合并后的敏感头，写入时重建
+	cachedAllHeaders []string
 )
 
 // LogOptions 日志中间件配置
@@ -104,6 +111,7 @@ func AddSensitiveFields(fields ...string) {
 	sensitiveMu.Lock()
 	defer sensitiveMu.Unlock()
 	sensitiveFields = append(sensitiveFields, fields...)
+	rebuildFieldsCache()
 }
 
 // AddSensitiveHeaders 添加自定义敏感头（线程安全）
@@ -111,6 +119,30 @@ func AddSensitiveHeaders(headers ...string) {
 	sensitiveMu.Lock()
 	defer sensitiveMu.Unlock()
 	sensitiveHeaders = append(sensitiveHeaders, headers...)
+	rebuildHeadersCache()
+}
+
+// rebuildFieldsCache 重建敏感字段缓存（调用方已持有写锁）
+func rebuildFieldsCache() {
+	result := make([]string, 0, len(defaultSensitiveFields)+len(sensitiveFields))
+	result = append(result, defaultSensitiveFields...)
+	result = append(result, sensitiveFields...)
+	cachedAllFields = result
+}
+
+// rebuildHeadersCache 重建敏感头缓存（调用方已持有写锁）
+func rebuildHeadersCache() {
+	result := make([]string, 0, len(defaultSensitiveHeaders)+len(sensitiveHeaders))
+	result = append(result, defaultSensitiveHeaders...)
+	result = append(result, sensitiveHeaders...)
+	cachedAllHeaders = result
+}
+
+// rbwPool 复用 responseBodyWriter，避免每请求分配
+var rbwPool = sync.Pool{
+	New: func() interface{} {
+		return &responseBodyWriter{body: &bytes.Buffer{}}
+	},
 }
 
 // LogMiddleware 请求日志中间件
@@ -122,9 +154,20 @@ func LogMiddleware(opts ...LogOption) gin.HandlerFunc {
 		opt(options)
 	}
 
+	// 预处理 skipPaths：精确匹配用 map，前缀匹配用 slice
+	exactSkip := make(map[string]bool)
+	prefixSkip := make([]string, 0)
+	for _, p := range options.SkipPaths {
+		if strings.HasSuffix(p, "/") {
+			prefixSkip = append(prefixSkip, p)
+		} else {
+			exactSkip[p] = true
+		}
+	}
+
 	return func(c *gin.Context) {
 		// 检查是否跳过日志记录
-		if shouldSkipLog(c.Request.URL.Path, options.SkipPaths) {
+		if shouldSkipLog(c.Request.URL.Path, exactSkip, prefixSkip) {
 			c.Next()
 			return
 		}
@@ -134,12 +177,12 @@ func LogMiddleware(opts ...LogOption) gin.HandlerFunc {
 		// 在处理前读取请求 body（此时 body 还可读）
 		bodyBytes := getBodySnapshot(c.Request)
 
-		// 包装 ResponseWriter 以捕获响应 body
-		rbw := &responseBodyWriter{
-			ResponseWriter: c.Writer,
-			body:           &bytes.Buffer{},
-			captureBody:    true,
-		}
+		// 从 pool 获取 responseBodyWriter，保存原始 writer 以便归还后恢复
+		origWriter := c.Writer
+		rbw := rbwPool.Get().(*responseBodyWriter)
+		rbw.ResponseWriter = origWriter
+		rbw.body.Reset()
+		rbw.captureBody = true
 		c.Writer = rbw
 
 		// 继续处理
@@ -159,6 +202,11 @@ func LogMiddleware(opts ...LogOption) gin.HandlerFunc {
 			requestInfo["response_body"] = rbw.body.String()
 		}
 
+		// 恢复原始 writer（防止外层中间件访问已归还的 rbw），然后归还 pool
+		c.Writer = origWriter
+		rbw.ResponseWriter = nil
+		rbwPool.Put(rbw)
+
 		// 构建日志描述：METHOD 路由 (HandlerName)
 		route := c.FullPath()
 		if route == "" {
@@ -173,17 +221,14 @@ func LogMiddleware(opts ...LogOption) gin.HandlerFunc {
 }
 
 // shouldSkipLog 检查是否应该跳过日志记录
-func shouldSkipLog(path string, skipPaths []string) bool {
-	for _, skip := range skipPaths {
-		// 前缀匹配（以 / 结尾）或精确匹配
-		if strings.HasSuffix(skip, "/") {
-			if strings.HasPrefix(path, skip) {
-				return true
-			}
-		} else {
-			if path == skip {
-				return true
-			}
+// exactSkip 用于精确匹配（O(1)），prefixSkip 用于前缀匹配
+func shouldSkipLog(path string, exactSkip map[string]bool, prefixSkip []string) bool {
+	if exactSkip[path] {
+		return true
+	}
+	for _, prefix := range prefixSkip {
+		if strings.HasPrefix(path, prefix) {
+			return true
 		}
 	}
 	return false
@@ -200,10 +245,8 @@ func ParseRequestInfoWithBody(req *http.Request, bodyBytes []byte) map[string]in
 func parseRequestInfo(req *http.Request, bodyBytes []byte) map[string]interface{} {
 	contentType := req.Header.Get("Content-Type")
 
-	body := strings.NewReplacer("\r\n", "", "\r", "", "\n", "").Replace(string(bodyBytes))
-
-	// 对 body 进行敏感字段过滤
-	body = filterSensitiveBody(body, contentType)
+	// 对 body 进行敏感字段过滤（全程保持 []byte，减少转换）
+	body := filterSensitiveBody(bodyBytes, contentType)
 
 	// 对 header 进行敏感字段过滤
 	filteredHeader := filterSensitiveHeaders(req.Header)
@@ -350,50 +393,69 @@ func isAnonymousFuncName(name string) bool {
 	return true
 }
 
-// getAllSensitiveFields 获取所有敏感字段（默认 + 用户自定义）
+// getAllSensitiveFields 获取所有敏感字段（默认 + 用户自定义），优先返回缓存
 func getAllSensitiveFields() []string {
 	sensitiveMu.RLock()
-	defer sensitiveMu.RUnlock()
-	result := make([]string, 0, len(defaultSensitiveFields)+len(sensitiveFields))
-	result = append(result, defaultSensitiveFields...)
-	result = append(result, sensitiveFields...)
-	return result
+	if cachedAllFields != nil {
+		result := cachedAllFields
+		sensitiveMu.RUnlock()
+		return result
+	}
+	sensitiveMu.RUnlock()
+
+	// 首次调用，懒初始化缓存
+	sensitiveMu.Lock()
+	defer sensitiveMu.Unlock()
+	if cachedAllFields == nil {
+		rebuildFieldsCache()
+	}
+	return cachedAllFields
 }
 
-// getAllSensitiveHeaders 获取所有敏感头（默认 + 用户自定义）
+// getAllSensitiveHeaders 获取所有敏感头（默认 + 用户自定义），优先返回缓存
 func getAllSensitiveHeaders() []string {
 	sensitiveMu.RLock()
-	defer sensitiveMu.RUnlock()
-	result := make([]string, 0, len(defaultSensitiveHeaders)+len(sensitiveHeaders))
-	result = append(result, defaultSensitiveHeaders...)
-	result = append(result, sensitiveHeaders...)
-	return result
+	if cachedAllHeaders != nil {
+		result := cachedAllHeaders
+		sensitiveMu.RUnlock()
+		return result
+	}
+	sensitiveMu.RUnlock()
+
+	// 首次调用，懒初始化缓存
+	sensitiveMu.Lock()
+	defer sensitiveMu.Unlock()
+	if cachedAllHeaders == nil {
+		rebuildHeadersCache()
+	}
+	return cachedAllHeaders
 }
 
-// filterSensitiveBody 过滤 body 中的敏感字段
-func filterSensitiveBody(body, contentType string) string {
-	if body == "" {
-		return body
+// filterSensitiveBody 过滤 body 中的敏感字段，入参为 []byte 避免多余转换
+func filterSensitiveBody(bodyBytes []byte, contentType string) string {
+	if len(bodyBytes) == 0 {
+		return ""
 	}
 
 	// 处理 JSON 格式的 body
 	if strings.Contains(contentType, "application/json") {
-		return filterJSONBody(body)
+		return filterJSONBody(bodyBytes)
 	}
 
-	// 处理 form-urlencoded 格式的 body
+	// 处理 form-urlencoded 格式的 body（需要字符串操作，此处转换一次）
 	if strings.Contains(contentType, "x-www-form-urlencoded") {
-		return filterFormBody(body)
+		return filterFormBody(newlineReplacer.Replace(string(bodyBytes)))
 	}
 
-	return body
+	return newlineReplacer.Replace(string(bodyBytes))
 }
 
-// filterJSONBody 过滤 JSON 格式 body 中的敏感字段
-func filterJSONBody(body string) string {
+// filterJSONBody 过滤 JSON 格式 body 中的敏感字段，入参为 []byte 避免多余转换
+func filterJSONBody(bodyBytes []byte) string {
 	var data interface{}
-	if err := json.Unmarshal([]byte(body), &data); err != nil {
-		return body
+	if err := json.Unmarshal(bodyBytes, &data); err != nil {
+		// JSON 解析失败，回退为去换行后的字符串
+		return newlineReplacer.Replace(string(bodyBytes))
 	}
 
 	// 提前获取敏感字段列表，避免递归时重复调用
@@ -402,7 +464,7 @@ func filterJSONBody(body string) string {
 
 	result, err := json.Marshal(data)
 	if err != nil {
-		return body
+		return newlineReplacer.Replace(string(bodyBytes))
 	}
 	return string(result)
 }
@@ -473,9 +535,8 @@ func filterSensitiveHeaders(header http.Header) http.Header {
 
 // containsIgnoreCase 判断字符串是否在列表中（不区分大小写）
 func containsIgnoreCase(needle string, haystack []string) bool {
-	needleLower := strings.ToLower(needle)
 	for _, item := range haystack {
-		if strings.ToLower(item) == needleLower {
+		if strings.EqualFold(needle, item) {
 			return true
 		}
 	}

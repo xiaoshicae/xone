@@ -305,9 +305,9 @@ func TestToJsonString(t *testing.T) {
 }
 
 func TestFilterJSONBodyInvalidJSON(t *testing.T) {
-	invalidJSON := "not a json"
+	invalidJSON := []byte("not a json")
 	result := filterJSONBody(invalidJSON)
-	if result != invalidJSON {
+	if result != string(invalidJSON) {
 		t.Error("invalid JSON should be returned as-is")
 	}
 }
@@ -335,7 +335,7 @@ func TestContainsIgnoreCaseCaseInsensitive(t *testing.T) {
 }
 
 func TestFilterSensitiveBodyEmptyBody(t *testing.T) {
-	result := filterSensitiveBody("", "application/json")
+	result := filterSensitiveBody(nil, "application/json")
 	if result != "" {
 		t.Error("empty body should return empty string")
 	}
@@ -343,7 +343,7 @@ func TestFilterSensitiveBodyEmptyBody(t *testing.T) {
 
 func TestFilterSensitiveBodyUnknownContentType(t *testing.T) {
 	body := "password=secret"
-	result := filterSensitiveBody(body, "text/plain")
+	result := filterSensitiveBody([]byte(body), "text/plain")
 	if result != body {
 		t.Error("unknown content type should return body as-is")
 	}
@@ -497,7 +497,9 @@ func TestFilterMapSensitiveFieldsDeepNested(t *testing.T) {
 }
 
 func TestShouldSkipLog(t *testing.T) {
-	skipPaths := []string{"/health", "/metrics", "/api/v1/"}
+	// 预处理 skipPaths（与 LogMiddleware 中的逻辑一致）
+	exactSkip := map[string]bool{"/health": true, "/metrics": true}
+	prefixSkip := []string{"/api/v1/"}
 
 	tests := []struct {
 		path     string
@@ -514,7 +516,7 @@ func TestShouldSkipLog(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.path, func(t *testing.T) {
-			result := shouldSkipLog(tt.path, skipPaths)
+			result := shouldSkipLog(tt.path, exactSkip, prefixSkip)
 			if result != tt.expected {
 				t.Errorf("shouldSkipLog(%s) = %v, want %v", tt.path, result, tt.expected)
 			}

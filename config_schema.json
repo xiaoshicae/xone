@@ -43,11 +43,11 @@
           "description": "服务监听的host，默认0.0.0.0"
         },
         "Port": {
-          "type": "integer",
+          "type": ["integer", "string"],
           "description": "服务监听的端口，默认8000"
         },
         "UseHttp2": {
-          "type": "boolean",
+          "type": ["boolean", "string"],
           "description": "是否使用http2协议，默认false"
         },
         "Swagger": {
@@ -98,11 +98,11 @@
           "description": "日志文件夹路径，默认./log"
         },
         "Console": {
-          "type": "boolean",
+          "type": ["boolean", "string"],
           "description": "日志内容是否需要在控制台打印，默认false"
         },
         "ConsoleFormatIsRaw": {
-          "type": "boolean",
+          "type": ["boolean", "string"],
           "description": "在控制台打印的日志是否为原始格式(即底层的json格式)，为false时，打印level+time+filename+func+traceid+内容，默认false"
         },
         "MaxAge": {
@@ -124,11 +124,11 @@
       "description": "链路追踪配置",
       "properties": {
         "Enable": {
-          "type": "boolean",
+          "type": ["boolean", "string"],
           "description": "Trace是否开启，默认true"
         },
         "Console": {
-          "type": "boolean",
+          "type": ["boolean", "string"],
           "description": "是否要在控制台打印trace内容，默认false"
         }
       }
@@ -150,11 +150,11 @@
           "description": "TCP keep-alive 探测间隔，默认30s"
         },
         "MaxIdleConns": {
-          "type": "integer",
+          "type": ["integer", "string"],
           "description": "最大空闲连接数，默认100"
         },
         "MaxIdleConnsPerHost": {
-          "type": "integer",
+          "type": ["integer", "string"],
           "description": "每个 host 最大空闲连接数，默认10"
         },
         "IdleConnTimeout": {
@@ -162,7 +162,7 @@
           "description": "空闲连接超时时间，默认90s"
         },
         "RetryCount": {
-          "type": "integer",
+          "type": ["integer", "string"],
           "description": "重试次数，默认0（不重试）"
         },
         "RetryWaitTime": {
@@ -230,9 +230,7 @@
       ]
     }
   },
-  "required": [
-    "Server"
-  ],
+  "required": [],
   "definitions": {
     "GormConfig": {
       "type": "object",
@@ -262,11 +260,11 @@
           "description": "写超时(仅MySQL有效)，默认5s"
         },
         "MaxOpenConns": {
-          "type": "integer",
+          "type": ["integer", "string"],
           "description": "最大连接数，默认50"
         },
         "MaxIdleConns": {
-          "type": "integer",
+          "type": ["integer", "string"],
           "description": "最大空闲连接数，默认等于MaxOpenConns"
         },
         "MaxLifetime": {
@@ -278,7 +276,7 @@
           "description": "空闲连接的最长存活时间，默认等于MaxLifetime"
         },
         "EnableLog": {
-          "type": "boolean",
+          "type": ["boolean", "string"],
           "description": "是否开启日志(开启后SQL日志将记录到应用的log文件中)，默认false"
         },
         "SlowThreshold": {
@@ -286,7 +284,7 @@
           "description": "慢查询日志阈值(如果开启日志，慢查询会记录到日志)，默认3s"
         },
         "IgnoreRecordNotFoundErrorLog": {
-          "type": "boolean",
+          "type": ["boolean", "string"],
           "description": "是否忽略未查询到结果的错误日志记录，默认false"
         },
         "Name": {

@@ -4,7 +4,7 @@
 
 ## 架构图
 
-<img src="docs/architecture.svg" alt="XOne 模块架构图" width="100%">
+<img src="doc/architecture.svg" alt="XOne 模块架构图" width="100%">
 
 ## 功能特性
 
@@ -56,7 +56,39 @@ XCache:
   DefaultTTL: "5m"
 ```
 
-### 3. 启动服务
+### 3. 配置 Schema 校验（可选）
+
+项目提供了 JSON Schema 文件，配置后 IDE 会自动补全字段并校验配置值。
+
+**VS Code**（需安装 [YAML 扩展](https://marketplace.visualstudio.com/items?itemName=redhat.vscode-yaml)）
+
+在 YAML 文件首行添加：
+
+```yaml
+# yaml-language-server: $schema=https://raw.githubusercontent.com/xiaoshicae/xone/main/config_schema.json
+```
+
+或在项目 `.vscode/settings.json` 中统一配置：
+
+```json
+{
+  "yaml.schemas": {
+    "https://raw.githubusercontent.com/xiaoshicae/xone/main/config_schema.json": [
+      "application.yml",
+      "application-*.yml"
+    ]
+  }
+}
+```
+
+**JetBrains（GoLand / IntelliJ）**
+
+`Settings → Languages & Frameworks → Schemas and DTDs → JSON Schema Mappings`，添加映射：
+
+- Schema URL：`https://raw.githubusercontent.com/xiaoshicae/xone/main/config_schema.json`
+- Schema version：JSON Schema version 7
+- 文件匹配：`application*.yml`
+### 4. 启动服务
 
 ```go
 package main
@@ -102,16 +134,16 @@ func main() {
 
 ```go
 import (
-"github.com/gin-gonic/gin"
-"github.com/xiaoshicae/xone/v2/xgin"
-"github.com/xiaoshicae/xone/v2/xgin/options"
-"github.com/xiaoshicae/xone/v2/xserver"
+    "github.com/gin-gonic/gin"
+    "github.com/xiaoshicae/xone/v2/xgin"
+    "github.com/xiaoshicae/xone/v2/xgin/options"
+    "github.com/xiaoshicae/xone/v2/xserver"
 )
 
 // 方式一：XGin Start 快捷启动（推荐，支持中间件、Swagger、HTTP/2、TLS）
 xgin.New(
-options.EnableLogMiddleware(true),
-options.EnableTraceMiddleware(true),
+    options.EnableLogMiddleware(true),
+    options.EnableTraceMiddleware(true),
 ).WithRouteRegister(registerRoutes).
 WithSwagger(docs.SwaggerInfo).
 Build().
@@ -271,17 +303,17 @@ XTrace:
 import "github.com/xiaoshicae/xone/xhook"
 
 func init() {
-// 服务启动前执行（在所有模块初始化之后）
-xhook.BeforeStart(func () error {
-// 自定义初始化：预热缓存、检查依赖等
-return nil
-})
-
-// 服务停止前执行
-xhook.BeforeStop(func () error {
-// 自定义清理：关闭连接、刷新缓冲等
-return nil
-})
+    // 服务启动前执行（在所有模块初始化之后）
+    xhook.BeforeStart(func () error {
+    // 自定义初始化：预热缓存、检查依赖等
+    return nil
+    })
+    
+    // 服务停止前执行
+    xhook.BeforeStop(func () error {
+    // 自定义清理：关闭连接、刷新缓冲等
+    return nil
+    })
 }
 ```
 

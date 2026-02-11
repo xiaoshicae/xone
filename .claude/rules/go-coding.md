@@ -67,6 +67,11 @@
 - 判断模块错误：`xerror.Is(err, "xconfig")`
 - 提取模块名：`xerror.Module(err)`
 
+## 函数签名
+
+- 公开函数除 `ctx context.Context` 外，参数数量不超过 3 个
+- 参数过多时使用结构体封装（如 Option / Event / Request）
+
 ## 编码要点
 
 - 使用有意义的变量名，避免无意义缩写

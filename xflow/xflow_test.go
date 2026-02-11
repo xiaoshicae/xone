@@ -571,10 +571,10 @@ func TestFlow_Execute_MonitorDisabled(t *testing.T) {
 		Mock(GetConfig).Return(&Config{DisableMonitor: true}).Build()
 
 		mon := &testMonitor{}
+		MockValue(&defaultMonitorInstance).To(mon)
 
 		flow := &Flow[testData]{
-			Name:    "no-monitor",
-			Monitor: mon,
+			Name: "no-monitor",
 			Processors: []Processor[testData]{
 				&mockProcessor[testData]{name: "p1", dependency: Strong},
 			},
@@ -592,10 +592,10 @@ func TestFlow_Execute_MonitorEnabled(t *testing.T) {
 		Mock(GetConfig).Return(&Config{DisableMonitor: false}).Build()
 
 		mon := &testMonitor{}
+		MockValue(&defaultMonitorInstance).To(mon)
 
 		flow := &Flow[testData]{
-			Name:    "with-monitor",
-			Monitor: mon,
+			Name: "with-monitor",
 			Processors: []Processor[testData]{
 				&mockProcessor[testData]{name: "p1", dependency: Strong},
 				&mockProcessor[testData]{name: "p2", dependency: Weak},
@@ -629,10 +629,10 @@ func TestFlow_Execute_MonitorDuration(t *testing.T) {
 		Mock(GetConfig).Return(&Config{DisableMonitor: false}).Build()
 
 		mon := &testMonitor{}
+		MockValue(&defaultMonitorInstance).To(mon)
 
 		flow := &Flow[testData]{
-			Name:    "duration-check",
-			Monitor: mon,
+			Name: "duration-check",
 			Processors: []Processor[testData]{
 				&mockProcessor[testData]{name: "p1", dependency: Strong},
 			},
@@ -656,10 +656,10 @@ func TestFlow_Execute_MonitorWithFailure(t *testing.T) {
 		Mock(GetConfig).Return(&Config{DisableMonitor: false}).Build()
 
 		mon := &testMonitor{}
+		MockValue(&defaultMonitorInstance).To(mon)
 
 		flow := &Flow[testData]{
-			Name:    "monitor-fail",
-			Monitor: mon,
+			Name: "monitor-fail",
 			Processors: []Processor[testData]{
 				&mockProcessor[testData]{
 					name:       "p1",
@@ -706,10 +706,10 @@ func TestFlow_Execute_MonitorWeakSkip(t *testing.T) {
 		Mock(GetConfig).Return(&Config{DisableMonitor: false}).Build()
 
 		mon := &testMonitor{}
+		MockValue(&defaultMonitorInstance).To(mon)
 
 		flow := &Flow[testData]{
-			Name:    "monitor-weak",
-			Monitor: mon,
+			Name: "monitor-weak",
 			Processors: []Processor[testData]{
 				&mockProcessor[testData]{name: "p1", dependency: Strong},
 				&mockProcessor[testData]{
@@ -765,13 +765,6 @@ func TestFlow_SetterMethods(t *testing.T) {
 		So(f.Name, ShouldEqual, "new-name")
 	})
 
-	PatchConvey("TestFlow_SetMonitor", t, func() {
-		f := &Flow[testData]{}
-		mon := &testMonitor{}
-		f.SetMonitor(mon)
-		So(f.Monitor, ShouldEqual, mon)
-	})
-
 	PatchConvey("TestFlow_AddProcessor", t, func() {
 		f := &Flow[testData]{}
 		p := &mockProcessor[testData]{name: "p1"}
@@ -811,8 +804,6 @@ func TestNew(t *testing.T) {
 
 		So(flow.Name, ShouldEqual, "test-flow")
 		So(len(flow.Processors), ShouldEqual, 2)
-		So(flow.Monitor, ShouldBeNil)
-
 		// 验证可正常执行
 		result := flow.Execute(context.Background(), testData{})
 		So(result.Success(), ShouldBeTrue)

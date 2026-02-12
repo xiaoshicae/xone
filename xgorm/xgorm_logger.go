@@ -37,8 +37,10 @@ type gormLogger struct {
 }
 
 func (l *gormLogger) LogMode(level logger.LogLevel) logger.Interface {
-	l.logLevel = level
-	return l
+	// 创建副本，避免修改共享实例导致并发安全问题（GORM 约定返回新实例）
+	newLogger := *l
+	newLogger.logLevel = level
+	return &newLogger
 }
 
 func (l *gormLogger) Info(ctx context.Context, s string, i ...interface{}) {

@@ -1,8 +1,6 @@
 package xcache
 
 import (
-	"sync"
-
 	"github.com/dgraph-io/ristretto"
 
 	"github.com/xiaoshicae/xone/v2/xconfig"
@@ -90,7 +88,6 @@ func closeXCache() error {
 			globalCache.Close()
 		}
 		globalCache = nil
-		globalOnce = sync.Once{}
 	}
 
 	return nil
@@ -126,11 +123,20 @@ func getMultiConfig() ([]*Config, error) {
 	if err := xconfig.UnmarshalConfig(XCacheConfigKey, &multiConfig); err != nil {
 		return nil, err
 	}
-	for _, c := range multiConfig {
-		c = configMergeDefault(c)
+	seen := make(map[string]struct{}, len(multiConfig))
+	for i, c := range multiConfig {
+		multiConfig[i] = configMergeDefault(c)
+		c = multiConfig[i]
 		if c.Name == "" {
 			return nil, xerror.Newf("xcache", "getMultiConfig", "multi config XCache.Name can not be empty")
 		}
+		if c.Name == defaultCacheName {
+			return nil, xerror.Newf("xcache", "getMultiConfig", "multi config XCache.Name can not be reserved name [%s]", defaultCacheName)
+		}
+		if _, ok := seen[c.Name]; ok {
+			return nil, xerror.Newf("xcache", "getMultiConfig", "multi config XCache.Name [%s] is duplicated", c.Name)
+		}
+		seen[c.Name] = struct{}{}
 	}
 	return multiConfig, nil
 }

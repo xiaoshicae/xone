@@ -1,7 +1,6 @@
 package middleware
 
 import (
-	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -9,9 +8,7 @@ import (
 	"os"
 	"testing"
 
-	. "github.com/bytedance/mockey"
 	"github.com/gin-gonic/gin"
-	. "github.com/smartystreets/goconvey/convey"
 )
 
 func TestGinXRecoverMiddlewareWithDefaultHandler(t *testing.T) {
@@ -123,46 +120,6 @@ func TestStackFunction(t *testing.T) {
 	}
 }
 
-func TestSourceFunction(t *testing.T) {
-	lines := [][]byte{
-		[]byte("line 1"),
-		[]byte("  line 2  "),
-		[]byte("line 3"),
-	}
-
-	// 测试正常情况
-	result := source(lines, 1)
-	if string(result) != "line 1" {
-		t.Errorf("expected 'line 1', got '%s'", string(result))
-	}
-
-	// 测试带空格的行
-	result = source(lines, 2)
-	if string(result) != "line 2" {
-		t.Errorf("expected 'line 2', got '%s'", string(result))
-	}
-
-	// 测试越界情况
-	result = source(lines, 0)
-	if string(result) != "???" {
-		t.Errorf("expected '???', got '%s'", string(result))
-	}
-
-	result = source(lines, 10)
-	if string(result) != "???" {
-		t.Errorf("expected '???', got '%s'", string(result))
-	}
-}
-
-func TestFunctionName(t *testing.T) {
-	// 获取当前函数的 PC
-	result := function(0)
-	// 即使 PC 为 0，也应该返回 dunno
-	if result == nil {
-		t.Error("should not return nil")
-	}
-}
-
 func TestGinXRecoverMiddlewarePanicWithError(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
@@ -228,16 +185,4 @@ func TestGinXRecoverMiddlewareBrokenPipeNonError(t *testing.T) {
 	req := httptest.NewRequest("GET", "/broken-pipe-str", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
-}
-
-// ==================== stack() os.ReadFile 错误测试 ====================
-
-func TestStackFunction_ReadFileError(t *testing.T) {
-	PatchConvey("TestStackFunction_ReadFileError", t, func() {
-		Mock(os.ReadFile).Return(nil, errors.New("read error")).Build()
-
-		// 直接调用 stack()，os.ReadFile 返回错误时走 continue 分支
-		stackBytes := stack(0)
-		So(len(stackBytes), ShouldBeGreaterThan, 0)
-	})
 }

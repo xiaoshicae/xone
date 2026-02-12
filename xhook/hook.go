@@ -70,6 +70,11 @@ func registerHook(f HookFunc, opts []Option, hooks *[]hook, sorted *bool, hookTy
 	hooksMu.Lock()
 	defer hooksMu.Unlock()
 
+	// 数量检查（在写入 registeredFuncs 之前，避免 panic 后去重 map 与 hooks 列表不一致）
+	if len(*hooks) >= maxHookNum {
+		panic(fmt.Sprintf("XOne %s hook can not be more than %d", hookType, maxHookNum))
+	}
+
 	// 去重检测：通过函数指针判断是否重复注册
 	fp := reflect.ValueOf(f).Pointer()
 	key := hookType + ":" + strconv.FormatUint(uint64(fp), 10)
@@ -78,10 +83,6 @@ func registerHook(f HookFunc, opts []Option, hooks *[]hook, sorted *bool, hookTy
 		return
 	}
 	registeredFuncs[key] = struct{}{}
-
-	if len(*hooks) >= maxHookNum {
-		panic(fmt.Sprintf("XOne %s hook can not be more than %d", hookType, maxHookNum))
-	}
 
 	*hooks = append(*hooks, hook{HookFunc: f, Options: o})
 	*sorted = false // 标记需要重新排序
@@ -188,6 +189,9 @@ func invokeBeforeStopHook(ctx context.Context, hooks []hook, stopResultChan chan
 }
 
 // invokeHookWithTimeout 在指定超时内执行单个 Hook
+// 注意：超时仅代表"放弃等待"，并不会取消正在运行的 Hook 函数。
+// 如果 Hook 函数长时间阻塞（如死锁），其 goroutine 将持续存在直到函数返回。
+// Hook 实现者应确保函数能在合理时间内返回。
 func invokeHookWithTimeout(h hook, timeout time.Duration) error {
 	if timeout <= 0 {
 		return safeInvokeHook(h.HookFunc)

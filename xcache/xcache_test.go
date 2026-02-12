@@ -2,7 +2,6 @@ package xcache
 
 import (
 	"errors"
-	"sync"
 	"testing"
 	"time"
 
@@ -32,29 +31,26 @@ func withCleanCacheMap(fn func()) {
 	fn()
 }
 
-// withCleanGlobal 保存并清空 cacheMap + globalCache/globalOnce，测试结束后恢复
+// withCleanGlobal 保存并清空 cacheMap + globalCache，测试结束后恢复
 func withCleanGlobal(fn func()) {
 	cacheMu.Lock()
 	origMap := cacheMap
+	origGlobal := globalCache
 	cacheMap = make(map[string]*Cache)
+	globalCache = nil
 	cacheMu.Unlock()
 
-	origGlobal := globalCache
-	globalOnce = sync.Once{} // nolint: govet // 测试场景下重置 Once 是安全的
-	globalCache = nil
-
 	defer func() {
+		cacheMu.Lock()
 		if globalCache != nil {
 			globalCache.Close()
 		}
-		cacheMu.Lock()
 		for _, v := range cacheMap {
 			v.Close()
 		}
 		cacheMap = origMap
-		cacheMu.Unlock()
-		globalOnce = sync.Once{} // nolint: govet // 测试场景下重置 Once 是安全的
 		globalCache = origGlobal
+		cacheMu.Unlock()
 	}()
 
 	fn()

@@ -5,13 +5,29 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
+	"time"
 
 	"github.com/xiaoshicae/xone/v2/xerror"
 	"github.com/xiaoshicae/xone/v2/xhook"
 	_ "github.com/xiaoshicae/xone/v2/xtrace" // 默认加载trace
 	"github.com/xiaoshicae/xone/v2/xutil"
 )
+
+var (
+	defaultWaitRunExitTimeout = 30 * time.Second
+	waitRunExitMu             sync.RWMutex
+)
+
+// SetWaitRunExitTimeout 设置 Stop 后等待 Run goroutine 退出的超时时间（线程安全）
+func SetWaitRunExitTimeout(timeout time.Duration) {
+	if timeout > 0 {
+		waitRunExitMu.Lock()
+		defaultWaitRunExitTimeout = timeout
+		waitRunExitMu.Unlock()
+	}
+}
 
 // Run 启动Server，会以阻塞方式启动，且等待退出信号
 func Run(server Server) error {
@@ -58,12 +74,22 @@ func runWithServer(s Server) error {
 		if err != nil {
 			return err // safeInvokeServerRun 已返回 xerror
 		}
-		xutil.WarnIfEnableDebug("XOne Run server unexpectedly stopped")
+		xutil.InfoIfEnableDebug("XOne Run server stopped")
 		return nil
 	case <-quit: // 接收到退出信号后，执行Server.Stop()
 		xutil.InfoIfEnableDebug("********** XOne Stop server begin **********")
-		if err := safeInvokeServerStop(s); err != nil {
-			return err // safeInvokeServerStop 已返回 xerror
+		stopErr := safeInvokeServerStop(s)
+		// 等待 Run goroutine 退出，避免 goroutine 泄漏
+		waitRunExitMu.RLock()
+		waitTimeout := defaultWaitRunExitTimeout
+		waitRunExitMu.RUnlock()
+		select {
+		case <-serverRunErrChan:
+		case <-time.After(waitTimeout):
+			xutil.WarnIfEnableDebug("XOne Run goroutine did not exit within %v after Stop", waitTimeout)
+		}
+		if stopErr != nil {
+			return stopErr
 		}
 		xutil.InfoIfEnableDebug("********** XOne Stop server success **********")
 		return nil

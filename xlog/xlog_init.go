@@ -63,9 +63,10 @@ func initXLogByConfig(c *Config) error {
 	asyncFileWriter := newAsyncWriter(fileWriter, defaultAsyncBufferSize)
 
 	// 注册关闭钩子（Close 会等待缓冲区写完再关闭底层 writer）
+	// 使用高 Order 值确保日志系统在其他模块关闭之后再关闭，避免关闭阶段日志丢失
 	xhook.BeforeStop(func() error {
 		return asyncFileWriter.Close()
-	})
+	}, xhook.Order(9999))
 
 	// 加载时区
 	loc, err := time.LoadLocation(c.Timezone)

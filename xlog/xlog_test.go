@@ -517,23 +517,26 @@ func TestTimeFormatter(t *testing.T) {
 			c.So(len(bytes), c.ShouldBeGreaterThan, 0)
 		})
 
-		mockey.PatchConvey("TestTimeFormatter-AlreadyFormatted", func() {
+		mockey.PatchConvey("TestTimeFormatter-MultipleCallsIdempotent", func() {
+			loc, _ := time.LoadLocation("UTC")
 			tf := timeFormatter{
 				Formatter: &logrus.JSONFormatter{},
-				Location:  nil,
+				Location:  loc,
 			}
-			ctx := context.WithValue(context.Background(), timeFormattedCtxKey, true)
 			entry := &logrus.Entry{
 				Logger:  logrus.New(),
 				Data:    logrus.Fields{},
-				Context: ctx,
+				Context: context.Background(),
 				Time:    time.Now(),
 				Level:   logrus.InfoLevel,
 				Message: "test",
 			}
-			bytes, err := tf.Format(entry)
+			// 多次调用 Format 应产生一致结果（幂等性）
+			bytes1, err := tf.Format(entry)
 			c.So(err, c.ShouldBeNil)
-			c.So(len(bytes), c.ShouldBeGreaterThan, 0)
+			bytes2, err := tf.Format(entry)
+			c.So(err, c.ShouldBeNil)
+			c.So(string(bytes1), c.ShouldEqual, string(bytes2))
 		})
 	})
 }

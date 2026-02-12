@@ -3,6 +3,7 @@ package xgorm
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"time"
 
@@ -49,7 +50,7 @@ func initSingle() error {
 	if err != nil {
 		return xerror.Newf("xgorm", "init", "getConfig failed, err=[%v]", err)
 	}
-	xutil.InfoIfEnableDebug("XOne init %s got config: %s", XGormConfigKey, xutil.ToJsonString(config))
+	xutil.InfoIfEnableDebug("XOne init %s got config: %s", XGormConfigKey, xutil.ToJsonString(sanitizeConfigForLog(config)))
 
 	client, err := newClient(config)
 	if err != nil {
@@ -65,7 +66,7 @@ func initMulti() error {
 	if err != nil {
 		return xerror.Newf("xgorm", "init", "getMultiConfig failed, err=[%v]", err)
 	}
-	xutil.InfoIfEnableDebug("XOne init %s got config: %s", XGormConfigKey, xutil.ToJsonString(configs))
+	xutil.InfoIfEnableDebug("XOne init %s got config: %s", XGormConfigKey, xutil.ToJsonString(sanitizeConfigsForLog(configs)))
 
 	for idx, config := range configs {
 		client, err := newClient(config)
@@ -189,11 +190,11 @@ func resolveDialector(c *Config) (gorm.Dialector, error) {
 		if err != nil {
 			return nil, xerror.Newf("xgorm", "resolveDialector", "resolve mysql dsn failed, err=[%v]", err)
 		}
-		xutil.InfoIfEnableDebug("XOne initXGorm newClient resolve MySQL DSN: %s", resolvedDSN)
+		xutil.InfoIfEnableDebug("XOne initXGorm newClient resolve MySQL DSN: %s", sanitizeDSN(resolvedDSN))
 		return mysql.Open(resolvedDSN), nil
 
 	case DriverPostgres:
-		xutil.InfoIfEnableDebug("XOne initXGorm newClient use Postgres DSN: %s", c.DSN)
+		xutil.InfoIfEnableDebug("XOne initXGorm newClient use Postgres DSN: %s", sanitizeDSN(c.DSN))
 		return postgres.Open(c.DSN), nil
 
 	default:
@@ -241,14 +242,54 @@ func getMultiConfig() ([]*Config, error) {
 	if err := xconfig.UnmarshalConfig(XGormConfigKey, &multiConfig); err != nil {
 		return nil, err
 	}
-	for _, c := range multiConfig {
-		c = configMergeDefault(c)
+	seen := make(map[string]struct{}, len(multiConfig))
+	for i, c := range multiConfig {
+		multiConfig[i] = configMergeDefault(c)
+		c = multiConfig[i]
 		if c.DSN == "" {
 			return nil, xerror.Newf("xgorm", "getMultiConfig", "multi config XGorm.DSN can not be empty")
 		}
 		if c.Name == "" {
 			return nil, xerror.Newf("xgorm", "getMultiConfig", "multi config XGorm.Name can not be empty")
 		}
+		if c.Name == defaultClientName {
+			return nil, xerror.Newf("xgorm", "getMultiConfig", "multi config XGorm.Name can not be reserved name [%s]", defaultClientName)
+		}
+		if _, ok := seen[c.Name]; ok {
+			return nil, xerror.Newf("xgorm", "getMultiConfig", "multi config XGorm.Name [%s] is duplicated", c.Name)
+		}
+		seen[c.Name] = struct{}{}
 	}
 	return multiConfig, nil
+}
+
+// sanitizeDSN 对 DSN 中的密码进行脱敏处理
+// 支持 URL 格式 (user:password@host)
+func sanitizeDSN(dsn string) string {
+	atIdx := strings.Index(dsn, "@")
+	if atIdx < 0 {
+		return dsn
+	}
+	prefix := dsn[:atIdx]
+	colonIdx := strings.LastIndex(prefix, ":")
+	if colonIdx < 0 {
+		return dsn
+	}
+	return prefix[:colonIdx+1] + "***" + dsn[atIdx:]
+}
+
+// sanitizeConfigForLog 创建配置的脱敏副本用于日志输出
+func sanitizeConfigForLog(c *Config) *Config {
+	sc := *c
+	sc.DSN = sanitizeDSN(sc.DSN)
+	return &sc
+}
+
+// sanitizeConfigsForLog 创建多个配置的脱敏副本用于日志输出
+func sanitizeConfigsForLog(configs []*Config) []*Config {
+	result := make([]*Config, len(configs))
+	for i, c := range configs {
+		result[i] = sanitizeConfigForLog(c)
+	}
+	return result
 }

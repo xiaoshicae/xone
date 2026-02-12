@@ -52,7 +52,7 @@ type Config struct {
 	SlowThreshold string `mapstructure:"SlowThreshold"`
 
 	// IgnoreRecordNotFoundErrorLog 是否忽略未查询到结果的错误日志记录
-	// optional default true
+	// optional default false
 	IgnoreRecordNotFoundErrorLog bool `mapstructure:"IgnoreRecordNotFoundErrorLog"`
 
 	// EnableLog 是否开启日志(开启后gorm的日志将记录到应用的log文件中)

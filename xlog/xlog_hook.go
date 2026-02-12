@@ -15,12 +15,6 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-// timeFormattedCtxKeyType 用于 context key，避免字符串冲突
-type timeFormattedCtxKeyType struct{}
-
-// timeFormattedCtxKey 标记日志时间是否已格式化
-var timeFormattedCtxKey = timeFormattedCtxKeyType{}
-
 // 控制台颜色
 const (
 	colorRed    = 31
@@ -123,28 +117,17 @@ type timeFormatter struct {
 }
 
 // Format 时间format
-// 由于可能会存在多个writer，每个writer都会调用该Format，可能会导致重复处理，最终导致时间不正确，因此需要修正
+// 复制 entry 避免修改共享状态，保证多 writer 并发调用安全
+// time.In() 是幂等操作，多次调用结果一致，无需标记防重复
 func (t timeFormatter) Format(e *logrus.Entry) ([]byte, error) {
-	// 初始化
-	if ctx := e.Context; ctx == nil {
-		e.Context = context.Background()
+	entryCopy := *e
+	if entryCopy.Context == nil {
+		entryCopy.Context = context.Background()
 	}
-
-	// 如果已经format过了，则不用再次处理
-	v, ok := e.Context.Value(timeFormattedCtxKey).(bool)
-	if ok && v {
-		return t.Formatter.Format(e)
-	}
-
-	// 转换到配置的时区
 	if t.Location != nil {
-		e.Time = e.Time.In(t.Location)
+		entryCopy.Time = entryCopy.Time.In(t.Location)
 	}
-
-	// 设置一下标记，防止多次处理
-	e.Context = context.WithValue(e.Context, timeFormattedCtxKey, true)
-
-	return t.Formatter.Format(e)
+	return t.Formatter.Format(&entryCopy)
 }
 
 func getLogConsoleLogColor(l logrus.Level) int {

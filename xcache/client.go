@@ -14,7 +14,6 @@ var (
 	cacheMap = make(map[string]*Cache)
 	cacheMu  sync.RWMutex
 
-	globalOnce  sync.Once
 	globalCache *Cache
 )
 
@@ -35,18 +34,28 @@ func C(name ...string) *Cache {
 
 // global 获取全局缓存实例，如果没有配置的缓存则懒初始化一个默认缓存
 func global() *Cache {
+	// 快速路径：读锁检查是否已有配置的缓存
 	if cache := get(); cache != nil {
 		return cache
 	}
 
-	globalOnce.Do(func() {
-		c, err := newCache(configMergeDefault(nil))
-		if err != nil {
-			xutil.ErrorIfEnableDebug("XOne xcache create default global cache failed, err=[%v]", err)
-			return
-		}
-		globalCache = c
-	})
+	// 慢路径：写锁下懒初始化全局缓存（双重检查避免竞态）
+	cacheMu.Lock()
+	defer cacheMu.Unlock()
+
+	if cache := cacheMap[defaultCacheName]; cache != nil {
+		return cache
+	}
+	if globalCache != nil {
+		return globalCache
+	}
+
+	c, err := newCache(configMergeDefault(nil))
+	if err != nil {
+		xutil.ErrorIfEnableDebug("XOne xcache create default global cache failed, err=[%v]", err)
+		return nil
+	}
+	globalCache = c
 	return globalCache
 }
 

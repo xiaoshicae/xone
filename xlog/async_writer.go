@@ -51,8 +51,8 @@ func newAsyncWriter(w io.WriteCloser, bufferSize int) *asyncWriter {
 	return aw
 }
 
-// Write 将数据拷贝后发送到 channel，非阻塞（channel 满时阻塞）
-func (aw *asyncWriter) Write(p []byte) (int, error) {
+// Write 将数据拷贝后发送到 channel
+func (aw *asyncWriter) Write(p []byte) (n int, err error) {
 	// 从 pool 获取 buffer，必须拷贝（调用方可能复用 buffer）
 	buf := logBufPool.Get().([]byte)
 	if cap(buf) < len(p) {
@@ -71,9 +71,21 @@ func (aw *asyncWriter) Write(p []byte) (int, error) {
 		}
 		return 0, errAsyncWriterClosed
 	}
-	aw.ch <- buf
 	aw.mu.Unlock()
 
+	// 在锁外发送到 channel，避免 channel 满时持锁阻塞导致死锁
+	// 极端情况下 Close() 可能在 Unlock 和发送之间关闭 channel，用 recover 处理
+	defer func() {
+		if r := recover(); r != nil {
+			if cap(buf) <= maxPoolBufSize {
+				logBufPool.Put(buf[:0])
+			}
+			n = 0
+			err = errAsyncWriterClosed
+		}
+	}()
+
+	aw.ch <- buf
 	return len(p), nil
 }
 

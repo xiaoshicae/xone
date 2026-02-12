@@ -83,6 +83,10 @@ func (g *XGin) WithRecoverFunc(recoveryFunc gin.RecoveryFunc) *XGin {
 }
 
 func (g *XGin) Build() *XGin {
+	if g.build {
+		return g
+	}
+
 	ginXOptions := g.getXGinOptions()
 
 	// 注册middleware

@@ -11,8 +11,8 @@ import (
 )
 
 var (
-	transOnce sync.Once
-	trans     ut.Translator
+	transMu sync.Mutex
+	trans   ut.Translator
 )
 
 // ToZHErrMsg 翻译错误信息字符串

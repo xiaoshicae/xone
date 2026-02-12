@@ -3,7 +3,7 @@ package xconfig
 import (
 	"fmt"
 	"os"
-	"path"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -53,7 +53,7 @@ func initXConfig() error {
 }
 
 func loadDotEnvIfExist(configLocation string) error {
-	dotEnvFileFullPath := path.Join(path.Dir(configLocation), dotEnvFileName)
+	dotEnvFileFullPath := filepath.Join(filepath.Dir(configLocation), dotEnvFileName)
 	if xutil.FileExist(dotEnvFileFullPath) {
 		return godotenv.Load(dotEnvFileFullPath)
 	}
@@ -213,8 +213,10 @@ func expandEnvPlaceholders(vp *viper.Viper) {
 	expansions := make(map[string]string)
 
 	for _, key := range vp.AllKeys() {
-		val := vp.GetString(key)
-		if val == "" {
+		// 只对 string 类型的叶子节点进行占位符展开，避免对 map/slice 等复杂类型误操作
+		raw := vp.Get(key)
+		val, ok := raw.(string)
+		if !ok || val == "" {
 			continue
 		}
 

@@ -3,7 +3,6 @@ package trans
 import (
 	"errors"
 	"sort"
-	"sync"
 	"testing"
 
 	"github.com/gin-gonic/gin/binding"
@@ -293,7 +292,6 @@ func TestToZHErr_NonValidationErrorWithTrans(t *testing.T) {
 
 func TestRegisterZHTranslations_GetTranslatorFail(t *testing.T) {
 	PatchConvey("TestRegisterZHTranslations-GetTranslatorFail", t, func() {
-		MockValue(&transOnce).To(sync.Once{})
 		MockValue(&trans).To(nil)
 		Mock((*ut.UniversalTranslator).GetTranslator).Return(nil, false).Build()
 
@@ -305,7 +303,6 @@ func TestRegisterZHTranslations_GetTranslatorFail(t *testing.T) {
 
 func TestRegisterZHTranslations_ValidatorEngineFail(t *testing.T) {
 	PatchConvey("TestRegisterZHTranslations-ValidatorEngineFail", t, func() {
-		MockValue(&transOnce).To(sync.Once{})
 		MockValue(&trans).To(nil)
 
 		// 替换 binding.Validator 为返回非 *validator.Validate 的 mock
@@ -321,7 +318,6 @@ func TestRegisterZHTranslations_ValidatorEngineFail(t *testing.T) {
 
 func TestRegisterZHTranslations_RegisterDefaultTranslationsFail(t *testing.T) {
 	PatchConvey("TestRegisterZHTranslations-RegisterDefaultTranslationsFail", t, func() {
-		MockValue(&transOnce).To(sync.Once{})
 		MockValue(&trans).To(nil)
 		Mock(zt.RegisterDefaultTranslations).Return(errors.New("register failed")).Build()
 

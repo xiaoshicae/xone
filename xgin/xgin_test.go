@@ -220,8 +220,9 @@ func TestMethodNotAllowed(t *testing.T) {
 func TestStopWithoutRun(t *testing.T) {
 	g := New()
 	err := g.Stop()
-	if err == nil {
-		t.Fatal("Stop() should return error when server not started")
+	// srv 为 nil 时应静默返回 nil，避免信号在 Run 赋值 srv 前到达时报错
+	if err != nil {
+		t.Fatalf("Stop() should return nil when server not started, got: %v", err)
 	}
 }
 

@@ -15,6 +15,18 @@ import (
 
 func init() {
 	xhook.BeforeStart(initHttpClient)
+	xhook.BeforeStop(closeHttpClient)
+}
+
+func closeHttpClient() error {
+	clientMu.Lock()
+	defer clientMu.Unlock()
+
+	if rawHttpClient != nil {
+		rawHttpClient.CloseIdleConnections()
+		rawHttpClient = nil
+	}
+	return nil
 }
 
 func initHttpClient() error {

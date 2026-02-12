@@ -68,12 +68,21 @@ func initMulti() error {
 	}
 	xutil.InfoIfEnableDebug("XOne init %s got config: %s", XGormConfigKey, xutil.ToJsonString(sanitizeConfigsForLog(configs)))
 
+	// 先创建所有 client，部分失败时回滚已创建的连接
+	created := make([]*gorm.DB, 0, len(configs))
 	for idx, config := range configs {
 		client, err := newClient(config)
 		if err != nil {
+			// 回滚已创建的连接
+			for _, c := range created {
+				if db, dbErr := c.DB(); dbErr == nil {
+					_ = db.Close()
+				}
+			}
 			return xerror.Newf("xgorm", "init", "newClient failed, name=[%v], err=[%v]", config.Name, err)
 		}
 
+		created = append(created, client)
 		set(config.Name, client)
 
 		// 第一个client为C()默认获取的client
@@ -160,7 +169,12 @@ func newClient(c *Config) (*gorm.DB, error) {
 	db.SetConnMaxLifetime(xutil.ToDuration(c.MaxLifetime))
 	db.SetConnMaxIdleTime(xutil.ToDuration(c.MaxIdleTime))
 
-	err = xutil.Retry(func() error { return db.PingContext(context.Background()) }, 3, time.Second)
+	pingTimeout := xutil.ToDuration(c.DialTimeout)
+	err = xutil.Retry(func() error {
+		ctx, cancel := context.WithTimeout(context.Background(), pingTimeout)
+		defer cancel()
+		return db.PingContext(ctx)
+	}, 3, time.Second)
 	if err != nil {
 		return nil, xerror.Newf("xgorm", "newClient", "invoke db.PingContext failed, err=[%v]", err)
 	}
@@ -264,18 +278,37 @@ func getMultiConfig() ([]*Config, error) {
 }
 
 // sanitizeDSN 对 DSN 中的密码进行脱敏处理
-// 支持 URL 格式 (user:password@host)
+// 支持 URL 格式 (user:password@host) 和 Postgres key=value 格式 (password=xxx)
 func sanitizeDSN(dsn string) string {
+	// URL 格式: user:password@host
 	atIdx := strings.Index(dsn, "@")
-	if atIdx < 0 {
+	if atIdx >= 0 {
+		prefix := dsn[:atIdx]
+		colonIdx := strings.LastIndex(prefix, ":")
+		if colonIdx >= 0 {
+			return prefix[:colonIdx+1] + "***" + dsn[atIdx:]
+		}
 		return dsn
 	}
-	prefix := dsn[:atIdx]
-	colonIdx := strings.LastIndex(prefix, ":")
-	if colonIdx < 0 {
+
+	// Postgres key=value 格式: password=xxx
+	return sanitizeDSNPasswordKV(dsn)
+}
+
+// sanitizeDSNPasswordKV 对 key=value 格式 DSN 中的 password 字段脱敏
+func sanitizeDSNPasswordKV(dsn string) string {
+	const passwordKey = "password="
+	idx := strings.Index(strings.ToLower(dsn), passwordKey)
+	if idx < 0 {
 		return dsn
 	}
-	return prefix[:colonIdx+1] + "***" + dsn[atIdx:]
+	start := idx + len(passwordKey)
+	end := strings.IndexByte(dsn[start:], ' ')
+	if end < 0 {
+		// password 在末尾
+		return dsn[:start] + "***"
+	}
+	return dsn[:start] + "***" + dsn[start+end:]
 }
 
 // sanitizeConfigForLog 创建配置的脱敏副本用于日志输出

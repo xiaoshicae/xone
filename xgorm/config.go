@@ -80,7 +80,7 @@ func configMergeDefault(c *Config) *Config {
 	if c.WriteTimeout == "" {
 		c.WriteTimeout = "5s"
 	}
-	if c.MaxOpenConns == 0 {
+	if c.MaxOpenConns <= 0 {
 		c.MaxOpenConns = 50
 	}
 	if c.MaxIdleConns == 0 {

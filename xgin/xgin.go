@@ -8,6 +8,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/xiaoshicae/xone/v2/xconfig"
@@ -20,7 +21,6 @@ import (
 	"github.com/xiaoshicae/xone/v2/xutil"
 
 	"github.com/gin-gonic/gin"
-	"github.com/sirupsen/logrus"
 	"github.com/swaggo/swag"
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/h2c"
@@ -57,6 +57,7 @@ type XGin struct {
 	swaggerInfo     *swag.Spec
 	swaggerOpts     []options.SwaggerOption
 
+	srvMu sync.Mutex   // 保护 srv 字段的并发访问
 	srv   *http.Server // 对gin进行包装后的http server
 	build bool         // XGin实例是否已经build完成
 }
@@ -103,7 +104,7 @@ func (g *XGin) Build() *XGin {
 	// 注册中文翻译器
 	if ginXOptions.EnableZHTranslations {
 		if err := trans.RegisterZHTranslations(); err != nil {
-			logrus.Warnf("register zh translations failed: %v", err)
+			xutil.WarnIfEnableDebug("register zh translations failed: %v", err)
 		}
 	}
 
@@ -132,6 +133,11 @@ func (g *XGin) Run() error {
 	// 从 xconfig 读取配置（此时 xconfig 已通过 BeforeStart hook 初始化）
 	ginConfig := GetConfig()
 
+	// 校验 TLS 配置完整性
+	if (ginConfig.CertFile == "") != (ginConfig.KeyFile == "") {
+		return xerror.Newf("xgin", "run", "TLS config incomplete: CertFile and KeyFile must be both set or both empty")
+	}
+
 	// 填充 swagger 配置
 	if g.swaggerInfo != nil {
 		setGinSwaggerInfo(g.swaggerInfo)
@@ -152,18 +158,22 @@ func (g *XGin) Run() error {
 		xutil.InfoIfEnableDebug("gin server use h2c (HTTP/2 Cleartext)")
 	}
 
-	g.srv = &http.Server{
+	srv := &http.Server{
 		Addr:    addr,
 		Handler: handler,
 	}
+
+	g.srvMu.Lock()
+	g.srv = srv
+	g.srvMu.Unlock()
 
 	// 根据 TLS 配置决定启动方式
 	var err error
 	if ginConfig.CertFile != "" && ginConfig.KeyFile != "" {
 		xutil.InfoIfEnableDebug("gin server use TLS, cert=[%s], key=[%s]", ginConfig.CertFile, ginConfig.KeyFile)
-		err = g.srv.ListenAndServeTLS(ginConfig.CertFile, ginConfig.KeyFile)
+		err = srv.ListenAndServeTLS(ginConfig.CertFile, ginConfig.KeyFile)
 	} else {
-		err = g.srv.ListenAndServe()
+		err = srv.ListenAndServe()
 	}
 
 	if errors.Is(err, http.ErrServerClosed) {
@@ -174,15 +184,21 @@ func (g *XGin) Run() error {
 
 // Stop 实现 xserver.Server 接口
 func (g *XGin) Stop() error {
-	if g.srv == nil {
-		return xerror.Newf("xgin", "stop", "server not started")
+	g.srvMu.Lock()
+	srv := g.srv
+	g.srvMu.Unlock()
+
+	if srv == nil {
+		// 信号可能在 srv 赋值前到达，此时静默返回而非报错
+		xutil.WarnIfEnableDebug("XGin Stop called but server not started yet, skip")
+		return nil
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), defaultWaitStopDuration)
 	defer cancel()
 
-	if err := g.srv.Shutdown(ctx); err != nil {
-		logrus.WithContext(context.Background()).Errorf("XGin server stop failed, err:%v", err)
+	if err := srv.Shutdown(ctx); err != nil {
+		xutil.ErrorIfEnableDebug("XGin server stop failed, err=[%v]", err)
 		return err
 	}
 	return nil

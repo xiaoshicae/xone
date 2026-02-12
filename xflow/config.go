@@ -1,6 +1,8 @@
 package xflow
 
 import (
+	"sync"
+
 	"github.com/xiaoshicae/xone/v2/xconfig"
 )
 
@@ -20,11 +22,20 @@ func configMergeDefault(c *Config) *Config {
 	return c
 }
 
-// GetConfig 获取 xflow 配置
+var (
+	cachedConfig     *Config
+	cachedConfigOnce sync.Once
+)
+
+// GetConfig 获取 xflow 配置（结果会被缓存，仅首次调用时反序列化）
 func GetConfig() *Config {
-	c := &Config{}
-	if err := xconfig.UnmarshalConfig(XFlowConfigKey, c); err != nil {
-		return configMergeDefault(nil)
-	}
-	return configMergeDefault(c)
+	cachedConfigOnce.Do(func() {
+		c := &Config{}
+		if err := xconfig.UnmarshalConfig(XFlowConfigKey, c); err != nil {
+			cachedConfig = configMergeDefault(nil)
+			return
+		}
+		cachedConfig = configMergeDefault(c)
+	})
+	return cachedConfig
 }

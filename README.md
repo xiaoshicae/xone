@@ -399,6 +399,7 @@ XGorm:
 
 ## 更新日志
 
+- **v2.2.4** (2026-02-12) - fix: fix env placeholder expansion for non-string types, xgin srv race condition, xhttp missing close hook, xgorm ping timeout and multi-init rollback
 - **v2.2.3** (2026-02-12) - fix: resolve concurrency bugs and optimize xgin middleware performance
 - **v2.2.2** (2026-02-12) - fix: 修复跨模块并发安全问题，优化 xgin middleware 敏感字段过滤性能
 - **v2.2.1** (2026-02-11) - refactor: xflow 移除 FlowContext，Processor 接口简化为 (ctx, T) 双参数

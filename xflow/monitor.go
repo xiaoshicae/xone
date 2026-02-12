@@ -68,7 +68,7 @@ func (d *defaultMonitor) OnFlowDone(ctx context.Context, e *FlowEvent) {
 
 var (
 	defaultMonitorInstance Monitor = &defaultMonitor{}
-	monitorMu             sync.RWMutex
+	monitorMu              sync.RWMutex
 )
 
 // SetDefaultMonitor 设置全局默认 Monitor 实现，替换内置的 xlog 打印

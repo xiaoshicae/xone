@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -23,8 +24,8 @@ var (
 	beforeStartHooks       = make([]hook, 0)
 	beforeStartHooksSorted = true // 空列表视为已排序
 	beforeStopHooks        = make([]hook, 0)
-	beforeStopHooksSorted  = true                     // 空列表视为已排序
-	registeredFuncs        = make(map[uintptr]string) // 函数指针 -> hookType，用于去重检测
+	beforeStopHooksSorted  = true                      // 空列表视为已排序
+	registeredFuncs        = make(map[string]struct{}) // hookType+函数指针 -> 已注册
 	hooksMu                sync.RWMutex
 )
 
@@ -36,10 +37,12 @@ type hook struct {
 	Options  *options
 }
 
-// SetStopTimeout 设置 BeforeStop hooks 的超时时间
+// SetStopTimeout 设置 BeforeStop hooks 的超时时间（线程安全）
 func SetStopTimeout(timeout time.Duration) {
 	if timeout > 0 {
+		hooksMu.Lock()
 		defaultStopTimeout = timeout
+		hooksMu.Unlock()
 	}
 }
 
@@ -69,11 +72,12 @@ func registerHook(f HookFunc, opts []Option, hooks *[]hook, sorted *bool, hookTy
 
 	// 去重检测：通过函数指针判断是否重复注册
 	fp := reflect.ValueOf(f).Pointer()
-	if existType, ok := registeredFuncs[fp]; ok {
-		xutil.WarnIfEnableDebug("XOne %s hook duplicate registration detected, already registered as %s, skipping", hookType, existType)
+	key := hookType + ":" + strconv.FormatUint(uint64(fp), 10)
+	if _, ok := registeredFuncs[key]; ok {
+		xutil.WarnIfEnableDebug("XOne %s hook duplicate registration detected, skipping", hookType)
 		return
 	}
-	registeredFuncs[fp] = hookType
+	registeredFuncs[key] = struct{}{}
 
 	if len(*hooks) >= maxHookNum {
 		panic(fmt.Sprintf("XOne %s hook can not be more than %d", hookType, maxHookNum))
@@ -110,7 +114,12 @@ func InvokeBeforeStopHook() error {
 		return nil
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), defaultStopTimeout)
+	// 在锁内读取超时配置，避免与 SetStopTimeout 的 data race
+	hooksMu.RLock()
+	stopTimeout := defaultStopTimeout
+	hooksMu.RUnlock()
+
+	ctx, cancel := context.WithTimeout(context.Background(), stopTimeout)
 	defer cancel()
 
 	stopErrChan := make(chan error, 1)
@@ -123,7 +132,7 @@ func InvokeBeforeStopHook() error {
 	case err := <-stopErrChan:
 		return err // invokeBeforeStopHook 已返回 xerror
 	case <-ctx.Done():
-		return xerror.Newf("xhook", "BeforeStop", "timeout after %v", defaultStopTimeout)
+		return xerror.Newf("xhook", "BeforeStop", "timeout after %v", stopTimeout)
 	}
 }
 

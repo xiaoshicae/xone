@@ -43,7 +43,7 @@ func resetHooks() {
 	beforeStartHooksSorted = true
 	beforeStopHooks = beforeStopHooks[:0]
 	beforeStopHooksSorted = true
-	registeredFuncs = make(map[uintptr]string)
+	registeredFuncs = make(map[string]struct{})
 }
 
 func TestXHookBeforeStart(t *testing.T) {
@@ -307,16 +307,16 @@ func TestHookDedup(t *testing.T) {
 		So(len(hooks), ShouldEqual, 2)
 	})
 
-	PatchConvey("TestHookDedup-同函数跨类型也检测", t, func() {
+	PatchConvey("TestHookDedup-同函数可跨类型注册", t, func() {
 		resetHooks()
 		defer resetHooks()
 
 		BeforeStart(IntFunc1)
-		BeforeStop(IntFunc1) // 同一个函数注册到 BeforeStop，应跳过
+		BeforeStop(IntFunc1) // 同一个函数可以注册到 BeforeStop
 		startHooks := getSortedHooks(&beforeStartHooks, &beforeStartHooksSorted)
 		stopHooks := getSortedHooks(&beforeStopHooks, &beforeStopHooksSorted)
 		So(len(startHooks), ShouldEqual, 1)
-		So(len(stopHooks), ShouldEqual, 0)
+		So(len(stopHooks), ShouldEqual, 1)
 	})
 }
 

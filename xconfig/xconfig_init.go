@@ -6,6 +6,7 @@ import (
 	"path"
 	"regexp"
 	"strings"
+	"sync"
 
 	"github.com/joho/godotenv"
 	"github.com/xiaoshicae/xone/v2/xerror"
@@ -15,7 +16,10 @@ import (
 	"github.com/spf13/viper"
 )
 
-var vip *viper.Viper
+var (
+	vip   *viper.Viper
+	vipMu sync.RWMutex
+)
 
 // 预编译正则表达式，避免重复编译
 var envPlaceholderRegex = regexp.MustCompile(`\$\{([^}:]+)(?::-([^}]*))?\}`)
@@ -42,7 +46,9 @@ func initXConfig() error {
 
 	printFinalConfig(vp) // 打印一下最终的配置信息
 
+	vipMu.Lock()
 	vip = vp
+	vipMu.Unlock()
 	return nil
 }
 

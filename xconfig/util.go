@@ -92,11 +92,14 @@ func GetServerVersion() string {
 }
 
 func getViperConfig() *viper.Viper {
-	if vip == nil {
+	vipMu.RLock()
+	v := vip
+	vipMu.RUnlock()
+	if v == nil {
 		xutil.WarnIfEnableDebug("config not found，please init config first")
 		return viper.New()
 	}
-	return vip
+	return v
 }
 
 func checkParam(key string, conf any) error {

@@ -1,6 +1,7 @@
 package xlog
 
 import (
+	"errors"
 	"io"
 	"sync"
 )
@@ -20,14 +21,20 @@ var logBufPool = sync.Pool{
 	},
 }
 
+var errAsyncWriterClosed = errors.New("async writer is closed")
+
 // asyncWriter 异步写入器，通过 channel + goroutine 将同步写入转为异步
 // 实现 io.WriteCloser 接口
 type asyncWriter struct {
-	ch       chan []byte
-	writer   io.WriteCloser
-	wg       sync.WaitGroup
-	once     sync.Once
-	closeErr error
+	ch        chan []byte
+	writer    io.WriteCloser
+	wg        sync.WaitGroup
+	once      sync.Once
+	mu        sync.Mutex // 保护 closed 标志和 channel 发送/关闭操作，消除竞态窗口
+	closed    bool
+	writeErr  error
+	writeOnce sync.Once
+	closeErr  error
 }
 
 // newAsyncWriter 创建异步写入器
@@ -54,7 +61,19 @@ func (aw *asyncWriter) Write(p []byte) (int, error) {
 		buf = buf[:len(p)]
 	}
 	copy(buf, p)
+
+	aw.mu.Lock()
+	if aw.closed {
+		aw.mu.Unlock()
+		// 归还 buffer 到 pool
+		if cap(buf) <= maxPoolBufSize {
+			logBufPool.Put(buf[:0])
+		}
+		return 0, errAsyncWriterClosed
+	}
 	aw.ch <- buf
+	aw.mu.Unlock()
+
 	return len(p), nil
 }
 
@@ -62,18 +81,28 @@ func (aw *asyncWriter) Write(p []byte) (int, error) {
 // 多次调用安全，底层 writer 只关闭一次
 func (aw *asyncWriter) Close() error {
 	aw.once.Do(func() {
+		aw.mu.Lock()
+		aw.closed = true
 		close(aw.ch)
+		aw.mu.Unlock()
 		aw.wg.Wait()
 		aw.closeErr = aw.writer.Close()
 	})
-	return aw.closeErr
+	if aw.closeErr != nil {
+		return aw.closeErr
+	}
+	return aw.writeErr
 }
 
 // loop 消费 channel 中的数据，写入底层 writer，写完后归还 buffer 到 pool
 func (aw *asyncWriter) loop() {
 	defer aw.wg.Done()
 	for buf := range aw.ch {
-		_, _ = aw.writer.Write(buf)
+		if _, err := aw.writer.Write(buf); err != nil {
+			aw.writeOnce.Do(func() {
+				aw.writeErr = err
+			})
+		}
 		// 不归还过大的 buffer，避免 pool 持有过多内存
 		if cap(buf) <= maxPoolBufSize {
 			logBufPool.Put(buf[:0])

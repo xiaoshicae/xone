@@ -15,12 +15,14 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-// 常量统一定义
-const (
-	// Context key
-	timeFormattedCtxKey = "__time_formatted__"
+// timeFormattedCtxKeyType 用于 context key，避免字符串冲突
+type timeFormattedCtxKeyType struct{}
 
-	// 控制台颜色
+// timeFormattedCtxKey 标记日志时间是否已格式化
+var timeFormattedCtxKey = timeFormattedCtxKeyType{}
+
+// 控制台颜色
+const (
 	colorRed    = 31
 	colorYellow = 33
 	colorBlue   = 36
@@ -94,7 +96,7 @@ func (m *xLogHook) consolePrint(entry *logrus.Entry, caller *runtime.Frame) erro
 	} else {
 		msg = fmt.Appendf(msg, "\x1b[%dm%s\x1b[0m[%s] \x1b[34m%s\x1b[0m %s %s\n", levelColor, levelText, logTimeText, fileName, traceId, entry.Message)
 		if panicStack != nil {
-			msg = fmt.Appendf(msg, "%v", panicStack)
+			msg = fmt.Appendf(msg, "%s\n", panicStack)
 		}
 	}
 

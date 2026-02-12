@@ -386,36 +386,57 @@ func TestEnableDebug(t *testing.T) {
 	mockey.PatchConvey("TestEnableDebug", t, func() {
 		mockey.PatchConvey("TestEnableDebug-True", func() {
 			os.Setenv(DebugKey, "true")
+			os.Unsetenv(legacyDebugKey)
 			defer os.Unsetenv(DebugKey)
 			c.So(EnableXOneDebug(), c.ShouldBeTrue)
 		})
 
 		mockey.PatchConvey("TestEnableDebug-1", func() {
 			os.Setenv(DebugKey, "1")
+			os.Unsetenv(legacyDebugKey)
 			defer os.Unsetenv(DebugKey)
 			c.So(EnableXOneDebug(), c.ShouldBeTrue)
 		})
 
 		mockey.PatchConvey("TestEnableDebug-Yes", func() {
 			os.Setenv(DebugKey, "yes")
+			os.Unsetenv(legacyDebugKey)
 			defer os.Unsetenv(DebugKey)
 			c.So(EnableXOneDebug(), c.ShouldBeTrue)
 		})
 
 		mockey.PatchConvey("TestEnableDebug-On", func() {
 			os.Setenv(DebugKey, "on")
+			os.Unsetenv(legacyDebugKey)
 			defer os.Unsetenv(DebugKey)
 			c.So(EnableXOneDebug(), c.ShouldBeTrue)
 		})
 
 		mockey.PatchConvey("TestEnableDebug-False", func() {
 			os.Setenv(DebugKey, "false")
+			os.Unsetenv(legacyDebugKey)
 			defer os.Unsetenv(DebugKey)
 			c.So(EnableXOneDebug(), c.ShouldBeFalse)
 		})
 
 		mockey.PatchConvey("TestEnableDebug-Empty", func() {
 			os.Unsetenv(DebugKey)
+			os.Unsetenv(legacyDebugKey)
+			c.So(EnableXOneDebug(), c.ShouldBeFalse)
+		})
+
+		mockey.PatchConvey("TestEnableDebug-Legacy", func() {
+			os.Unsetenv(DebugKey)
+			os.Setenv(legacyDebugKey, "true")
+			defer os.Unsetenv(legacyDebugKey)
+			c.So(EnableXOneDebug(), c.ShouldBeTrue)
+		})
+
+		mockey.PatchConvey("TestEnableDebug-Precedence", func() {
+			os.Setenv(DebugKey, "false")
+			os.Setenv(legacyDebugKey, "true")
+			defer os.Unsetenv(DebugKey)
+			defer os.Unsetenv(legacyDebugKey)
 			c.So(EnableXOneDebug(), c.ShouldBeFalse)
 		})
 	})

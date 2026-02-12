@@ -328,16 +328,17 @@ func TestFilterFormBodyEmptyPair(t *testing.T) {
 	}
 }
 
-func TestContainsIgnoreCaseCaseInsensitive(t *testing.T) {
-	fields := []string{"password", "TOKEN"}
+func TestSensitiveFieldMapLookup(t *testing.T) {
+	// 默认敏感字段包含 "password" 和 "token"
+	fieldMap := getSensitiveFieldMap()
 
-	if !containsIgnoreCase("PASSWORD", fields) {
+	if !fieldMap[strings.ToLower("PASSWORD")] {
 		t.Error("should match case-insensitively")
 	}
-	if !containsIgnoreCase("token", fields) {
+	if !fieldMap[strings.ToLower("token")] {
 		t.Error("should match case-insensitively")
 	}
-	if containsIgnoreCase("username", fields) {
+	if fieldMap[strings.ToLower("username")] {
 		t.Error("should not match non-sensitive field")
 	}
 }
@@ -448,35 +449,21 @@ func TestParseClientIPRemoteAddrWithoutPort(t *testing.T) {
 	}
 }
 
-func TestGetAllSensitiveFields(t *testing.T) {
-	fields := getAllSensitiveFields()
+func TestGetSensitiveFieldMap(t *testing.T) {
+	fieldMap := getSensitiveFieldMap()
 
-	// 验证默认敏感字段存在
-	found := false
-	for _, f := range fields {
-		if f == "password" {
-			found = true
-			break
-		}
-	}
-	if !found {
+	// 验证默认敏感字段存在（map 中 key 为小写）
+	if !fieldMap["password"] {
 		t.Error("default sensitive field 'password' should be present")
 	}
 }
 
-func TestGetAllSensitiveHeaders(t *testing.T) {
-	headers := getAllSensitiveHeaders()
+func TestGetSensitiveHeaderMap(t *testing.T) {
+	headerMap := getSensitiveHeaderMap()
 
-	// 验证默认敏感头存在
-	found := false
-	for _, h := range headers {
-		if h == "Authorization" {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Error("default sensitive header 'Authorization' should be present")
+	// 验证默认敏感头存在（map 中 key 为小写）
+	if !headerMap["authorization"] {
+		t.Error("default sensitive header 'authorization' should be present")
 	}
 }
 
@@ -490,8 +477,8 @@ func TestFilterMapSensitiveFieldsDeepNested(t *testing.T) {
 		},
 	}
 
-	fields := []string{"password"}
-	filterMapSensitiveFields(data, fields)
+	fieldMap := map[string]bool{"password": true}
+	filterMapSensitiveFields(data, fieldMap)
 
 	level1 := data["level1"].(map[string]interface{})
 	level2 := level1["level2"].(map[string]interface{})
@@ -759,16 +746,16 @@ func TestFormatElapsed(t *testing.T) {
 // ==================== getBodySnapshot 测试 ====================
 
 func TestGetBodySnapshot_NilRequest(t *testing.T) {
-	result := getBodySnapshot(nil)
-	if result != nil {
+	result, buf := getBodySnapshot(nil)
+	if result != nil || buf != nil {
 		t.Error("nil request should return nil")
 	}
 }
 
 func TestGetBodySnapshot_NoBody(t *testing.T) {
 	req := httptest.NewRequest("GET", "/test", http.NoBody)
-	result := getBodySnapshot(req)
-	if result != nil {
+	result, buf := getBodySnapshot(req)
+	if result != nil || buf != nil {
 		t.Error("NoBody should return nil")
 	}
 }
@@ -776,8 +763,8 @@ func TestGetBodySnapshot_NoBody(t *testing.T) {
 func TestGetBodySnapshot_NilBody(t *testing.T) {
 	req := httptest.NewRequest("GET", "/test", nil)
 	req.Body = nil
-	result := getBodySnapshot(req)
-	if result != nil {
+	result, buf := getBodySnapshot(req)
+	if result != nil || buf != nil {
 		t.Error("nil body should return nil")
 	}
 }
@@ -786,9 +773,12 @@ func TestGetBodySnapshot_MultipartFormData(t *testing.T) {
 	req := httptest.NewRequest("POST", "/upload", strings.NewReader("file data"))
 	req.Header.Set("Content-Type", "multipart/form-data; boundary=xxx")
 
-	result := getBodySnapshot(req)
+	result, buf := getBodySnapshot(req)
 	if string(result) != "[multipart/form-data body omitted]" {
 		t.Errorf("expected multipart omitted message, got %s", string(result))
+	}
+	if buf != nil {
+		t.Error("multipart should not wrap body")
 	}
 }
 
@@ -796,9 +786,12 @@ func TestGetBodySnapshot_OctetStream(t *testing.T) {
 	req := httptest.NewRequest("POST", "/upload", strings.NewReader("binary data"))
 	req.Header.Set("Content-Type", "application/octet-stream")
 
-	result := getBodySnapshot(req)
+	result, buf := getBodySnapshot(req)
 	if string(result) != "[binary body omitted]" {
 		t.Errorf("expected binary omitted message, got %s", string(result))
+	}
+	if buf != nil {
+		t.Error("octet-stream should not wrap body")
 	}
 }
 
@@ -811,9 +804,12 @@ func TestGetBodySnapshot_WithGetBody(t *testing.T) {
 		return io.NopCloser(strings.NewReader(bodyContent)), nil
 	}
 
-	result := getBodySnapshot(req)
+	result, buf := getBodySnapshot(req)
 	if string(result) != bodyContent {
 		t.Errorf("expected %s, got %s", bodyContent, string(result))
+	}
+	if buf != nil {
+		t.Error("GetBody should not wrap body")
 	}
 }
 
@@ -823,27 +819,31 @@ func TestGetBodySnapshot_WithoutGetBody(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	req.GetBody = nil // 清除 GetBody，走降级路径
 
-	result := getBodySnapshot(req)
-	if string(result) != bodyContent {
-		t.Errorf("expected %s, got %s", bodyContent, string(result))
+	result, buf := getBodySnapshot(req)
+	if result != nil {
+		t.Errorf("expected nil snapshot, got %s", string(result))
+	}
+	if buf == nil {
+		t.Fatal("body should be wrapped for capture")
 	}
 
-	// 验证 body 被重新包装
+	// 验证 body 被包装且可正常读取
 	if req.Body == nil {
-		t.Error("body should be re-wrapped")
-	}
-	if req.GetBody == nil {
-		t.Error("GetBody should be set")
+		t.Error("body should be wrapped")
 	}
 
-	// 验证 GetBody 可以多次获取
-	body, err := req.GetBody()
+	data, err := io.ReadAll(req.Body)
 	if err != nil {
-		t.Fatalf("GetBody returned error: %v", err)
+		t.Fatalf("Read body failed: %v", err)
 	}
-	data, _ := io.ReadAll(body)
 	if string(data) != bodyContent {
-		t.Errorf("GetBody should return original body, got %s", string(data))
+		t.Errorf("body should be readable, got %s", string(data))
+	}
+	if buf.String() != bodyContent {
+		t.Errorf("captured body should match, got %s", buf.String())
+	}
+	if req.GetBody != nil {
+		t.Error("GetBody should remain nil")
 	}
 }
 
@@ -855,10 +855,23 @@ func TestGetBodySnapshot_GetBodyError(t *testing.T) {
 		return nil, errors.New("get body error")
 	}
 
-	// GetBody 失败时，降级为直接读取 Body
-	result := getBodySnapshot(req)
-	if string(result) != bodyContent {
-		t.Errorf("expected %s, got %s", bodyContent, string(result))
+	// GetBody 失败时，降级为包装 Body 捕获
+	result, buf := getBodySnapshot(req)
+	if result != nil {
+		t.Errorf("expected nil snapshot, got %s", string(result))
+	}
+	if buf == nil {
+		t.Fatal("body should be wrapped for capture")
+	}
+	data, err := io.ReadAll(req.Body)
+	if err != nil {
+		t.Fatalf("Read body failed: %v", err)
+	}
+	if string(data) != bodyContent {
+		t.Errorf("body should be readable, got %s", string(data))
+	}
+	if buf.String() != bodyContent {
+		t.Errorf("captured body should match, got %s", buf.String())
 	}
 }
 
@@ -867,9 +880,19 @@ func TestGetBodySnapshot_ReadError(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	req.GetBody = nil
 
-	result := getBodySnapshot(req)
+	result, buf := getBodySnapshot(req)
 	if result != nil {
-		t.Error("read error should return nil")
+		t.Error("snapshot should be nil when body is wrapped")
+	}
+	if buf == nil {
+		t.Fatal("body should be wrapped for capture")
+	}
+	_, err := io.ReadAll(req.Body)
+	if err == nil {
+		t.Error("expected read error")
+	}
+	if buf.Len() != 0 {
+		t.Error("buffer should be empty on read error")
 	}
 }
 
@@ -955,9 +978,46 @@ func TestFilterJSONBody_MarshalError(t *testing.T) {
 	PatchConvey("TestFilterJSONBody_MarshalError", t, func() {
 		Mock(json.Marshal).Return(nil, errors.New("marshal error")).Build()
 
-		body := []byte(`{"name":"test"}`)
+		body := []byte(`{"password":"secret"}`)
 		result := filterJSONBody(body)
 		// json.Marshal 失败时，回退为去换行后的原始字符串
-		So(result, ShouldEqual, `{"name":"test"}`)
+		So(result, ShouldEqual, `{"password":"secret"}`)
 	})
+}
+
+// ==================== bodyMayContainSensitiveField 测试 ====================
+
+func TestBodyMayContainSensitiveField(t *testing.T) {
+	fieldBytes := getSensitiveFieldBytes()
+
+	tests := []struct {
+		name     string
+		body     []byte
+		expected bool
+	}{
+		{"包含敏感字段", []byte(`{"password":"secret"}`), true},
+		{"包含大写敏感字段", []byte(`{"PASSWORD":"secret"}`), true},
+		{"不包含敏感字段", []byte(`{"username":"john","age":20}`), false},
+		{"空 body", []byte{}, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := bodyMayContainSensitiveField(tt.body, fieldBytes)
+			if result != tt.expected {
+				t.Errorf("bodyMayContainSensitiveField(%s) = %v, want %v", string(tt.body), result, tt.expected)
+			}
+		})
+	}
+}
+
+// ==================== filterJSONBody 快速路径测试 ====================
+
+func TestFilterJSONBody_FastPath(t *testing.T) {
+	// 不包含敏感字段的 JSON body，应走快速路径（不做 unmarshal+marshal）
+	body := []byte(`{"username":"john","age":20}`)
+	result := filterJSONBody(body)
+	if result != `{"username":"john","age":20}` {
+		t.Errorf("fast path should return body as-is, got %s", result)
+	}
 }

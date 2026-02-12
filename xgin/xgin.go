@@ -225,12 +225,11 @@ func setGinMode() {
 	if strings.TrimSpace(os.Getenv(gin.EnvGinMode)) != "" {
 		return
 	}
-	switch strings.ToLower(strings.TrimSpace(os.Getenv("SERVER_ENABLE_DEBUG"))) {
-	case "true", "1", "t", "yes", "y", "on":
+	if xutil.EnableXOneDebug() {
 		gin.SetMode(gin.DebugMode)
-	default:
-		gin.SetMode(gin.ReleaseMode)
+		return
 	}
+	gin.SetMode(gin.ReleaseMode)
 }
 
 func injectSwaggerInfo(swaggerInfo *swag.Spec, engine *gin.Engine, opts ...options.SwaggerOption) {

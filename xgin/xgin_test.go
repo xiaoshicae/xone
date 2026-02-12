@@ -14,6 +14,7 @@ import (
 	"github.com/xiaoshicae/xone/v2/xgin/options"
 	"github.com/xiaoshicae/xone/v2/xgin/trans"
 	"github.com/xiaoshicae/xone/v2/xserver"
+	"github.com/xiaoshicae/xone/v2/xutil"
 
 	. "github.com/bytedance/mockey"
 	. "github.com/smartystreets/goconvey/convey"
@@ -681,9 +682,11 @@ func TestSetGinMode_EnvSet(t *testing.T) {
 func TestSetGinMode_DebugEnabled(t *testing.T) {
 	PatchConvey("TestSetGinMode-DebugEnabled", t, func() {
 		oldGinMode := os.Getenv(gin.EnvGinMode)
-		oldDebug := os.Getenv("SERVER_ENABLE_DEBUG")
+		oldDebug := os.Getenv(xutil.DebugKey)
+		oldLegacyDebug := os.Getenv("SERVER_ENABLE_DEBUG")
 		os.Unsetenv(gin.EnvGinMode)
-		os.Setenv("SERVER_ENABLE_DEBUG", "true")
+		os.Setenv(xutil.DebugKey, "true")
+		os.Unsetenv("SERVER_ENABLE_DEBUG")
 		defer func() {
 			if oldGinMode == "" {
 				os.Unsetenv(gin.EnvGinMode)
@@ -691,9 +694,14 @@ func TestSetGinMode_DebugEnabled(t *testing.T) {
 				os.Setenv(gin.EnvGinMode, oldGinMode)
 			}
 			if oldDebug == "" {
+				os.Unsetenv(xutil.DebugKey)
+			} else {
+				os.Setenv(xutil.DebugKey, oldDebug)
+			}
+			if oldLegacyDebug == "" {
 				os.Unsetenv("SERVER_ENABLE_DEBUG")
 			} else {
-				os.Setenv("SERVER_ENABLE_DEBUG", oldDebug)
+				os.Setenv("SERVER_ENABLE_DEBUG", oldLegacyDebug)
 			}
 			gin.SetMode(gin.TestMode) // 恢复测试模式
 		}()
@@ -706,15 +714,20 @@ func TestSetGinMode_DebugEnabled(t *testing.T) {
 func TestSetGinMode_ReleaseDefault(t *testing.T) {
 	PatchConvey("TestSetGinMode-ReleaseDefault", t, func() {
 		oldGinMode := os.Getenv(gin.EnvGinMode)
-		oldDebug := os.Getenv("SERVER_ENABLE_DEBUG")
+		oldDebug := os.Getenv(xutil.DebugKey)
+		oldLegacyDebug := os.Getenv("SERVER_ENABLE_DEBUG")
 		os.Unsetenv(gin.EnvGinMode)
+		os.Unsetenv(xutil.DebugKey)
 		os.Unsetenv("SERVER_ENABLE_DEBUG")
 		defer func() {
 			if oldGinMode != "" {
 				os.Setenv(gin.EnvGinMode, oldGinMode)
 			}
 			if oldDebug != "" {
-				os.Setenv("SERVER_ENABLE_DEBUG", oldDebug)
+				os.Setenv(xutil.DebugKey, oldDebug)
+			}
+			if oldLegacyDebug != "" {
+				os.Setenv("SERVER_ENABLE_DEBUG", oldLegacyDebug)
 			}
 			gin.SetMode(gin.TestMode)
 		}()

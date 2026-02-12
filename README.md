@@ -399,6 +399,7 @@ XGorm:
 
 ## 更新日志
 
+- **v2.2.2** (2026-02-12) - fix: 修复跨模块并发安全问题，优化 xgin middleware 敏感字段过滤性能
 - **v2.2.1** (2026-02-11) - refactor: xflow 移除 FlowContext，Processor 接口简化为 (ctx, T) 双参数
 - **v2.2.0** (2026-02-11) - feat: 新增 xflow 流程编排模块，支持强弱依赖、自动回滚、Monitor 监控
 - **v2.1.6** (2026-02-11) - perf: 跨模块性能优化，xerror/xgorm/xlog/xutil 热路径减少内存分配

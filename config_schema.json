@@ -24,15 +24,9 @@
               "type": "string",
               "description": "指定启用的环境"
             }
-          },
-          "required": [
-            "Active"
-          ]
+          }
         }
-      },
-      "required": [
-        "Name"
-      ]
+      }
     },
     "XGin": {
       "type": "object",
@@ -224,10 +218,7 @@
         "Name": {
           "$ref": "#/definitions/GormConfig/properties/Name"
         }
-      },
-      "required": [
-        "DSN"
-      ]
+      }
     }
   },
   "required": [],
@@ -291,10 +282,7 @@
           "type": "string",
           "description": "用于区分多数据库配置时的唯一标识(多数据库时必填)"
         }
-      },
-      "required": [
-        "DSN"
-      ]
+      }
     }
   }
 }

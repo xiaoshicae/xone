@@ -35,10 +35,13 @@ func WarnIfEnableDebug(msg string, args ...any) {
 	LogIfEnableDebug(logrus.WarnLevel, msg, args...)
 }
 
+// xoneDebugPrefix XOne 框架调试日志的醒目前缀（紫色高亮）
+const xoneDebugPrefix = "\x1b[35m[XOne-Debug]\x1b[0m "
+
 // LogIfEnableDebug 当开启 debug 模式时按指定级别输出日志
 func LogIfEnableDebug(level logrus.Level, msg string, args ...any) {
 	if EnableXOneDebug() {
-		logger.Logf(level, msg, args...)
+		logger.Logf(level, xoneDebugPrefix+msg, args...)
 	}
 }
 

@@ -26,7 +26,9 @@ func C() *Client {
     return defaultClient
 }
 
-// 带 Context 版本（推荐）
+// 带 Context 版本（仅当底层 client 需要在获取时绑定 context 才提供）
+// 例：xgorm 需要 CWithCtx，因为 GORM 要 db.WithContext(ctx)
+// 例：xredis 不需要，因为 redis.Client 每个操作方法本身接受 ctx
 func CWithCtx(ctx context.Context) *Client { ... }
 ```
 

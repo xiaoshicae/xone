@@ -399,6 +399,7 @@ XGorm:
 
 ## 更新日志
 
+- **v2.2.6** (2026-02-13) - chore: remove all required constraints from config schema
 - **v2.2.5** (2026-02-13) - chore: add [XOne-Debug] prefix to framework debug logs for better distinction
 - **v2.2.4** (2026-02-12) - fix: fix env placeholder expansion for non-string types, xgin srv race condition, xhttp missing close hook, xgorm ping timeout and multi-init rollback
 - **v2.2.3** (2026-02-12) - fix: resolve concurrency bugs and optimize xgin middleware performance

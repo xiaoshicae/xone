@@ -41,7 +41,7 @@ package main
 import (
   "context"
   "fmt"
-  "github.com/xiaoshicae/xone/xhttp"
+  "github.com/xiaoshicae/xone/v2/xhttp"
 )
 
 func main() {
@@ -74,7 +74,7 @@ package main
 import (
   "bufio"
   "fmt"
-  "github.com/xiaoshicae/xone/xhttp"
+  "github.com/xiaoshicae/xone/v2/xhttp"
 )
 
 func main() {

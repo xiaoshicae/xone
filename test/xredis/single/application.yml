@@ -1,0 +1,13 @@
+Server:
+  Name: "xredis-single-test"
+
+XLog:
+  Console: true
+
+XRedis:
+  Addr: "localhost:6379"
+  DB: 0
+  DialTimeout: "5s"
+  ReadTimeout: "3s"
+  WriteTimeout: "3s"
+  PoolSize: 10

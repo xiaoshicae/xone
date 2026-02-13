@@ -17,7 +17,7 @@ XLog 是 XOne 框架的日志模块，基于 logrus 封装，提供：
 XLog:
   Level: "debug"            # 日志级别(optional default "info")，支持 debug/info/warn/error/fatal
   Name: "xxx"               # 日志文件名称(optional default "app")
-  Path: "/a/b/c"            # 日志文件夹路径(optional default "./log/")
+  Path: "/a/b/c"            # 日志文件夹路径(optional default "./log")
   Console: true             # 日志内容是否需要在控制台打印(optional default false)
   ConsoleFormatIsRaw: true  # 控制台打印原始JSON格式(optional default false)
   MaxAge: "10d"             # 日志保存最大天数(optional default "7d")
@@ -52,7 +52,7 @@ package main
 
 import (
     "context"
-    "github.com/xiaoshicae/xone/xlog"
+    "github.com/xiaoshicae/xone/v2/xlog"
 )
 
 func main() {

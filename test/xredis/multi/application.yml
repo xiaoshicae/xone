@@ -1,0 +1,13 @@
+Server:
+  Name: "xredis-multi-test"
+
+XLog:
+  Console: true
+
+XRedis:
+  - Name: "cache"
+    Addr: "localhost:6379"
+    DB: 0
+  - Name: "session"
+    Addr: "localhost:6379"
+    DB: 1

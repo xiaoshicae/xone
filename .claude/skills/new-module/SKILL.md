@@ -64,10 +64,9 @@ func C() *Client {
     return defaultClient
 }
 
-// CWithCtx 获取带 context 的客户端（推荐）
-func CWithCtx(ctx context.Context) *Client {
-    // ...
-}
+// 注意：CWithCtx 仅在三方库 API 要求通过 context 传递 client 时才需要提供
+// 例如 xhttp 的 resty 需要 R().SetContext(ctx) 来传递 trace 信息
+// 如果三方库的每个操作方法本身已接受 ctx 参数（如 go-redis），则无需 CWithCtx
 ```
 
 ### x{模块名}_init.go
@@ -113,6 +112,11 @@ func closeX{模块名}() error {
 - 如需链路追踪，检查 `xtrace.EnableTrace()`
 - import 路径使用 v2：`github.com/xiaoshicae/xone/v2/x{模块名}`
 - 测试使用 mockey + goconvey，需要 `-gcflags="all=-N -l"`
+- 配置默认值需要考虑生产级别的最佳实践：
+  - 如果三方库对零值有合理的默认处理（如 go-redis 的 PoolSize=0 → 10*GOMAXPROCS），应优先让三方库自身处理，不要在 `configMergeDefault` 中硬编码一个可能偏小的值
+  - 超时类默认值应兼顾安全性和性能（如建连超时不宜过长，读写超时需考虑复杂操作场景）
+  - 连接池相关配置（MinIdleConns、PoolTimeout 等）应有合理预设，避免冷启动延迟和资源耗尽
+  - 重试相关配置应保留三方库的禁用语义（如 -1 表示禁用），不要强制覆盖为默认值
 
 ## 4. README.md 模板
 

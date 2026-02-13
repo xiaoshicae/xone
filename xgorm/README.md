@@ -62,7 +62,7 @@ host=localhost user=postgres password=pass dbname=mydb port=5432 sslmode=disable
 ### 获取默认客户端
 
 ```go
-import "github.com/xiaoshicae/xone/xgorm"
+import "github.com/xiaoshicae/xone/v2/xgorm"
 
 // 获取默认客户端（单数据库模式或多数据库模式的第一个）
 db := xgorm.C()

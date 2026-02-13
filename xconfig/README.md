@@ -64,7 +64,7 @@
   ```go
   package main
 
-  import "github.com/xiaoshicae/xone/xconfig"
+  import "github.com/xiaoshicae/xone/v2/xconfig"
 
   // 如果结构体名称, 如果字段名称有特殊命名方式(驼峰映射成下划线等)，需要tag mapstructure 进行映射
   // 具体使用方法请参考: https://github.com/spf13/viper

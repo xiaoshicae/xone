@@ -79,6 +79,7 @@ go vet ./...                                 # 静态检查
 - `/review` - 模块代码审查
 - `/perf` - 性能瓶颈分析
 - `/build-fix` - 快速修复编译错误
+- `/integration-test` - 集成测试（自动启动 Docker 依赖 + 运行 test/ 下的测试）
 
 ## 关键依赖
 

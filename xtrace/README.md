@@ -39,7 +39,7 @@ package main
 
 import (
     "context"
-    "github.com/xiaoshicae/xone/xtrace"
+    "github.com/xiaoshicae/xone/v2/xtrace"
 )
 
 func main() {

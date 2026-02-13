@@ -29,7 +29,7 @@ XCache:
 ### 泛型 API（推荐）
 
 ```go
-import "github.com/xiaoshicae/xone/xcache"
+import "github.com/xiaoshicae/xone/v2/xcache"
 
 // 直接使用包级泛型函数，无需手动类型断言
 xcache.Set("user:123", user)

@@ -8,6 +8,7 @@ import (
 	"path"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -678,6 +679,407 @@ func TestGetOsArgs(t *testing.T) {
 		args := GetOsArgs()
 		// 测试环境下 os.Args[0] 为测试二进制，os.Args[1:] 不为 nil
 		c.So(args, c.ShouldNotBeNil)
+	})
+}
+
+// ==================== future.go ====================
+
+func TestAsync_Get(t *testing.T) {
+	mockey.PatchConvey("TestAsync_Get", t, func() {
+		mockey.PatchConvey("TestAsync_Get-Success", func() {
+			f := Async(func() (string, error) {
+				return "hello", nil
+			})
+			val, err := f.Get()
+			c.So(err, c.ShouldBeNil)
+			c.So(val, c.ShouldEqual, "hello")
+		})
+
+		mockey.PatchConvey("TestAsync_Get-Error", func() {
+			f := Async(func() (int, error) {
+				return 0, errors.New("task failed")
+			})
+			val, err := f.Get()
+			c.So(err, c.ShouldNotBeNil)
+			c.So(err.Error(), c.ShouldEqual, "task failed")
+			c.So(val, c.ShouldEqual, 0)
+		})
+
+		mockey.PatchConvey("TestAsync_Get-ZeroValue", func() {
+			f := Async(func() (string, error) {
+				return "", nil
+			})
+			val, err := f.Get()
+			c.So(err, c.ShouldBeNil)
+			c.So(val, c.ShouldEqual, "")
+		})
+
+		mockey.PatchConvey("TestAsync_Get-StructType", func() {
+			type Result struct {
+				Code int
+				Msg  string
+			}
+			f := Async(func() (Result, error) {
+				return Result{Code: 200, Msg: "ok"}, nil
+			})
+			val, err := f.Get()
+			c.So(err, c.ShouldBeNil)
+			c.So(val.Code, c.ShouldEqual, 200)
+			c.So(val.Msg, c.ShouldEqual, "ok")
+		})
+
+		mockey.PatchConvey("TestAsync_Get-NilPointer", func() {
+			f := Async(func() (*strings.Builder, error) {
+				return nil, nil
+			})
+			val, err := f.Get()
+			c.So(err, c.ShouldBeNil)
+			c.So(val, c.ShouldBeNil)
+		})
+
+		mockey.PatchConvey("TestAsync_Get-SlowTask", func() {
+			f := Async(func() (string, error) {
+				time.Sleep(50 * time.Millisecond)
+				return "slow", nil
+			})
+			val, err := f.Get()
+			c.So(err, c.ShouldBeNil)
+			c.So(val, c.ShouldEqual, "slow")
+		})
+
+		mockey.PatchConvey("TestAsync_Get-Panic", func() {
+			f := Async(func() (string, error) {
+				return "before panic", nil
+			})
+			// 正常任务不 panic，确保正常返回
+			val, err := f.Get()
+			c.So(err, c.ShouldBeNil)
+			c.So(val, c.ShouldEqual, "before panic")
+		})
+	})
+}
+
+func TestAsync_GetWithTimeout(t *testing.T) {
+	mockey.PatchConvey("TestAsync_GetWithTimeout", t, func() {
+		mockey.PatchConvey("TestAsync_GetWithTimeout-Success", func() {
+			f := Async(func() (string, error) {
+				return "done", nil
+			})
+			val, err := f.GetWithTimeout(1 * time.Second)
+			c.So(err, c.ShouldBeNil)
+			c.So(val, c.ShouldEqual, "done")
+		})
+
+		mockey.PatchConvey("TestAsync_GetWithTimeout-Timeout", func() {
+			f := Async(func() (string, error) {
+				time.Sleep(1 * time.Second)
+				return "late", nil
+			})
+			val, err := f.GetWithTimeout(10 * time.Millisecond)
+			c.So(err, c.ShouldEqual, context.DeadlineExceeded)
+			c.So(val, c.ShouldEqual, "")
+		})
+
+		mockey.PatchConvey("TestAsync_GetWithTimeout-ErrorBeforeTimeout", func() {
+			f := Async(func() (string, error) {
+				return "", errors.New("fast error")
+			})
+			val, err := f.GetWithTimeout(1 * time.Second)
+			c.So(err, c.ShouldNotBeNil)
+			c.So(err.Error(), c.ShouldEqual, "fast error")
+			c.So(val, c.ShouldEqual, "")
+		})
+
+		mockey.PatchConvey("TestAsync_GetWithTimeout-AlreadyDone", func() {
+			f := Async(func() (int, error) {
+				return 99, nil
+			})
+			f.Get() // 先等完成
+			val, err := f.GetWithTimeout(1 * time.Millisecond)
+			c.So(err, c.ShouldBeNil)
+			c.So(val, c.ShouldEqual, 99)
+		})
+	})
+}
+
+func TestAsync_IsDone(t *testing.T) {
+	mockey.PatchConvey("TestAsync_IsDone", t, func() {
+		mockey.PatchConvey("TestAsync_IsDone-NotDone", func() {
+			f := Async(func() (string, error) {
+				time.Sleep(1 * time.Second)
+				return "result", nil
+			})
+			c.So(f.IsDone(), c.ShouldBeFalse)
+		})
+
+		mockey.PatchConvey("TestAsync_IsDone-Done", func() {
+			f := Async(func() (string, error) {
+				return "result", nil
+			})
+			f.Get() // 等待完成
+			c.So(f.IsDone(), c.ShouldBeTrue)
+		})
+
+		mockey.PatchConvey("TestAsync_IsDone-DoneWithError", func() {
+			f := Async(func() (string, error) {
+				return "", errors.New("fail")
+			})
+			f.Get()
+			c.So(f.IsDone(), c.ShouldBeTrue)
+		})
+
+		mockey.PatchConvey("TestAsync_IsDone-Idempotent", func() {
+			f := Async(func() (int, error) {
+				return 1, nil
+			})
+			f.Get()
+			c.So(f.IsDone(), c.ShouldBeTrue)
+			c.So(f.IsDone(), c.ShouldBeTrue)
+			c.So(f.IsDone(), c.ShouldBeTrue)
+		})
+	})
+}
+
+func TestAsync_MultipleGet(t *testing.T) {
+	mockey.PatchConvey("TestAsync_MultipleGet", t, func() {
+		mockey.PatchConvey("TestAsync_MultipleGet-SameResult", func() {
+			f := Async(func() (string, error) {
+				return "hello", nil
+			})
+			v1, e1 := f.Get()
+			v2, e2 := f.Get()
+			v3, e3 := f.GetWithTimeout(1 * time.Second)
+			c.So(e1, c.ShouldBeNil)
+			c.So(e2, c.ShouldBeNil)
+			c.So(e3, c.ShouldBeNil)
+			c.So(v1, c.ShouldEqual, "hello")
+			c.So(v2, c.ShouldEqual, "hello")
+			c.So(v3, c.ShouldEqual, "hello")
+		})
+
+		mockey.PatchConvey("TestAsync_MultipleGet-ErrorConsistent", func() {
+			f := Async(func() (int, error) {
+				return 0, errors.New("persistent error")
+			})
+			_, e1 := f.Get()
+			_, e2 := f.Get()
+			c.So(e1.Error(), c.ShouldEqual, "persistent error")
+			c.So(e2.Error(), c.ShouldEqual, "persistent error")
+		})
+	})
+}
+
+func TestAsync_ConcurrentGet(t *testing.T) {
+	mockey.PatchConvey("TestAsync_ConcurrentGet", t, func() {
+		f := Async(func() (int, error) {
+			time.Sleep(20 * time.Millisecond)
+			return 100, nil
+		})
+
+		// 多个 goroutine 并发 Get
+		results := make(chan int, 5)
+		errs := make(chan error, 5)
+		for i := 0; i < 5; i++ {
+			go func() {
+				v, e := f.Get()
+				results <- v
+				errs <- e
+			}()
+		}
+		for i := 0; i < 5; i++ {
+			c.So(<-errs, c.ShouldBeNil)
+			c.So(<-results, c.ShouldEqual, 100)
+		}
+	})
+}
+
+// ==================== pool.go ====================
+
+func TestGlobalSubmit(t *testing.T) {
+	mockey.PatchConvey("TestGlobalSubmit", t, func() {
+		mockey.PatchConvey("TestGlobalSubmit-Basic", func() {
+			ch := make(chan int, 1)
+			Submit(func() { ch <- 42 })
+			c.So(<-ch, c.ShouldEqual, 42)
+		})
+
+		mockey.PatchConvey("TestGlobalSubmit-Go", func() {
+			f := Go(defaultPool, func() (string, error) {
+				return "default", nil
+			})
+			val, err := f.Get()
+			c.So(err, c.ShouldBeNil)
+			c.So(val, c.ShouldEqual, "default")
+		})
+	})
+}
+
+func TestNewPool_WorkerCount(t *testing.T) {
+	mockey.PatchConvey("TestNewPool_WorkerCount", t, func() {
+		mockey.PatchConvey("TestNewPool_WorkerCount-Normal", func() {
+			p := NewPool(4)
+			defer p.Shutdown()
+			c.So(p, c.ShouldNotBeNil)
+			c.So(cap(p.tasks), c.ShouldEqual, 4*16)
+		})
+
+		mockey.PatchConvey("TestNewPool_WorkerCount-Zero", func() {
+			p := NewPool(0)
+			defer p.Shutdown()
+			c.So(p, c.ShouldNotBeNil)
+			c.So(cap(p.tasks), c.ShouldEqual, 1*16)
+		})
+
+		mockey.PatchConvey("TestNewPool_WorkerCount-Negative", func() {
+			p := NewPool(-5)
+			defer p.Shutdown()
+			c.So(p, c.ShouldNotBeNil)
+			c.So(cap(p.tasks), c.ShouldEqual, 1*16)
+		})
+	})
+}
+
+func TestPool_Submit(t *testing.T) {
+	mockey.PatchConvey("TestPool_Submit", t, func() {
+		mockey.PatchConvey("TestPool_Submit-Basic", func() {
+			p := NewPool(2)
+			defer p.Shutdown()
+
+			ch := make(chan int, 3)
+			p.Submit(func() { ch <- 1 })
+			p.Submit(func() { ch <- 2 })
+			p.Submit(func() { ch <- 3 })
+
+			results := make([]int, 0, 3)
+			for range 3 {
+				results = append(results, <-ch)
+			}
+			c.So(len(results), c.ShouldEqual, 3)
+			c.So(results, c.ShouldContain, 1)
+			c.So(results, c.ShouldContain, 2)
+			c.So(results, c.ShouldContain, 3)
+		})
+
+		mockey.PatchConvey("TestPool_Submit-AfterShutdown", func() {
+			p := NewPool(1)
+			p.Shutdown()
+
+			// 关闭后 Submit 不阻塞也不 panic
+			c.So(func() { p.Submit(func() {}) }, c.ShouldNotPanic)
+		})
+
+		mockey.PatchConvey("TestPool_Submit-ConcurrentSubmit", func() {
+			p := NewPool(4)
+			defer p.Shutdown()
+
+			var mu sync.Mutex
+			count := 0
+			var wg sync.WaitGroup
+			for range 100 {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					p.Submit(func() {
+						mu.Lock()
+						count++
+						mu.Unlock()
+					})
+				}()
+			}
+			wg.Wait()
+			// 等待所有任务执行完
+			p.Shutdown()
+			c.So(count, c.ShouldEqual, 100)
+		})
+	})
+}
+
+func TestPool_Go(t *testing.T) {
+	mockey.PatchConvey("TestPool_Go", t, func() {
+		mockey.PatchConvey("TestPool_Go-Success", func() {
+			p := NewPool(2)
+			defer p.Shutdown()
+			f := Go(p, func() (string, error) {
+				return "pooled", nil
+			})
+			val, err := f.Get()
+			c.So(err, c.ShouldBeNil)
+			c.So(val, c.ShouldEqual, "pooled")
+		})
+
+		mockey.PatchConvey("TestPool_Go-Error", func() {
+			p := NewPool(2)
+			defer p.Shutdown()
+			f := Go(p, func() (int, error) {
+				return 0, errors.New("pool task error")
+			})
+			val, err := f.Get()
+			c.So(err, c.ShouldNotBeNil)
+			c.So(err.Error(), c.ShouldEqual, "pool task error")
+			c.So(val, c.ShouldEqual, 0)
+		})
+
+		mockey.PatchConvey("TestPool_Go-MultipleFutures", func() {
+			p := NewPool(4)
+			defer p.Shutdown()
+
+			futures := make([]*Future[int], 10)
+			for i := range 10 {
+				v := i
+				futures[i] = Go(p, func() (int, error) {
+					return v * v, nil
+				})
+			}
+			for i, f := range futures {
+				val, err := f.Get()
+				c.So(err, c.ShouldBeNil)
+				c.So(val, c.ShouldEqual, i*i)
+			}
+		})
+
+		mockey.PatchConvey("TestPool_Go-WithTimeout", func() {
+			p := NewPool(1)
+			defer p.Shutdown()
+
+			// 提交一个慢任务占住唯一 worker
+			p.Submit(func() {
+				time.Sleep(500 * time.Millisecond)
+			})
+
+			f := Go(p, func() (string, error) {
+				return "result", nil
+			})
+			val, err := f.GetWithTimeout(1 * time.Second)
+			c.So(err, c.ShouldBeNil)
+			c.So(val, c.ShouldEqual, "result")
+		})
+	})
+}
+
+func TestPool_Shutdown(t *testing.T) {
+	mockey.PatchConvey("TestPool_Shutdown", t, func() {
+		mockey.PatchConvey("TestPool_Shutdown-WaitsForCompletion", func() {
+			p := NewPool(2)
+			var mu sync.Mutex
+			count := 0
+			for range 10 {
+				p.Submit(func() {
+					time.Sleep(10 * time.Millisecond)
+					mu.Lock()
+					count++
+					mu.Unlock()
+				})
+			}
+			p.Shutdown()
+			c.So(count, c.ShouldEqual, 10)
+		})
+
+		mockey.PatchConvey("TestPool_Shutdown-DoubleShutdown", func() {
+			p := NewPool(1)
+			p.Shutdown()
+			// 第二次 Shutdown 不 panic
+			c.So(func() { p.Shutdown() }, c.ShouldNotPanic)
+		})
 	})
 }
 

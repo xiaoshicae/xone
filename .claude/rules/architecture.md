@@ -61,6 +61,58 @@ func configMergeDefault(c *Config) *Config {
 - 使用 `errors.Is()` 和 `errors.As()` 进行错误判断
 - 关键操作失败时记录日志：`xutil.ErrorIfEnableDebug()`
 
+## xhook 使用规范
+
+### 执行顺序机制
+
+XOne 各模块通过 `init()` 函数调用 `xhook.BeforeStart()` / `xhook.BeforeStop()` 注册 Hook。Go 的 import 机制保证了 `init()` 按包导入顺序依次执行，因此 Hook 的注册顺序由**用户 import 各模块的顺序**决定。
+
+对于相同 Order 值的 Hook，`xhook` 使用**稳定排序**（`slices.SortStableFunc`），即不改变注册时的相对顺序。这意味着只要 import 顺序一致，执行顺序就是确定的。
+
+**BeforeStart 正序执行，BeforeStop 反序执行**，确保与启动顺序对称（LIFO）。后初始化的模块先关闭，先初始化的模块最后关闭。
+
+### 不推荐使用 Order
+
+`xhook.Order()` 选项虽然可用，但**不推荐普通模块使用**，应保持默认值（100）。原因：
+
+1. **依赖 import 顺序更直观**：Go 开发者天然理解 import 顺序，而显式 Order 值分散在各模块中，难以全局把控
+2. **避免 Order 冲突**：多个模块各自声明 Order 值，容易产生冲突或不一致
+3. **框架内部已有保障**：xconfig 使用 `Order(1)` 确保最先初始化，其余模块无需干预顺序
+
+```go
+// 正确 - 使用默认 Order，依靠 import 顺序
+func init() {
+    xhook.BeforeStart(initXLog)
+    xhook.BeforeStop(closeXLog)
+}
+
+// 不推荐 - 除 xconfig 外，其他模块不应使用 Order
+func init() {
+    xhook.BeforeStart(initXLog, xhook.Order(30))
+}
+```
+
+### 用户侧控制顺序的方式
+
+用户在 `main.go` 中通过 import 顺序控制各模块的初始化顺序：
+
+```go
+import (
+    _ "github.com/xiaoshicae/xone/v2/xconfig" // 1. 配置（Order=1，始终最先）
+    _ "github.com/xiaoshicae/xone/v2/xtrace"  // 2. 链路追踪
+    _ "github.com/xiaoshicae/xone/v2/xlog"    // 3. 日志
+    _ "github.com/xiaoshicae/xone/v2/xhttp"   // 4. HTTP 客户端
+    _ "github.com/xiaoshicae/xone/v2/xgorm"   // 5. 数据库
+)
+```
+
+BeforeStop 自动反序执行，无需额外配置：
+
+```
+BeforeStart 执行顺序：xconfig → xtrace → xlog → xhttp → xgorm
+BeforeStop  执行顺序：xgorm → xhttp → xlog → xtrace → xconfig
+```
+
 ## 新增模块指南
 
 1. 创建 `x{模块名}/` 目录
@@ -68,6 +120,49 @@ func configMergeDefault(c *Config) *Config {
 3. 配置 key 统一为 `X{模块名}ConfigKey = "X{模块名}"`
 4. 在 `init()` 中通过 `xhook.BeforeStart()` / `xhook.BeforeStop()` 注册 Hook
 5. 初始化函数先检查 `xconfig.ContainKey(key)`，无配置则跳过
+
+## xflow 使用规范
+
+### Process 与 Rollback 对称原则
+
+每个 Processor 的 `Rollback()` 必须与 `Process()` 放在同一个结构体中，保持正向逻辑和回滚逻辑的对称性。**谁做的事，谁负责回滚**。
+
+```go
+// 正确 - 扣券逻辑和回滚逻辑在同一个 Processor 中
+type DeductCouponProcessor struct{}
+
+func (p *DeductCouponProcessor) Name() string             { return "扣券" }
+func (p *DeductCouponProcessor) Dependency() xflow.Dependency { return xflow.Strong }
+
+func (p *DeductCouponProcessor) Process(ctx context.Context, data *OrderData) error {
+    // 正向：扣减优惠券
+    return deductCoupon(ctx, data.CouponID)
+}
+
+func (p *DeductCouponProcessor) Rollback(ctx context.Context, data *OrderData) error {
+    // 回滚：归还优惠券
+    return returnCoupon(ctx, data.CouponID)
+}
+```
+
+### 回滚触发时机
+
+当某个**强依赖** Processor 的 `Process()` 失败时，xflow 会**逆序回滚**所有已成功执行的 Processor（包括弱依赖）：
+
+```
+扣券(Strong) → 扣库存(Strong) → 扣款(Strong) → 发通知(Weak)
+                                   ↑ 失败
+回滚顺序：扣库存.Rollback() → 扣券.Rollback()
+```
+
+- 强依赖失败 → 中断流程，逆序回滚所有已成功的 Processor
+- 弱依赖失败 → 跳过错误继续执行，但失败的弱依赖也会被纳入回滚列表
+
+### 设计要点
+
+- **Rollback 不能假设 Process 完全成功**：弱依赖 Process 失败后仍可能被回滚，Rollback 中应做幂等处理
+- **Rollback 失败不中断回滚流程**：单个 Rollback 出错会记录到 `RollbackErrors`，但不会阻止其余 Processor 回滚
+- **共享数据用指针类型**：`Flow[T]` 的泛型参数建议使用指针（如 `*OrderData`），确保各 Processor 间数据可共享修改
 
 ## xserver 包
 

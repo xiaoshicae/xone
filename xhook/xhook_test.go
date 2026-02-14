@@ -105,12 +105,31 @@ func TestXHookBeforeStop(t *testing.T) {
 		BeforeStop(h1, Order(1))
 		BeforeStop(h3, Order(3))
 		BeforeStop(h2, Order(2))
-		// 使用 getSortedHooks 获取排序后的副本进行测试
+		// getSortedHooks 仍按 Order 升序排列（底层排序逻辑不变）
 		hooks := getSortedHooks(&beforeStopHooks, &beforeStopHooksSorted)
 		for i, h := range hooks {
 			err := h.HookFunc()
 			So(err.Error(), ShouldEqual, "h"+strconv.Itoa(i+1))
 		}
+	})
+
+	PatchConvey("TestXHookBeforeStop-ReverseExecution", t, func() {
+		resetHooks()
+		defer resetHooks()
+
+		// 模拟模块按 init 顺序依次注册 BeforeStop（默认 Order=100）
+		// 期望执行时反序：h3 → h2 → h1
+		order := make([]string, 0, 3)
+		h1 := func() error { order = append(order, "h1"); return nil }
+		h2 := func() error { order = append(order, "h2"); return nil }
+		h3 := func() error { order = append(order, "h3"); return nil }
+		BeforeStop(h1)
+		BeforeStop(h2)
+		BeforeStop(h3)
+
+		err := InvokeBeforeStopHook()
+		So(err, ShouldBeNil)
+		So(order, ShouldResemble, []string{"h3", "h2", "h1"})
 	})
 }
 

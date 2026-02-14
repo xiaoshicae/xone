@@ -399,6 +399,7 @@ XGorm:
 
 ## 更新日志
 
+- **v2.3.1** (2026-02-14) - fix: reverse BeforeStop hook execution order to ensure LIFO symmetry with BeforeStart
 - **v2.3.0** (2026-02-13) - feat: add xredis module with production-optimized defaults, fix README import paths to v2
 - **v2.2.6** (2026-02-13) - chore: remove all required constraints from config schema
 - **v2.2.5** (2026-02-13) - chore: add [XOne-Debug] prefix to framework debug logs for better distinction

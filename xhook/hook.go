@@ -107,9 +107,10 @@ func InvokeBeforeStartHook() error {
 	return nil
 }
 
-// InvokeBeforeStopHook 执行所有 BeforeStop Hook
+// InvokeBeforeStopHook 执行所有 BeforeStop Hook（按注册顺序的逆序执行，确保与 BeforeStart 对称）
 func InvokeBeforeStopHook() error {
 	hooks := getSortedHooks(&beforeStopHooks, &beforeStopHooksSorted)
+	slices.Reverse(hooks)
 
 	if len(hooks) == 0 {
 		return nil

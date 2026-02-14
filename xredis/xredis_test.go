@@ -1,7 +1,6 @@
 package xredis
 
 import (
-	"context"
 	"errors"
 	"testing"
 	"time"
@@ -412,10 +411,8 @@ func TestNewClient(t *testing.T) {
 		mockey.Mock(xutil.Retry).To(func(fn func() error, attempts int, sleep time.Duration) error {
 			return fn()
 		}).Build()
-		mockey.Mock((*redis.Client).Ping).To(func(client *redis.Client, ctx context.Context) *redis.StatusCmd {
-			cmd := redis.NewStatusCmd(ctx, "PONG")
-			return cmd
-		}).Build()
+		// mock Process 使 Ping 不走真实连接
+		mockey.Mock((*redis.Client).Process).Return(nil).Build()
 		mockey.Mock(xtrace.EnableTrace).Return(false).Build()
 
 		client, err := newClient(&Config{Addr: "localhost:6379", DialTimeout: "100ms"})

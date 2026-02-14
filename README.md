@@ -399,6 +399,7 @@ XGorm:
 
 ## 更新日志
 
+- **v2.5.0** (2026-02-14) - feat: refactor xflow to dual-generic Flow[Req, Resp] with FlowData and self-contained ExecuteResult
 - **v2.4.0** (2026-02-14) - feat: add Future async task and Pool worker pool utilities in xutil
 - **v2.3.1** (2026-02-14) - fix: reverse BeforeStop hook execution order to ensure LIFO symmetry with BeforeStart
 - **v2.3.0** (2026-02-13) - feat: add xredis module with production-optimized defaults, fix README import paths to v2

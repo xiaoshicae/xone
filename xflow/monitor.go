@@ -20,7 +20,7 @@ type StepEvent struct {
 // FlowEvent 流程执行完成事件
 type FlowEvent struct {
 	FlowName string
-	Result   *ExecuteResult
+	Result   ResultSummary
 	Duration time.Duration
 }
 
@@ -63,7 +63,7 @@ func (d *defaultMonitor) OnFlowDone(ctx context.Context, e *FlowEvent) {
 		status = "failed"
 	}
 	xlog.Info(ctx, "[xflow] flow=[%s] duration=[%s] status=[%s] rolled=[%t]",
-		e.FlowName, e.Duration, status, e.Result.Rolled)
+		e.FlowName, e.Duration, status, e.Result.IsRolled())
 }
 
 var (

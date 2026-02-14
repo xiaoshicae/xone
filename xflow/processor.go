@@ -25,13 +25,13 @@ func (d Dependency) String() string {
 }
 
 // Processor 流程处理器接口
-type Processor[T any] interface {
+type Processor[Req, Resp any] interface {
 	// Name 返回处理器名称，用于日志和错误标识
 	Name() string
 	// Dependency 返回依赖类型
 	Dependency() Dependency
 	// Process 执行处理逻辑
-	Process(ctx context.Context, data T) error
+	Process(ctx context.Context, data *FlowData[Req, Resp]) error
 	// Rollback 回滚逻辑，强依赖失败时逆序调用已成功的处理器
-	Rollback(ctx context.Context, data T) error
+	Rollback(ctx context.Context, data *FlowData[Req, Resp]) error
 }

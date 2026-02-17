@@ -128,6 +128,7 @@ func main() {
 | [xgorm](./xgorm/README.md)     | [gorm](https://gorm.io/)                                            | 数据库（MySQL / PostgreSQL，多数据源）     | ✅   | ✅     |
 | [xcache](./xcache/README.md)   | [ristretto](https://github.com/dgraph-io/ristretto)                 | 本地缓存（支持 TTL / 泛型）               | -   | -     |
 | [xflow](./xflow/README.md)    | -                                                                   | 流程编排（强弱依赖 + 自动回滚 + 监控）        | -   | -     |
+| [xpipeline](./xpipeline/README.md) | -                                                              | 流式 Pipeline（goroutine + channel 串联） | -   | -     |
 | xserver                        | -                                                                   | 服务运行和生命周期管理                      | -   | -     |
 | [xgin](./xgin/README.md)       | [gin](https://github.com/gin-gonic/gin)                             | Gin Web 框架集成（Builder 模式 + 内置中间件） | ✅   | ✅     |
 
@@ -399,6 +400,7 @@ XGorm:
 
 ## 更新日志
 
+- **v2.6.0** (2026-02-17) - feat: add xpipeline streaming pipeline module with goroutine+channel chaining, monitor support, and 100% test coverage
 - **v2.5.0** (2026-02-14) - feat: refactor xflow to dual-generic Flow[Req, Resp] with FlowData and self-contained ExecuteResult
 - **v2.4.0** (2026-02-14) - feat: add Future async task and Pool worker pool utilities in xutil
 - **v2.3.1** (2026-02-14) - fix: reverse BeforeStop hook execution order to ensure LIFO symmetry with BeforeStart

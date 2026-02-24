@@ -297,6 +297,9 @@ defer span.End()
 XTrace:
   Enable: true
   Console: false   # 仅调试时开启控制台输出
+  ForwardHeaders:  # 自动透传的自定义 Header
+    - X-Request-Id
+    - X-Tenant-Id
 ```
 
 ## 生命周期 Hook
@@ -384,6 +387,9 @@ XLog:
 XTrace:
   Enable: true                 # 启用链路追踪（默认 true）
   Console: false               # 控制台打印（默认 false）
+  ForwardHeaders:              # 透传的自定义 Header（默认无）
+    - X-Request-Id
+    - X-Tenant-Id
 
 XHttp:
   Timeout: "60s"               # 请求超时（默认 60s）
@@ -400,6 +406,7 @@ XGorm:
 
 ## 更新日志
 
+- **v2.7.0** (2026-02-24) - feat: add custom header propagation in xtrace via HeaderPropagator for automatic forwarding of headers like X-Request-ID across services
 - **v2.6.0** (2026-02-17) - feat: add xpipeline streaming pipeline module with goroutine+channel chaining, monitor support, and 100% test coverage
 - **v2.5.0** (2026-02-14) - feat: refactor xflow to dual-generic Flow[Req, Resp] with FlowData and self-contained ExecuteResult
 - **v2.4.0** (2026-02-14) - feat: add Future async task and Pool worker pool utilities in xutil

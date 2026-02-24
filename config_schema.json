@@ -124,6 +124,13 @@
         "Console": {
           "type": ["boolean", "string"],
           "description": "是否要在控制台打印trace内容，默认false"
+        },
+        "ForwardHeaders": {
+          "type": "array",
+          "description": "需要在链路中透传的自定义HTTP Header列表（如X-Request-Id、X-Tenant-Id），配置后自动从上游请求提取并注入下游请求",
+          "items": {
+            "type": "string"
+          }
         }
       }
     },

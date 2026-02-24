@@ -31,6 +31,17 @@ func TestConfigMergeDefault(t *testing.T) {
 			So(*c.Enable, ShouldBeFalse)
 			So(c.Console, ShouldBeTrue)
 		})
+
+		PatchConvey("ForwardHeadersDefault", func() {
+			c := configMergeDefault(&Config{})
+			So(c.ForwardHeaders, ShouldBeNil)
+		})
+
+		PatchConvey("ForwardHeadersPreserved", func() {
+			headers := []string{"X-Request-Id", "X-Tenant-Id"}
+			c := configMergeDefault(&Config{ForwardHeaders: headers})
+			So(c.ForwardHeaders, ShouldResemble, headers)
+		})
 	})
 }
 
@@ -151,6 +162,17 @@ func TestInitXTraceByConfig(t *testing.T) {
 			err := initXTraceByConfig(&Config{Console: true}, "test-svc", "v1.0.0")
 			So(err, ShouldNotBeNil)
 			So(err.Error(), ShouldContainSubstring, "init exporter failed")
+		})
+
+		PatchConvey("WithForwardHeaders", func() {
+			headers := []string{"X-Request-Id", "X-Tenant-Id"}
+			err := initXTraceByConfig(&Config{ForwardHeaders: headers}, "test-svc", "v1.0.0")
+			So(err, ShouldBeNil)
+		})
+
+		PatchConvey("WithEmptyForwardHeaders", func() {
+			err := initXTraceByConfig(&Config{ForwardHeaders: []string{}}, "test-svc", "v1.0.0")
+			So(err, ShouldBeNil)
 		})
 	})
 }

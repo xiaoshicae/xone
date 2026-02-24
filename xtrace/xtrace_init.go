@@ -90,12 +90,17 @@ func initXTraceByConfig(c *Config, serviceName, serviceVersion string) error {
 	tp := trace.NewTracerProvider(tpOpts...)
 	otel.SetTracerProvider(tp)
 
-	// 设置 propagator，支持 W3C Trace Context 和 B3 格式
-	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
+	// 设置 propagator，支持 W3C Trace Context、Baggage 和 B3 格式
+	propagators := []propagation.TextMapPropagator{
 		propagation.TraceContext{},
 		propagation.Baggage{},
 		b3.New(),
-	))
+	}
+	if len(c.ForwardHeaders) > 0 {
+		propagators = append(propagators, NewHeaderPropagator(c.ForwardHeaders))
+		xutil.InfoIfEnableDebug("XOne initXTrace registered HeaderPropagator, headers=%v", c.ForwardHeaders)
+	}
+	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(propagators...))
 
 	// 使用互斥锁保护 shutdown 函数的设置，超时由 xhook stop hook 统一控制
 	shutdownMu.Lock()

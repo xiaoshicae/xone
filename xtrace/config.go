@@ -14,6 +14,11 @@ type Config struct {
 	// Console 内容是否需要在控制台打印
 	// optional default false
 	Console bool `mapstructure:"Console"`
+
+	// ForwardHeaders 需要在链路中透传的自定义 HTTP Header 列表
+	// 配置后会自动注册 HeaderPropagator，从上游请求 Extract 并向下游请求 Inject
+	// optional default nil（不注册）
+	ForwardHeaders []string `mapstructure:"ForwardHeaders"`
 }
 
 func configMergeDefault(c *Config) *Config {

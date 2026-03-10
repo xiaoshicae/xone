@@ -406,6 +406,7 @@ XGorm:
 
 ## 更新日志
 
+- **v2.8.0** (2026-03-10) - feat: add domain-based header forwarding rules in xtrace HeaderPropagator via ForwardHeaderRules config
 - **v2.7.0** (2026-02-24) - feat: add custom header propagation in xtrace via HeaderPropagator for automatic forwarding of headers like X-Request-ID across services
 - **v2.6.0** (2026-02-17) - feat: add xpipeline streaming pipeline module with goroutine+channel chaining, monitor support, and 100% test coverage
 - **v2.5.0** (2026-02-14) - feat: refactor xflow to dual-generic Flow[Req, Resp] with FlowData and self-contained ExecuteResult

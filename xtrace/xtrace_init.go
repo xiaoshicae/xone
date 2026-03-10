@@ -96,9 +96,9 @@ func initXTraceByConfig(c *Config, serviceName, serviceVersion string) error {
 		propagation.Baggage{},
 		b3.New(),
 	}
-	if len(c.ForwardHeaders) > 0 {
-		propagators = append(propagators, NewHeaderPropagator(c.ForwardHeaders))
-		xutil.InfoIfEnableDebug("XOne initXTrace registered HeaderPropagator, headers=%v", c.ForwardHeaders)
+	if len(c.ForwardHeaders) > 0 || len(c.ForwardHeaderRules) > 0 {
+		propagators = append(propagators, NewHeaderPropagator(c.ForwardHeaders, c.ForwardHeaderRules))
+		xutil.InfoIfEnableDebug("XOne initXTrace registered HeaderPropagator, globalHeaders=%v, rules=%v", c.ForwardHeaders, c.ForwardHeaderRules)
 	}
 	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(propagators...))
 

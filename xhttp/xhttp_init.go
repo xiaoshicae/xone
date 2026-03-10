@@ -53,6 +53,8 @@ func initHttpClient() error {
 	}
 
 	// 根据是否启用 trace 选择 Transport
+	// 链路：client → HostAwareTransport（设置目标 host 到 ctx）→ otelhttp.Transport → baseTransport
+	// HostAwareTransport 使 HeaderPropagator 能按域名过滤透传 Header
 	var finalTransport http.RoundTripper = baseTransport
 	if xtrace.EnableTrace() {
 		opts := []otelhttp.Option{
@@ -60,7 +62,8 @@ func initHttpClient() error {
 				return r.Method + " " + r.URL.Path
 			}),
 		}
-		finalTransport = otelhttp.NewTransport(baseTransport, opts...)
+		otelTransport := otelhttp.NewTransport(baseTransport, opts...)
+		finalTransport = &xtrace.HostAwareTransport{Next: otelTransport}
 	}
 
 	rawHttpClient := &http.Client{

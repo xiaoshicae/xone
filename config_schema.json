@@ -127,9 +127,33 @@
         },
         "ForwardHeaders": {
           "type": "array",
-          "description": "需要在链路中透传的自定义HTTP Header列表（如X-Request-Id、X-Tenant-Id），配置后自动从上游请求提取并注入下游请求",
+          "description": "全局透传的自定义HTTP Header列表，向所有下游服务透传（如X-Request-Id），配置后自动从上游请求提取并注入下游请求",
           "items": {
             "type": "string"
+          }
+        },
+        "ForwardHeaderRules": {
+          "type": "array",
+          "description": "按域名透传的Header规则列表，仅当请求目标域名匹配时才透传对应Header，防止敏感Header泄漏到第三方服务",
+          "items": {
+            "type": "object",
+            "properties": {
+              "Domains": {
+                "type": "array",
+                "description": "域名模式列表，支持精确匹配（如api.example.com）和通配符前缀（如*.svc.cluster.local），匹配时忽略端口和大小写",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "Headers": {
+                "type": "array",
+                "description": "该规则下要透传的Header列表，仅当目标域名匹配Domains中的任一模式时才注入",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": ["Domains", "Headers"]
           }
         }
       }

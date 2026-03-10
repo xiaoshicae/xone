@@ -296,10 +296,15 @@ defer span.End()
 ```yaml
 XTrace:
   Enable: true
-  Console: false   # 仅调试时开启控制台输出
-  ForwardHeaders:  # 自动透传的自定义 Header
+  Console: false             # 仅调试时开启控制台输出
+  ForwardHeaders:            # 全局透传的自定义 Header（向所有下游服务透传）
     - X-Request-Id
-    - X-Tenant-Id
+  ForwardHeaderRules:        # 按域名透传（仅匹配的域名才透传，防止敏感 Header 泄漏）
+    - Domains:
+        - "*.svc.cluster.local"
+      Headers:
+        - X-Auth-Token
+        - X-Tenant-Id
 ```
 
 ## 生命周期 Hook
@@ -387,9 +392,14 @@ XLog:
 XTrace:
   Enable: true                 # 启用链路追踪（默认 true）
   Console: false               # 控制台打印（默认 false）
-  ForwardHeaders:              # 透传的自定义 Header（默认无）
+  ForwardHeaders:              # 全局透传的自定义 Header（默认无）
     - X-Request-Id
-    - X-Tenant-Id
+  ForwardHeaderRules:          # 按域名透传的 Header 规则（默认无）
+    - Domains:                 # 域名模式，支持 *.example.com 通配
+        - "*.svc.cluster.local"
+      Headers:                 # 仅匹配域名时才透传的 Header
+        - X-Auth-Token
+        - X-Tenant-Id
 
 XHttp:
   Timeout: "60s"               # 请求超时（默认 60s）

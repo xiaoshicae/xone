@@ -297,8 +297,7 @@ xmetric.GaugeSet("ws_connections", 42, xmetric.T("app", "chat"))
 // Histogram 分布
 xmetric.HistogramObserve("db_query_duration_ms", 12.5, xmetric.T("table", "orders"))
 
-// 暴露 /metrics 端点
-e.GET("/metrics", gin.WrapH(xmetric.Handler()))
+// /metrics 端点由 xgin 自动注册（默认路径 /metrics，可通过 options.MetricsPath 自定义）
 ```
 
 配置示例：
@@ -306,6 +305,8 @@ e.GET("/metrics", gin.WrapH(xmetric.Handler()))
 ```yaml
 XMetric:
   Namespace: "myapp"
+  ConstLabels:
+    env: "prod"
   EnableGoMetrics: true
   EnableLogErrorMetric: true
 ```
@@ -434,7 +435,33 @@ XTrace:
 
 XMetric:
   Namespace: "myapp"             # 指标命名空间前缀
-  Path: "/metrics"               # 端点路径（默认 /metrics）
+  ConstLabels:                   # 全局常量标签（区分环境等）
+    env: "prod"
+  HttpDurationBuckets:           # HTTP 入站/出站请求耗时桶边界（毫秒，默认 [1,5,10,25,50,100,250,500,1000,2500,5000,10000]）
+    - 1
+    - 5
+    - 10
+    - 25
+    - 50
+    - 100
+    - 250
+    - 500
+    - 1000
+    - 2500
+    - 5000
+    - 10000
+  HistogramObserveBuckets:       # HistogramObserve() 业务指标桶边界（秒，默认 prometheus.DefBuckets）
+    - 0.005
+    - 0.01
+    - 0.025
+    - 0.05
+    - 0.1
+    - 0.25
+    - 0.5
+    - 1
+    - 2.5
+    - 5
+    - 10
   EnableGoMetrics: true          # Go runtime 指标（默认 true）
   EnableProcessMetrics: true     # 进程指标（默认 true）
   EnableLogErrorMetric: true     # xlog.Error 自动上报（默认 true）
@@ -455,6 +482,7 @@ XGorm:
 
 ## 更新日志
 
+- **v2.9.1** (2026-03-11) - refactor: consolidate xmetric config, unify HTTP duration buckets, auto-register /metrics endpoint in xgin, update docs and schema
 - **v2.9.0** (2026-03-11) - feat: add xmetric Prometheus module with Counter/Gauge/Histogram APIs, Gin middleware, xhttp outbound metrics, and xlog error auto-report
 - **v2.8.0** (2026-03-10) - feat: add domain-based header forwarding rules in xtrace HeaderPropagator via ForwardHeaderRules config
 - **v2.7.0** (2026-02-24) - feat: add custom header propagation in xtrace via HeaderPropagator for automatic forwarding of headers like X-Request-ID across services

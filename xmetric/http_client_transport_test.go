@@ -67,7 +67,6 @@ func TestNewHTTPClientMetricTransport(t *testing.T) {
 	PatchConvey("TestNewHTTPClientMetricTransport-带Namespace", t, func() {
 		resetClientMetricState()
 		registryMu.Lock()
-		namespace = "myapp"
 		metricConfig = &Config{Namespace: "myapp"}
 		registryMu.Unlock()
 
@@ -293,10 +292,10 @@ func TestInitClientMetricCollectors_Idempotent(t *testing.T) {
 	})
 }
 
-func TestDefaultClientDurationMsBuckets(t *testing.T) {
-	PatchConvey("TestDefaultClientDurationMsBuckets-桶边界正确", t, func() {
+func TestDefaultHttpDurationBuckets(t *testing.T) {
+	PatchConvey("TestDefaultHttpDurationBuckets-桶边界正确", t, func() {
 		expected := []float64{1, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000}
-		So(defaultClientDurationMsBuckets, ShouldResemble, expected)
+		So(defaultHttpDurationBuckets, ShouldResemble, expected)
 	})
 }
 

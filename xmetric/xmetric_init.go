@@ -28,17 +28,15 @@ func initMetric() error {
 	xutil.InfoIfEnableDebug("XOne initMetric got config: %s", xutil.ToJsonString(c))
 
 	// 注册 Go runtime 和进程指标
-	if enableGoMetrics() {
+	if *c.EnableGoMetrics {
 		defaultRegistry.MustRegister(promcollectors.NewGoCollector())
 	}
-	if enableProcessMetrics() {
+	if *c.EnableProcessMetrics {
 		defaultRegistry.MustRegister(promcollectors.NewProcessCollector(promcollectors.ProcessCollectorOpts{}))
 	}
 
 	// 设置全局配置
 	registryMu.Lock()
-	namespace = c.Namespace
-	histBuckets = c.HistogramBuckets
 	metricConfig = c
 	metricsHandler = promhttp.HandlerFor(defaultRegistry, promhttp.HandlerOpts{
 		EnableOpenMetrics: true,
@@ -46,7 +44,7 @@ func initMetric() error {
 	registryMu.Unlock()
 
 	// 注册 logrus hook（Error 自动上报 metric），只注册一次
-	if enableLogErrorMetric() {
+	if *c.EnableLogErrorMetric {
 		logHookOnce.Do(func() {
 			logrus.AddHook(newMetricLogHook(c.Namespace))
 		})
@@ -60,8 +58,6 @@ func closeMetric() error {
 	defer registryMu.Unlock()
 	metricsHandler = nil
 	metricConfig = nil
-	namespace = ""
-	histBuckets = nil
 	return nil
 }
 
@@ -72,31 +68,4 @@ func getConfig() (*Config, error) {
 	}
 	c = configMergeDefault(c)
 	return c, nil
-}
-
-// enableGoMetrics 是否启用 Go runtime 指标，默认 true
-func enableGoMetrics() bool {
-	key := XMetricConfigKey + ".EnableGoMetrics"
-	if !xconfig.ContainKey(key) {
-		return true
-	}
-	return xconfig.GetBool(key)
-}
-
-// enableProcessMetrics 是否启用进程指标，默认 true
-func enableProcessMetrics() bool {
-	key := XMetricConfigKey + ".EnableProcessMetrics"
-	if !xconfig.ContainKey(key) {
-		return true
-	}
-	return xconfig.GetBool(key)
-}
-
-// enableLogErrorMetric 是否启用 xlog.Error 自动上报 metric，默认 true
-func enableLogErrorMetric() bool {
-	key := XMetricConfigKey + ".EnableLogErrorMetric"
-	if !xconfig.ContainKey(key) {
-		return true
-	}
-	return xconfig.GetBool(key)
 }

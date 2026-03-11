@@ -17,10 +17,11 @@ type metricLogHook struct {
 
 func newMetricLogHook(ns string) *metricLogHook {
 	counter := prometheus.NewCounterVec(prometheus.CounterOpts{
-		Namespace: ns,
-		Subsystem: "log",
-		Name:      "errors_total",
-		Help:      "日志 Error 及以上级别总数",
+		Namespace:   ns,
+		Subsystem:   "log",
+		Name:        "errors_total",
+		Help:        "日志 Error 及以上级别总数",
+		ConstLabels: getConstLabels(),
 	}, []string{"level", "caller"})
 
 	registered := safeRegister(counter)

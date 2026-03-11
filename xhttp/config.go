@@ -1,5 +1,7 @@
 package xhttp
 
+import "github.com/xiaoshicae/xone/v2/xutil"
+
 const XHttpConfigKey = "XHttp"
 
 type Config struct {
@@ -38,6 +40,10 @@ type Config struct {
 	// RetryMaxWaitTime 最大重试等待时间
 	// optional default "2s"
 	RetryMaxWaitTime string `mapstructure:"RetryMaxWaitTime"`
+
+	// EnableMetric 是否启用出站请求 Prometheus 指标采集
+	// optional default true
+	EnableMetric *bool `mapstructure:"EnableMetric"`
 }
 
 func configMergeDefault(c *Config) *Config {
@@ -68,6 +74,9 @@ func configMergeDefault(c *Config) *Config {
 	}
 	if c.RetryMaxWaitTime == "" {
 		c.RetryMaxWaitTime = "2s"
+	}
+	if c.EnableMetric == nil {
+		c.EnableMetric = xutil.ToPtr(true)
 	}
 	return c
 }

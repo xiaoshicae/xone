@@ -34,6 +34,14 @@ func EnableMetricMiddleware(enableMetricMiddleware bool) Option {
 	}
 }
 
+// MetricsPath 设置 Prometheus /metrics 端点路径，默认 "/metrics"
+// 启用 MetricMiddleware 时自动注册该路由，无需手动配置
+func MetricsPath(path string) Option {
+	return func(o *Options) {
+		o.MetricsPath = path
+	}
+}
+
 type Option func(*Options)
 
 type Options struct {
@@ -42,6 +50,7 @@ type Options struct {
 	EnableZHTranslations   bool
 	EnableMetricMiddleware bool
 	LogSkipPaths           []string // 日志中间件忽略的路由列表
+	MetricsPath            string   // Prometheus metrics 端点路径，默认 "/metrics"
 }
 
 func DefaultOptions() *Options {
@@ -51,5 +60,6 @@ func DefaultOptions() *Options {
 		EnableMetricMiddleware: true,
 		EnableZHTranslations:   false,
 		LogSkipPaths:           make([]string, 0),
+		MetricsPath:            "/metrics",
 	}
 }

@@ -40,9 +40,17 @@
           "type": ["integer", "string"],
           "description": "服务监听的端口，默认8000"
         },
-        "UseHttp2": {
+        "UseH2C": {
           "type": ["boolean", "string"],
-          "description": "是否使用http2协议，默认false"
+          "description": "是否启用 h2c（HTTP/2 Cleartext，非 TLS 下的 HTTP/2），默认 false"
+        },
+        "CertFile": {
+          "type": "string",
+          "description": "TLS 证书路径，配置后自动启用 HTTPS"
+        },
+        "KeyFile": {
+          "type": "string",
+          "description": "TLS 私钥路径，需与 CertFile 同时配置"
         },
         "Swagger": {
           "type": "object",
@@ -166,13 +174,23 @@
           "type": "string",
           "description": "指标命名空间前缀，如 myapp，设置后所有指标名会加上该前缀（如 myapp_http_requests_total）"
         },
-        "Path": {
-          "type": "string",
-          "description": "metrics 端点路径，默认 /metrics"
+        "ConstLabels": {
+          "type": "object",
+          "description": "全局常量标签，自动附加到所有指标上，典型用途：区分环境（env=prod）、集群（cluster=cn-east）",
+          "additionalProperties": {
+            "type": "string"
+          }
         },
-        "HistogramBuckets": {
+        "HttpDurationBuckets": {
           "type": "array",
-          "description": "直方图默认桶边界，默认 prometheus.DefBuckets",
+          "description": "HTTP 入站/出站请求耗时 Histogram 桶边界（毫秒），影响 http_request_duration_ms 和 http_client_request_duration_ms，默认 [1,5,10,25,50,100,250,500,1000,2500,5000,10000]",
+          "items": {
+            "type": "number"
+          }
+        },
+        "HistogramObserveBuckets": {
+          "type": "array",
+          "description": "通过 HistogramObserve() API 创建的业务 Histogram 默认桶边界（秒），默认 prometheus.DefBuckets",
           "items": {
             "type": "number"
           }

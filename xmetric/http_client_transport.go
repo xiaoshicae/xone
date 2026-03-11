@@ -9,9 +9,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
-// 默认出站请求耗时桶边界（毫秒）
-var defaultClientDurationMsBuckets = []float64{1, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000}
-
 var (
 	clientMetricOnce      sync.Once
 	clientRequestsTotal   *prometheus.CounterVec
@@ -22,17 +19,21 @@ func initClientMetricCollectors() {
 	clientMetricOnce.Do(func() {
 		ns := GetConfig().Namespace
 
+		cl := getConstLabels()
+
 		counter := prometheus.NewCounterVec(prometheus.CounterOpts{
-			Namespace: ns,
-			Name:      "http_client_requests_total",
-			Help:      "HTTP 出站请求总数",
+			Namespace:   ns,
+			Name:        "http_client_requests_total",
+			Help:        "HTTP 出站请求总数",
+			ConstLabels: cl,
 		}, []string{"method", "host", "status"})
 
 		histogram := prometheus.NewHistogramVec(prometheus.HistogramOpts{
-			Namespace: ns,
-			Name:      "http_client_request_duration_ms",
-			Help:      "HTTP 出站请求耗时分布（毫秒）",
-			Buckets:   defaultClientDurationMsBuckets,
+			Namespace:   ns,
+			Name:        "http_client_request_duration_ms",
+			Help:        "HTTP 出站请求耗时分布（毫秒）",
+			Buckets:     getHttpDurationBuckets(),
+			ConstLabels: cl,
 		}, []string{"method", "host", "status"})
 
 		if rc, ok := safeRegister(counter).(*prometheus.CounterVec); ok {

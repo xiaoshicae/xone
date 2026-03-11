@@ -34,19 +34,20 @@ func CWithCtx(ctx context.Context) *Client { ... }
 
 ## 配置结构体模式
 
+详细规范见 `config-conventions.md`。基本骨架：
+
 ```go
 const XModuleConfigKey = "XModule"
 
 type Config struct {
     Timeout string `mapstructure:"Timeout"`
+    Enable  *bool  `mapstructure:"Enable"` // 默认 true 用 *bool
 }
 
 func configMergeDefault(c *Config) *Config {
-    if c == nil {
-        c = &Config{}
-    }
-    // 时间配置使用 xutil.ToDuration()，不用 cast.ToDuration()
-    // 默认值使用 xutil.GetOrDefault()
+    if c == nil { c = &Config{} }
+    if c.Timeout == "" { c.Timeout = "60s" }
+    if c.Enable == nil { c.Enable = xutil.ToPtr(true) }
     return c
 }
 ```

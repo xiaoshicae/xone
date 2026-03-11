@@ -297,7 +297,30 @@ func TestGinXMetricMiddleware_PathTemplate(t *testing.T) {
 func TestGinXMetricMiddleware_DurationBuckets(t *testing.T) {
 	PatchConvey("TestGinXMetricMiddleware-耗时桶边界正确", t, func() {
 		expected := []float64{1, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000}
-		So(defaultDurationMsBuckets, ShouldResemble, expected)
+		So(xmetric.GetHttpDurationBuckets(), ShouldResemble, expected)
+	})
+}
+
+func TestMetricsHandler(t *testing.T) {
+	PatchConvey("TestMetricsHandler-返回有效handler", t, func() {
+		Mock(xmetric.Handler).Return(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte("metrics_output"))
+		})).Build()
+
+		handler := MetricsHandler()
+		So(handler, ShouldNotBeNil)
+
+		gin.SetMode(gin.TestMode)
+		r := gin.New()
+		r.GET("/metrics", handler)
+
+		req := httptest.NewRequest("GET", "/metrics", nil)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		So(w.Code, ShouldEqual, http.StatusOK)
+		So(w.Body.String(), ShouldContainSubstring, "metrics_output")
 	})
 }
 

@@ -23,8 +23,6 @@ func resetState() {
 	registryMu.Lock()
 	defaultRegistry = prometheus.NewRegistry()
 	metricsHandler = nil
-	namespace = ""
-	histBuckets = nil
 	metricConfig = nil
 	registryMu.Unlock()
 	collectors = sync.Map{}
@@ -174,7 +172,7 @@ func TestCounterInc_WithNamespace(t *testing.T) {
 	PatchConvey("TestCounterInc-带命名空间", t, func() {
 		resetState()
 		registryMu.Lock()
-		namespace = "myapp"
+		metricConfig = &Config{Namespace: "myapp"}
 		registryMu.Unlock()
 
 		CounterInc("request_total")
@@ -374,7 +372,7 @@ func TestGetConfig(t *testing.T) {
 
 		c := GetConfig()
 		So(c, ShouldNotBeNil)
-		So(c.Path, ShouldEqual, "/metrics")
+		So(c.Namespace, ShouldEqual, "")
 	})
 }
 
@@ -405,21 +403,46 @@ func TestMustRegister(t *testing.T) {
 	})
 }
 
-func TestGetHistogramBuckets(t *testing.T) {
-	PatchConvey("TestGetHistogramBuckets-自定义桶", t, func() {
+func TestGetHttpDurationBuckets(t *testing.T) {
+	PatchConvey("TestGetHttpDurationBuckets-自定义桶", t, func() {
 		resetState()
-		customBuckets := []float64{10, 50, 100}
+		customBuckets := []float64{5, 50, 500, 5000}
 		registryMu.Lock()
-		histBuckets = customBuckets
+		metricConfig = &Config{HttpDurationBuckets: customBuckets}
 		registryMu.Unlock()
 
-		result := getHistogramBuckets()
+		result := getHttpDurationBuckets()
 		So(result, ShouldResemble, customBuckets)
 	})
 
-	PatchConvey("TestGetHistogramBuckets-默认桶", t, func() {
+	PatchConvey("TestGetHttpDurationBuckets-默认桶", t, func() {
 		resetState()
-		result := getHistogramBuckets()
+		result := getHttpDurationBuckets()
+		So(result, ShouldResemble, defaultHttpDurationBuckets)
+	})
+
+	PatchConvey("TestGetHttpDurationBuckets-导出函数", t, func() {
+		resetState()
+		result := GetHttpDurationBuckets()
+		So(result, ShouldResemble, defaultHttpDurationBuckets)
+	})
+}
+
+func TestGetHistogramObserveBuckets(t *testing.T) {
+	PatchConvey("TestGetHistogramObserveBuckets-自定义桶", t, func() {
+		resetState()
+		customBuckets := []float64{10, 50, 100}
+		registryMu.Lock()
+		metricConfig = &Config{HistogramObserveBuckets: customBuckets}
+		registryMu.Unlock()
+
+		result := getHistogramObserveBuckets()
+		So(result, ShouldResemble, customBuckets)
+	})
+
+	PatchConvey("TestGetHistogramObserveBuckets-默认桶", t, func() {
+		resetState()
+		result := getHistogramObserveBuckets()
 		So(result, ShouldResemble, prometheus.DefBuckets)
 	})
 }
@@ -595,60 +618,177 @@ func TestGetStringField_NonString(t *testing.T) {
 
 // ==================== 补充覆盖率：xmetric_init.go ====================
 
-func TestEnableGoMetrics(t *testing.T) {
-	PatchConvey("TestEnableGoMetrics-配置存在返回配置值", t, func() {
-		Mock(xconfig.ContainKey).Return(true).Build()
-		Mock(xconfig.GetBool).Return(false).Build()
-
-		result := enableGoMetrics()
-		So(result, ShouldBeFalse)
+func TestConfigMergeDefault_BoolDefaults(t *testing.T) {
+	PatchConvey("TestConfigMergeDefault-未配置bool字段默认true", t, func() {
+		c := configMergeDefault(&Config{})
+		So(*c.EnableGoMetrics, ShouldBeTrue)
+		So(*c.EnableProcessMetrics, ShouldBeTrue)
+		So(*c.EnableLogErrorMetric, ShouldBeTrue)
 	})
 
-	PatchConvey("TestEnableGoMetrics-配置存在返回true", t, func() {
-		Mock(xconfig.ContainKey).Return(true).Build()
-		Mock(xconfig.GetBool).Return(true).Build()
-
-		result := enableGoMetrics()
-		So(result, ShouldBeTrue)
-	})
-}
-
-func TestEnableProcessMetrics(t *testing.T) {
-	PatchConvey("TestEnableProcessMetrics-配置存在返回配置值", t, func() {
-		Mock(xconfig.ContainKey).Return(true).Build()
-		Mock(xconfig.GetBool).Return(false).Build()
-
-		result := enableProcessMetrics()
-		So(result, ShouldBeFalse)
-	})
-}
-
-func TestEnableLogErrorMetric(t *testing.T) {
-	PatchConvey("TestEnableLogErrorMetric-配置存在返回配置值", t, func() {
-		Mock(xconfig.ContainKey).Return(true).Build()
-		Mock(xconfig.GetBool).Return(false).Build()
-
-		result := enableLogErrorMetric()
-		So(result, ShouldBeFalse)
+	PatchConvey("TestConfigMergeDefault-显式配置false不被覆盖", t, func() {
+		f := false
+		c := configMergeDefault(&Config{
+			EnableGoMetrics:      &f,
+			EnableProcessMetrics: &f,
+			EnableLogErrorMetric: &f,
+		})
+		So(*c.EnableGoMetrics, ShouldBeFalse)
+		So(*c.EnableProcessMetrics, ShouldBeFalse)
+		So(*c.EnableLogErrorMetric, ShouldBeFalse)
 	})
 }
 
 // ==================== 补充覆盖率：closeMetric ====================
 
 func TestCloseMetric_ResetsAllState(t *testing.T) {
-	PatchConvey("TestCloseMetric-重置namespace和histBuckets", t, func() {
+	PatchConvey("TestCloseMetric-重置所有全局状态", t, func() {
 		resetState()
 		registryMu.Lock()
-		namespace = "myapp"
-		histBuckets = []float64{1, 2, 3}
-		metricConfig = &Config{Namespace: "myapp"}
+		metricConfig = &Config{
+			Namespace:               "myapp",
+			ConstLabels:             map[string]string{"env": "test"},
+			HistogramObserveBuckets: []float64{1, 2, 3},
+		}
 		registryMu.Unlock()
 
 		err := closeMetric()
 		So(err, ShouldBeNil)
-		So(namespace, ShouldEqual, "")
-		So(histBuckets, ShouldBeNil)
 		So(metricConfig, ShouldBeNil)
 		So(metricsHandler, ShouldBeNil)
+		// 验证 getter 返回默认值
+		So(getNamespace(), ShouldEqual, "")
+		So(getConstLabels(), ShouldBeNil)
+		So(getHistogramObserveBuckets(), ShouldResemble, prometheus.DefBuckets)
+	})
+}
+
+func TestConstLabels(t *testing.T) {
+	PatchConvey("TestConstLabels-Counter自动附加全局标签", t, func() {
+		resetState()
+		registryMu.Lock()
+		metricConfig = &Config{ConstLabels: map[string]string{"env": "prod"}}
+		registryMu.Unlock()
+
+		CounterInc("order_total", T("channel", "wechat"))
+
+		metrics, err := defaultRegistry.Gather()
+		So(err, ShouldBeNil)
+
+		var found *dto.MetricFamily
+		for _, m := range metrics {
+			if *m.Name == "order_total" {
+				found = m
+				break
+			}
+		}
+		So(found, ShouldNotBeNil)
+
+		// 验证 env 常量标签存在
+		metric := found.Metric[0]
+		envFound := false
+		for _, l := range metric.Label {
+			if *l.Name == "env" && *l.Value == "prod" {
+				envFound = true
+			}
+		}
+		So(envFound, ShouldBeTrue)
+	})
+
+	PatchConvey("TestConstLabels-Gauge自动附加全局标签", t, func() {
+		resetState()
+		registryMu.Lock()
+		metricConfig = &Config{ConstLabels: map[string]string{"env": "test"}}
+		registryMu.Unlock()
+
+		GaugeSet("connections", 42, T("app", "chat"))
+
+		metrics, err := defaultRegistry.Gather()
+		So(err, ShouldBeNil)
+
+		var found *dto.MetricFamily
+		for _, m := range metrics {
+			if *m.Name == "connections" {
+				found = m
+				break
+			}
+		}
+		So(found, ShouldNotBeNil)
+
+		envFound := false
+		for _, l := range found.Metric[0].Label {
+			if *l.Name == "env" && *l.Value == "test" {
+				envFound = true
+			}
+		}
+		So(envFound, ShouldBeTrue)
+	})
+
+	PatchConvey("TestConstLabels-Histogram自动附加全局标签", t, func() {
+		resetState()
+		registryMu.Lock()
+		metricConfig = &Config{ConstLabels: map[string]string{"cluster": "cn-east"}}
+		registryMu.Unlock()
+
+		HistogramObserve("latency_ms", 10, T("api", "users"))
+
+		metrics, err := defaultRegistry.Gather()
+		So(err, ShouldBeNil)
+
+		var found *dto.MetricFamily
+		for _, m := range metrics {
+			if *m.Name == "latency_ms" {
+				found = m
+				break
+			}
+		}
+		So(found, ShouldNotBeNil)
+
+		clusterFound := false
+		for _, l := range found.Metric[0].Label {
+			if *l.Name == "cluster" && *l.Value == "cn-east" {
+				clusterFound = true
+			}
+		}
+		So(clusterFound, ShouldBeTrue)
+	})
+
+	PatchConvey("TestConstLabels-nil时无额外标签", t, func() {
+		resetState()
+
+		CounterInc("simple_total", T("key", "val"))
+
+		metrics, err := defaultRegistry.Gather()
+		So(err, ShouldBeNil)
+
+		var found *dto.MetricFamily
+		for _, m := range metrics {
+			if *m.Name == "simple_total" {
+				found = m
+				break
+			}
+		}
+		So(found, ShouldNotBeNil)
+		// 只有 key 一个标签
+		So(len(found.Metric[0].Label), ShouldEqual, 1)
+	})
+}
+
+func TestGetConstLabels(t *testing.T) {
+	PatchConvey("TestGetConstLabels-返回全局常量标签", t, func() {
+		resetState()
+		registryMu.Lock()
+		metricConfig = &Config{ConstLabels: map[string]string{"env": "prod"}}
+		registryMu.Unlock()
+
+		result := GetConstLabels()
+		So(result, ShouldResemble, prometheus.Labels{"env": "prod"})
+	})
+
+	PatchConvey("TestGetConstLabels-未设置返回nil", t, func() {
+		resetState()
+
+		result := GetConstLabels()
+		So(result, ShouldBeNil)
 	})
 }

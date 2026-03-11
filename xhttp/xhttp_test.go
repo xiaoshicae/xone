@@ -10,6 +10,7 @@ import (
 	"github.com/xiaoshicae/xone/v2/xconfig"
 	"github.com/xiaoshicae/xone/v2/xmetric"
 	"github.com/xiaoshicae/xone/v2/xtrace"
+	"github.com/xiaoshicae/xone/v2/xutil"
 
 	"github.com/bytedance/mockey"
 	"github.com/go-resty/resty/v2"
@@ -35,6 +36,7 @@ func TestXHttpConfig(t *testing.T) {
 			RetryCount:          0,
 			RetryWaitTime:       "100ms",
 			RetryMaxWaitTime:    "2s",
+			EnableMetric:        xutil.ToPtr(true),
 		})
 	})
 
@@ -53,6 +55,7 @@ func TestXHttpConfig(t *testing.T) {
 			RetryCount:          0,
 			RetryWaitTime:       "100ms",
 			RetryMaxWaitTime:    "2s",
+			EnableMetric:        xutil.ToPtr(true),
 		})
 	})
 }
@@ -152,6 +155,7 @@ func TestInitHttpClient(t *testing.T) {
 			MaxIdleConnsPerHost: 10,
 			IdleConnTimeout:     "90s",
 			RetryCount:          0,
+			EnableMetric:        xutil.ToPtr(false),
 		}, nil).Build()
 		mockey.Mock(xtrace.EnableTrace).Return(false).Build()
 
@@ -168,6 +172,7 @@ func TestInitHttpClient(t *testing.T) {
 			MaxIdleConnsPerHost: 10,
 			IdleConnTimeout:     "90s",
 			RetryCount:          0,
+			EnableMetric:        xutil.ToPtr(false),
 		}, nil).Build()
 		mockey.Mock(xtrace.EnableTrace).Return(true).Build()
 
@@ -186,6 +191,7 @@ func TestInitHttpClient(t *testing.T) {
 			RetryCount:          3,
 			RetryWaitTime:       "100ms",
 			RetryMaxWaitTime:    "2s",
+			EnableMetric:        xutil.ToPtr(false),
 		}, nil).Build()
 		mockey.Mock(xtrace.EnableTrace).Return(false).Build()
 
@@ -202,6 +208,7 @@ func TestInitHttpClient(t *testing.T) {
 			MaxIdleConnsPerHost: 10,
 			IdleConnTimeout:     "90s",
 			RetryCount:          0,
+			EnableMetric:        xutil.ToPtr(false),
 		}, nil).Build()
 		mockey.Mock(xtrace.EnableTrace).Return(false).Build()
 
@@ -232,9 +239,9 @@ func TestInitHttpClientDefaultTransportFallback(t *testing.T) {
 			MaxIdleConns:        100,
 			MaxIdleConnsPerHost: 10,
 			IdleConnTimeout:     "90s",
+			EnableMetric:        xutil.ToPtr(false),
 		}, nil).Build()
 		mockey.Mock(xtrace.EnableTrace).Return(false).Build()
-		mockey.Mock(enableMetric).Return(false).Build()
 
 		err := initHttpClient()
 		c.So(err, c.ShouldBeNil)
@@ -261,9 +268,9 @@ func TestDialTimeoutApplied(t *testing.T) {
 			MaxIdleConnsPerHost: 10,
 			IdleConnTimeout:     "90s",
 			RetryCount:          0,
+			EnableMetric:        xutil.ToPtr(false),
 		}, nil).Build()
 		mockey.Mock(xtrace.EnableTrace).Return(false).Build()
-		mockey.Mock(enableMetric).Return(false).Build()
 
 		err := initHttpClient()
 		c.So(err, c.ShouldBeNil)
@@ -331,28 +338,16 @@ func TestCloseHttpClient(t *testing.T) {
 	})
 }
 
-func TestEnableMetric(t *testing.T) {
-	mockey.PatchConvey("TestEnableMetric-配置存在返回配置值false", t, func() {
-		mockey.Mock(xconfig.ContainKey).Return(true).Build()
-		mockey.Mock(xconfig.GetBool).Return(false).Build()
-
-		result := enableMetric()
-		c.So(result, c.ShouldBeFalse)
+func TestConfigMergeDefault_EnableMetric(t *testing.T) {
+	mockey.PatchConvey("TestConfigMergeDefault-EnableMetric未配置默认true", t, func() {
+		config := configMergeDefault(&Config{})
+		c.So(*config.EnableMetric, c.ShouldBeTrue)
 	})
 
-	mockey.PatchConvey("TestEnableMetric-配置存在返回配置值true", t, func() {
-		mockey.Mock(xconfig.ContainKey).Return(true).Build()
-		mockey.Mock(xconfig.GetBool).Return(true).Build()
-
-		result := enableMetric()
-		c.So(result, c.ShouldBeTrue)
-	})
-
-	mockey.PatchConvey("TestEnableMetric-配置不存在默认true", t, func() {
-		mockey.Mock(xconfig.ContainKey).Return(false).Build()
-
-		result := enableMetric()
-		c.So(result, c.ShouldBeTrue)
+	mockey.PatchConvey("TestConfigMergeDefault-EnableMetric显式false不被覆盖", t, func() {
+		f := false
+		config := configMergeDefault(&Config{EnableMetric: &f})
+		c.So(*config.EnableMetric, c.ShouldBeFalse)
 	})
 }
 
@@ -387,9 +382,9 @@ func TestInitHttpClient_WithMetric(t *testing.T) {
 			MaxIdleConnsPerHost: 10,
 			IdleConnTimeout:     "90s",
 			RetryCount:          0,
+			EnableMetric:        xutil.ToPtr(true),
 		}, nil).Build()
 		mockey.Mock(xtrace.EnableTrace).Return(false).Build()
-		mockey.Mock(enableMetric).Return(true).Build()
 
 		err := initHttpClient()
 		c.So(err, c.ShouldBeNil)

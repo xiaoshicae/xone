@@ -74,9 +74,10 @@ func getOrCreateCounter(name string, labelNames []string) *prometheus.CounterVec
 	}
 
 	counter := prometheus.NewCounterVec(prometheus.CounterOpts{
-		Namespace: getNamespace(),
-		Name:      name,
-		Help:      name,
+		Namespace:   getNamespace(),
+		Name:        name,
+		Help:        name,
+		ConstLabels: getConstLabels(),
 	}, labelNames)
 
 	registered := safeRegister(counter)
@@ -100,9 +101,10 @@ func getOrCreateGauge(name string, labelNames []string) *prometheus.GaugeVec {
 	}
 
 	gauge := prometheus.NewGaugeVec(prometheus.GaugeOpts{
-		Namespace: getNamespace(),
-		Name:      name,
-		Help:      name,
+		Namespace:   getNamespace(),
+		Name:        name,
+		Help:        name,
+		ConstLabels: getConstLabels(),
 	}, labelNames)
 
 	registered := safeRegister(gauge)
@@ -126,10 +128,11 @@ func getOrCreateHistogram(name string, labelNames []string) *prometheus.Histogra
 	}
 
 	histogram := prometheus.NewHistogramVec(prometheus.HistogramOpts{
-		Namespace: getNamespace(),
-		Name:      name,
-		Help:      name,
-		Buckets:   getHistogramBuckets(),
+		Namespace:   getNamespace(),
+		Name:        name,
+		Help:        name,
+		Buckets:     getHistogramObserveBuckets(),
+		ConstLabels: getConstLabels(),
 	}, labelNames)
 
 	registered := safeRegister(histogram)

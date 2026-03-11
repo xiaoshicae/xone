@@ -7,8 +7,11 @@ Prometheus 指标采集模块，提供快捷打点函数、`/metrics` 端点和 
 ```yaml
 XMetric:
   Namespace: "myapp"              # 指标命名空间前缀（可选）
-  Path: "/metrics"                # 端点路径，默认 /metrics
-  HistogramBuckets: [...]         # 直方图桶边界，默认 prometheus.DefBuckets
+  ConstLabels:                    # 全局常量标签，自动附加到所有指标上（可选）
+    env: "prod"
+    cluster: "cn-east"
+  HttpDurationBuckets: [...]      # HTTP 入站/出站请求耗时桶边界（ms），默认 [1,5,10,25,50,100,250,500,1000,2500,5000,10000]
+  HistogramObserveBuckets: [...]  # HistogramObserve() API 业务指标桶边界（秒），默认 prometheus.DefBuckets
   EnableGoMetrics: true           # Go runtime 指标，默认 true
   EnableProcessMetrics: true      # 进程指标，默认 true
   EnableLogErrorMetric: true      # xlog.Error 自动上报，默认 true
@@ -126,11 +129,14 @@ xmetric.CounterInc("order_total",
 - Namespace 从配置自动读取，无需手动指定
 - 指标懒注册，首次调用自动创建并注册到 Registry
 
-## 暴露 /metrics 端点
+## /metrics 端点
+
+xgin 启用 MetricMiddleware（默认开启）时自动注册 `/metrics` 端点，无需手动配置。
+
+自定义路径：
 
 ```go
-// 在路由注册中
-e.GET("/metrics", gin.WrapH(xmetric.Handler()))
+gx := xgin.New(options.MetricsPath("/custom/metrics")).Build()
 ```
 
 ## xlog.Error 自动上报

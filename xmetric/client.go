@@ -11,8 +11,6 @@ import (
 var (
 	defaultRegistry = prometheus.NewRegistry()
 	metricsHandler  http.Handler
-	namespace       string
-	histBuckets     []float64
 	metricConfig    *Config
 	registryMu      sync.RWMutex
 )
@@ -61,14 +59,50 @@ func GetConfig() *Config {
 func getNamespace() string {
 	registryMu.RLock()
 	defer registryMu.RUnlock()
-	return namespace
+	if metricConfig != nil {
+		return metricConfig.Namespace
+	}
+	return ""
 }
 
-func getHistogramBuckets() []float64 {
+// GetConstLabels 获取全局常量标签（供外部包使用）
+func GetConstLabels() prometheus.Labels {
+	return getConstLabels()
+}
+
+func getConstLabels() prometheus.Labels {
 	registryMu.RLock()
 	defer registryMu.RUnlock()
-	if len(histBuckets) > 0 {
-		return histBuckets
+	if metricConfig == nil || len(metricConfig.ConstLabels) == 0 {
+		return nil
+	}
+	// 返回浅拷贝，防止外部修改影响内部状态
+	result := make(prometheus.Labels, len(metricConfig.ConstLabels))
+	for k, v := range metricConfig.ConstLabels {
+		result[k] = v
+	}
+	return result
+}
+
+// GetHttpDurationBuckets 获取 HTTP 请求耗时桶边界（毫秒），供 xgin middleware 等外部包使用
+func GetHttpDurationBuckets() []float64 {
+	return getHttpDurationBuckets()
+}
+
+func getHttpDurationBuckets() []float64 {
+	registryMu.RLock()
+	defer registryMu.RUnlock()
+	if metricConfig != nil && len(metricConfig.HttpDurationBuckets) > 0 {
+		return metricConfig.HttpDurationBuckets
+	}
+	return defaultHttpDurationBuckets
+}
+
+func getHistogramObserveBuckets() []float64 {
+	registryMu.RLock()
+	defer registryMu.RUnlock()
+	if metricConfig != nil && len(metricConfig.HistogramObserveBuckets) > 0 {
+		return metricConfig.HistogramObserveBuckets
 	}
 	return prometheus.DefBuckets
 }

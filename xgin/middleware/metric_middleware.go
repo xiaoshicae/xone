@@ -10,9 +10,6 @@ import (
 	"github.com/xiaoshicae/xone/v2/xmetric"
 )
 
-// 默认耗时桶边界（毫秒）
-var defaultDurationMsBuckets = []float64{1, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000}
-
 var (
 	metricOnce      sync.Once
 	requestsTotal   *prometheus.CounterVec
@@ -21,19 +18,23 @@ var (
 
 func initMetricCollectors() {
 	metricOnce.Do(func() {
-		ns := xmetric.GetConfig().Namespace
+		cfg := xmetric.GetConfig()
+		ns := cfg.Namespace
+		cl := xmetric.GetConstLabels()
 
 		counter := prometheus.NewCounterVec(prometheus.CounterOpts{
-			Namespace: ns,
-			Name:      "http_requests_total",
-			Help:      "HTTP 请求总数",
+			Namespace:   ns,
+			Name:        "http_requests_total",
+			Help:        "HTTP 请求总数",
+			ConstLabels: cl,
 		}, []string{"method", "path", "status"})
 
 		histogram := prometheus.NewHistogramVec(prometheus.HistogramOpts{
-			Namespace: ns,
-			Name:      "http_request_duration_ms",
-			Help:      "HTTP 请求耗时分布（毫秒）",
-			Buckets:   defaultDurationMsBuckets,
+			Namespace:   ns,
+			Name:        "http_request_duration_ms",
+			Help:        "HTTP 请求耗时分布（毫秒）",
+			Buckets:     xmetric.GetHttpDurationBuckets(),
+			ConstLabels: cl,
 		}, []string{"method", "path", "status"})
 
 		if rc, ok := xmetric.SafeRegister(counter).(*prometheus.CounterVec); ok {

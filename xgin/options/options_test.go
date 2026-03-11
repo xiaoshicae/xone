@@ -14,6 +14,12 @@ func TestDefaultOptions(t *testing.T) {
 	if opts.EnableZHTranslations {
 		t.Error("EnableZHTranslations should be false by default")
 	}
+	if !opts.EnableMetricMiddleware {
+		t.Error("EnableMetricMiddleware should be true by default")
+	}
+	if opts.MetricsPath != "/metrics" {
+		t.Errorf("MetricsPath should be '/metrics' by default, got %s", opts.MetricsPath)
+	}
 }
 
 func TestEnableLogMiddleware(t *testing.T) {
@@ -98,6 +104,45 @@ func TestLogSkipPaths(t *testing.T) {
 	}
 	if opts.LogSkipPaths[1] != "/ready" {
 		t.Errorf("expected second path '/ready', got %s", opts.LogSkipPaths[1])
+	}
+}
+
+func TestEnableMetricMiddleware(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    bool
+		expected bool
+	}{
+		{"enable", true, true},
+		{"disable", false, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			opts := DefaultOptions()
+			opt := EnableMetricMiddleware(tt.input)
+			opt(opts)
+
+			if opts.EnableMetricMiddleware != tt.expected {
+				t.Errorf("expected EnableMetricMiddleware to be %v, got %v", tt.expected, opts.EnableMetricMiddleware)
+			}
+		})
+	}
+}
+
+func TestMetricsPath(t *testing.T) {
+	// 验证默认值
+	opts := DefaultOptions()
+	if opts.MetricsPath != "/metrics" {
+		t.Errorf("expected default MetricsPath '/metrics', got %s", opts.MetricsPath)
+	}
+
+	// 验证自定义路径
+	opt := MetricsPath("/custom/metrics")
+	opt(opts)
+
+	if opts.MetricsPath != "/custom/metrics" {
+		t.Errorf("expected MetricsPath '/custom/metrics', got %s", opts.MetricsPath)
 	}
 }
 

@@ -213,6 +213,11 @@ func (g *XGin) getXGinOptions() *options.Options {
 }
 
 func (g *XGin) registerMiddleware(do *options.Options) {
+	// 自动将 metrics 路径加入日志跳过列表，避免 Prometheus 抓取刷日志
+	if do.EnableMetricMiddleware {
+		do.LogSkipPaths = append(do.LogSkipPaths, do.MetricsPath)
+	}
+
 	// 提前注入一下 session 相关信息
 	g.engine.Use(middleware.GinXSessionMiddleware())
 
@@ -229,9 +234,10 @@ func (g *XGin) registerMiddleware(do *options.Options) {
 		g.engine.Use(middleware.LogMiddleware(middleware.WithSkipPaths(do.LogSkipPaths...)))
 	}
 
-	// 注册metric middleware
+	// 注册metric middleware 和 metrics 端点
 	if do.EnableMetricMiddleware {
 		g.engine.Use(middleware.GinXMetricMiddleware())
+		g.engine.GET(do.MetricsPath, middleware.MetricsHandler())
 	}
 
 	// 注册自定义的 middleware

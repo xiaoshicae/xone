@@ -27,10 +27,12 @@
 
 ## 配置处理
 
-- 时间配置统一使用 `xutil.ToDuration()`，支持 "d"（天）格式
-- 配置默认值使用 `xutil.GetOrDefault()` 函数
-- 配置合并使用 `configMergeDefault()` 模式
-- 禁止使用 `cast.ToDuration()`
+详细规范见 `config-conventions.md`，核心要点：
+
+- 时间配置统一使用 `xutil.ToDuration()`，禁止使用 `cast.ToDuration()`
+- 默认 true 的布尔配置使用 `*bool` 指针类型 + `xutil.ToPtr(true)`
+- 所有默认值集中在 `configMergeDefault()` 中设置
+- 禁止初始化后通过 `xconfig.GetXxx()` 散落读取配置值
 
 ## 日志规范
 

@@ -66,7 +66,7 @@ func initHttpClient() error {
 	}
 
 	// 最外层包装 metric transport，记录出站请求的调用量和耗时
-	if enableMetric() {
+	if *c.EnableMetric {
 		finalTransport = xmetric.NewHTTPClientMetricTransport(finalTransport)
 	}
 
@@ -89,15 +89,6 @@ func initHttpClient() error {
 	setRawHttpClient(rawHttpClient)
 
 	return nil
-}
-
-// enableMetric 是否启用出站请求 metric，默认 true
-func enableMetric() bool {
-	key := XHttpConfigKey + ".EnableMetric"
-	if !xconfig.ContainKey(key) {
-		return true
-	}
-	return xconfig.GetBool(key)
 }
 
 // spanNameFormatter otelhttp 的 span 命名格式：METHOD PATH

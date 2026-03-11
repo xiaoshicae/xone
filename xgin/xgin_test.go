@@ -321,6 +321,77 @@ func TestGetXGinOptions(t *testing.T) {
 	}
 }
 
+func TestBuildWithMetricMiddleware(t *testing.T) {
+	g := New(
+		options.EnableLogMiddleware(false),
+		options.EnableTraceMiddleware(false),
+		options.EnableMetricMiddleware(true),
+	)
+
+	g.Build()
+
+	if !g.build {
+		t.Fatal("build should be true")
+	}
+
+	// 验证 /metrics 路由被注册
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/metrics", nil)
+	g.engine.ServeHTTP(w, req)
+
+	if w.Code == http.StatusNotFound {
+		t.Fatal("/metrics route should be registered when EnableMetricMiddleware is true")
+	}
+}
+
+func TestBuildWithMetricMiddleware_CustomPath(t *testing.T) {
+	g := New(
+		options.EnableLogMiddleware(false),
+		options.EnableTraceMiddleware(false),
+		options.EnableMetricMiddleware(true),
+		options.MetricsPath("/custom/metrics"),
+	)
+
+	g.Build()
+
+	// 验证自定义路径被注册
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/custom/metrics", nil)
+	g.engine.ServeHTTP(w, req)
+
+	if w.Code == http.StatusNotFound {
+		t.Fatal("/custom/metrics route should be registered")
+	}
+
+	// 验证默认 /metrics 路径不存在
+	w2 := httptest.NewRecorder()
+	req2, _ := http.NewRequest("GET", "/metrics", nil)
+	g.engine.ServeHTTP(w2, req2)
+
+	if w2.Code != http.StatusNotFound {
+		t.Fatal("/metrics should not be registered when custom path is set")
+	}
+}
+
+func TestBuildWithMetricMiddleware_Disabled(t *testing.T) {
+	g := New(
+		options.EnableLogMiddleware(false),
+		options.EnableTraceMiddleware(false),
+		options.EnableMetricMiddleware(false),
+	)
+
+	g.Build()
+
+	// 验证 /metrics 路由未注册
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/metrics", nil)
+	g.engine.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("/metrics should not be registered when metric middleware is disabled, got status %d", w.Code)
+	}
+}
+
 func TestBuildWithZHTranslations(t *testing.T) {
 	g := New(
 		options.EnableLogMiddleware(false),

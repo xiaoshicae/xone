@@ -229,6 +229,11 @@ func (g *XGin) registerMiddleware(do *options.Options) {
 		g.engine.Use(middleware.LogMiddleware(middleware.WithSkipPaths(do.LogSkipPaths...)))
 	}
 
+	// 注册metric middleware
+	if do.EnableMetricMiddleware {
+		g.engine.Use(middleware.GinXMetricMiddleware())
+	}
+
 	// 注册自定义的 middleware
 	for _, m := range g.middlewares {
 		g.engine.Use(m)

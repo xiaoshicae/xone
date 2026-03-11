@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/xiaoshicae/xone/v2/xconfig"
+	"github.com/xiaoshicae/xone/v2/xmetric"
 	"github.com/xiaoshicae/xone/v2/xtrace"
 
 	"github.com/bytedance/mockey"
@@ -233,6 +234,7 @@ func TestInitHttpClientDefaultTransportFallback(t *testing.T) {
 			IdleConnTimeout:     "90s",
 		}, nil).Build()
 		mockey.Mock(xtrace.EnableTrace).Return(false).Build()
+		mockey.Mock(enableMetric).Return(false).Build()
 
 		err := initHttpClient()
 		c.So(err, c.ShouldBeNil)
@@ -261,6 +263,7 @@ func TestDialTimeoutApplied(t *testing.T) {
 			RetryCount:          0,
 		}, nil).Build()
 		mockey.Mock(xtrace.EnableTrace).Return(false).Build()
+		mockey.Mock(enableMetric).Return(false).Build()
 
 		err := initHttpClient()
 		c.So(err, c.ShouldBeNil)
@@ -307,5 +310,93 @@ func TestDialConfigMerge(t *testing.T) {
 		config := configMergeDefault(&Config{DialTimeout: "5s", DialKeepAlive: "10s"})
 		c.So(config.DialTimeout, c.ShouldEqual, "5s")
 		c.So(config.DialKeepAlive, c.ShouldEqual, "10s")
+	})
+}
+
+// ==================== 补充覆盖率 ====================
+
+func TestCloseHttpClient(t *testing.T) {
+	mockey.PatchConvey("TestCloseHttpClient-有client时关闭并置nil", t, func() {
+		rawHttpClient = &http.Client{}
+		err := closeHttpClient()
+		c.So(err, c.ShouldBeNil)
+		c.So(rawHttpClient, c.ShouldBeNil)
+	})
+
+	mockey.PatchConvey("TestCloseHttpClient-无client时安全返回", t, func() {
+		rawHttpClient = nil
+		err := closeHttpClient()
+		c.So(err, c.ShouldBeNil)
+		c.So(rawHttpClient, c.ShouldBeNil)
+	})
+}
+
+func TestEnableMetric(t *testing.T) {
+	mockey.PatchConvey("TestEnableMetric-配置存在返回配置值false", t, func() {
+		mockey.Mock(xconfig.ContainKey).Return(true).Build()
+		mockey.Mock(xconfig.GetBool).Return(false).Build()
+
+		result := enableMetric()
+		c.So(result, c.ShouldBeFalse)
+	})
+
+	mockey.PatchConvey("TestEnableMetric-配置存在返回配置值true", t, func() {
+		mockey.Mock(xconfig.ContainKey).Return(true).Build()
+		mockey.Mock(xconfig.GetBool).Return(true).Build()
+
+		result := enableMetric()
+		c.So(result, c.ShouldBeTrue)
+	})
+
+	mockey.PatchConvey("TestEnableMetric-配置不存在默认true", t, func() {
+		mockey.Mock(xconfig.ContainKey).Return(false).Build()
+
+		result := enableMetric()
+		c.So(result, c.ShouldBeTrue)
+	})
+}
+
+func TestSpanNameFormatter(t *testing.T) {
+	mockey.PatchConvey("TestSpanNameFormatter-格式化span名称", t, func() {
+		req, _ := http.NewRequest("GET", "http://example.com/api/users", nil)
+		result := spanNameFormatter("", req)
+		c.So(result, c.ShouldEqual, "GET /api/users")
+	})
+
+	mockey.PatchConvey("TestSpanNameFormatter-POST请求", t, func() {
+		req, _ := http.NewRequest("POST", "http://example.com/api/orders", nil)
+		result := spanNameFormatter("", req)
+		c.So(result, c.ShouldEqual, "POST /api/orders")
+	})
+}
+
+func TestInitHttpClient_WithMetric(t *testing.T) {
+	mockey.PatchConvey("TestInitHttpClient-启用metric包装transport", t, func() {
+		prevRawClient := rawHttpClient
+		prevDefaultClient := defaultClient
+		defer func() {
+			rawHttpClient = prevRawClient
+			defaultClient = prevDefaultClient
+		}()
+
+		mockey.Mock(getConfig).Return(&Config{
+			Timeout:             "60s",
+			DialTimeout:         "30s",
+			DialKeepAlive:       "30s",
+			MaxIdleConns:        100,
+			MaxIdleConnsPerHost: 10,
+			IdleConnTimeout:     "90s",
+			RetryCount:          0,
+		}, nil).Build()
+		mockey.Mock(xtrace.EnableTrace).Return(false).Build()
+		mockey.Mock(enableMetric).Return(true).Build()
+
+		err := initHttpClient()
+		c.So(err, c.ShouldBeNil)
+		c.So(rawHttpClient, c.ShouldNotBeNil)
+
+		// Transport 应为 HTTPClientMetricTransport
+		_, ok := rawHttpClient.Transport.(*xmetric.HTTPClientMetricTransport)
+		c.So(ok, c.ShouldBeTrue)
 	})
 }

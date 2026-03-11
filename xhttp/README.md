@@ -20,6 +20,7 @@ XHttp:
   RetryCount: 3              # 重试次数 (optional, default 0，不重试)
   RetryWaitTime: "100ms"     # 重试等待时间 (optional, default "100ms")
   RetryMaxWaitTime: "2s"     # 最大重试等待时间 (optional, default "2s")
+  EnableMetric: true         # 是否启用出站请求 Prometheus 指标采集 (optional, default true)
 ```
 
 ### 3. 使用 demo
@@ -96,7 +97,21 @@ func main() {
 }
 ```
 
-### 4. 注意事项
+### 4. 出站请求指标
+
+默认启用 Prometheus 出站请求指标采集（需配合 xmetric 模块），自动记录所有 HTTP 客户端请求：
+
+- `http_client_requests_total{method, host, status}` — 请求总数
+- `http_client_request_duration_ms{method, host, status}` — 请求耗时（毫秒）
+
+关闭方式：
+
+```yaml
+XHttp:
+  EnableMetric: false
+```
+
+### 5. 注意事项
 
 - 所有 API 都是线程安全的
 - `RawClient()` 在 xone 未启动时会返回 `http.DefaultClient` 并打印警告日志

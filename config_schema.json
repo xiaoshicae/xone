@@ -158,6 +158,39 @@
         }
       }
     },
+    "XMetric": {
+      "type": "object",
+      "description": "Prometheus 指标采集配置",
+      "properties": {
+        "Namespace": {
+          "type": "string",
+          "description": "指标命名空间前缀，如 myapp，设置后所有指标名会加上该前缀（如 myapp_http_requests_total）"
+        },
+        "Path": {
+          "type": "string",
+          "description": "metrics 端点路径，默认 /metrics"
+        },
+        "HistogramBuckets": {
+          "type": "array",
+          "description": "直方图默认桶边界，默认 prometheus.DefBuckets",
+          "items": {
+            "type": "number"
+          }
+        },
+        "EnableGoMetrics": {
+          "type": ["boolean", "string"],
+          "description": "是否启用 Go runtime 指标（goroutine 数、GC 等），默认 true"
+        },
+        "EnableProcessMetrics": {
+          "type": ["boolean", "string"],
+          "description": "是否启用进程指标（CPU、内存、文件描述符等），默认 true"
+        },
+        "EnableLogErrorMetric": {
+          "type": ["boolean", "string"],
+          "description": "是否启用 xlog.Error 自动上报 metric（log_errors_total），默认 true"
+        }
+      }
+    },
     "XHttp": {
       "type": "object",
       "description": "HTTP客户端配置",
@@ -197,6 +230,10 @@
         "RetryMaxWaitTime": {
           "type": "string",
           "description": "最大重试等待时间，默认2s"
+        },
+        "EnableMetric": {
+          "type": ["boolean", "string"],
+          "description": "是否启用出站请求 Prometheus 指标采集（http_client_requests_total / http_client_request_duration_ms），默认 true"
         }
       }
     },

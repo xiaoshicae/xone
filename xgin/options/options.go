@@ -28,20 +28,28 @@ func EnableZHTranslations(enableZHTranslations bool) Option {
 	}
 }
 
+func EnableMetricMiddleware(enableMetricMiddleware bool) Option {
+	return func(o *Options) {
+		o.EnableMetricMiddleware = enableMetricMiddleware
+	}
+}
+
 type Option func(*Options)
 
 type Options struct {
-	EnableLogMiddleware   bool
-	EnableTraceMiddleware bool
-	EnableZHTranslations  bool
-	LogSkipPaths          []string // 日志中间件忽略的路由列表
+	EnableLogMiddleware    bool
+	EnableTraceMiddleware  bool
+	EnableZHTranslations   bool
+	EnableMetricMiddleware bool
+	LogSkipPaths           []string // 日志中间件忽略的路由列表
 }
 
 func DefaultOptions() *Options {
 	return &Options{
-		EnableLogMiddleware:   true,
-		EnableTraceMiddleware: true,
-		EnableZHTranslations:  false,
-		LogSkipPaths:          make([]string, 0),
+		EnableLogMiddleware:    true,
+		EnableTraceMiddleware:  true,
+		EnableMetricMiddleware: true,
+		EnableZHTranslations:   false,
+		LogSkipPaths:           make([]string, 0),
 	}
 }

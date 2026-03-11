@@ -3,7 +3,7 @@
 ### 1. 模块简介
 
 * 对 [Gin](https://github.com/gin-gonic/gin) 进行了封装，提供 Builder 模式构建 Web 服务
-* 内置中间件：日志（Log）、链路追踪（Trace）、异常恢复（Recover）、会话（Session）
+* 内置中间件：日志（Log）、链路追踪（Trace）、异常恢复（Recover）、会话（Session）、指标采集（Metric）
 * 支持 HTTP/2 (H2C) 和 TLS (HTTPS)
 * 集成 [Swagger](https://github.com/swaggo/gin-swagger) 文档
 * 支持中文验证错误翻译
@@ -129,9 +129,20 @@ XGin:
 
 ### 5. 内置中间件
 
-| 中间件     | 说明              | 默认   |
-|---------|-----------------|------|
-| Session | 注入请求会话信息        | 始终启用 |
-| Trace   | 链路追踪，生成 TraceID | 默认启用 |
-| Recover | panic 恢复，防止服务崩溃 | 始终启用 |
-| Log     | 请求/响应日志记录       | 默认启用 |
+| 中间件     | 说明                                  | 默认   |
+|---------|-------------------------------------|------|
+| Session | 注入请求会话信息                            | 始终启用 |
+| Trace   | 链路追踪，生成 TraceID                     | 默认启用 |
+| Recover | panic 恢复，防止服务崩溃                     | 始终启用 |
+| Log     | 请求/响应日志记录                           | 默认启用 |
+| Metric  | Prometheus 入站请求指标（请求数 + 耗时），需配合 xmetric | 默认启用 |
+
+Metric 中间件采集指标：
+- `http_requests_total{method, path, status}` — 入站请求总数
+- `http_request_duration_ms{method, path, status}` — 入站请求耗时（毫秒）
+
+关闭方式：
+
+```go
+xgin.New(options.EnableMetricMiddleware(false)).Build()
+```

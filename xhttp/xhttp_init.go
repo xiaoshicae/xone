@@ -8,6 +8,7 @@ import (
 	"github.com/xiaoshicae/xone/v2/xconfig"
 	"github.com/xiaoshicae/xone/v2/xerror"
 	"github.com/xiaoshicae/xone/v2/xhook"
+	"github.com/xiaoshicae/xone/v2/xmetric"
 	"github.com/xiaoshicae/xone/v2/xtrace"
 	"github.com/xiaoshicae/xone/v2/xutil"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
@@ -58,12 +59,15 @@ func initHttpClient() error {
 	var finalTransport http.RoundTripper = baseTransport
 	if xtrace.EnableTrace() {
 		opts := []otelhttp.Option{
-			otelhttp.WithSpanNameFormatter(func(_ string, r *http.Request) string {
-				return r.Method + " " + r.URL.Path
-			}),
+			otelhttp.WithSpanNameFormatter(spanNameFormatter),
 		}
 		otelTransport := otelhttp.NewTransport(baseTransport, opts...)
 		finalTransport = &xtrace.HostAwareTransport{Next: otelTransport}
+	}
+
+	// 最外层包装 metric transport，记录出站请求的调用量和耗时
+	if enableMetric() {
+		finalTransport = xmetric.NewHTTPClientMetricTransport(finalTransport)
 	}
 
 	rawHttpClient := &http.Client{
@@ -85,6 +89,20 @@ func initHttpClient() error {
 	setRawHttpClient(rawHttpClient)
 
 	return nil
+}
+
+// enableMetric 是否启用出站请求 metric，默认 true
+func enableMetric() bool {
+	key := XHttpConfigKey + ".EnableMetric"
+	if !xconfig.ContainKey(key) {
+		return true
+	}
+	return xconfig.GetBool(key)
+}
+
+// spanNameFormatter otelhttp 的 span 命名格式：METHOD PATH
+func spanNameFormatter(_ string, r *http.Request) string {
+	return r.Method + " " + r.URL.Path
 }
 
 func getConfig() (*Config, error) {

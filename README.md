@@ -51,6 +51,9 @@ XHttp:
   MaxIdleConns: 100
   MaxIdleConnsPerHost: 10
 
+XMetric:
+  Namespace: "myapp"
+
 XCache:
   MaxCost: 100000
   DefaultTTL: "5m"
@@ -124,7 +127,8 @@ func main() {
 | [xconfig](./xconfig/README.md) | [viper](https://github.com/spf13/viper)                             | 配置管理（YAML + 环境变量 + Profile）      | -   | -     |
 | [xlog](./xlog/README.md)       | [logrus](https://github.com/sirupsen/logrus)                        | 结构化日志（文件轮转 + KV 注入）              | -   | -     |
 | [xtrace](./xtrace/README.md)   | [opentelemetry](https://github.com/open-telemetry/opentelemetry-go) | 链路追踪（W3C + B3 传播格式）              | -   | -     |
-| [xhttp](./xhttp/README.md)     | [go-resty](https://github.com/go-resty/resty)                       | HTTP 客户端（重试 + 连接池）               | -   | ✅     |
+| [xmetric](./xmetric/README.md) | [prometheus](https://github.com/prometheus/client_golang)            | Prometheus 指标采集（打点 + /metrics 端点） | -   | -     |
+| [xhttp](./xhttp/README.md)     | [go-resty](https://github.com/go-resty/resty)                       | HTTP 客户端（重试 + 连接池 + 出站指标）        | -   | ✅     |
 | [xgorm](./xgorm/README.md)     | [gorm](https://gorm.io/)                                            | 数据库（MySQL / PostgreSQL，多数据源）     | ✅   | ✅     |
 | [xcache](./xcache/README.md)   | [ristretto](https://github.com/dgraph-io/ristretto)                 | 本地缓存（支持 TTL / 泛型）               | -   | -     |
 | [xflow](./xflow/README.md)    | -                                                                   | 流程编排（强弱依赖 + 自动回滚 + 监控）        | -   | -     |
@@ -279,6 +283,33 @@ var cfg MyAppConfig
 xconfig.UnmarshalConfig("MyApp", &cfg)
 ```
 
+### Prometheus 指标
+
+```go
+import "github.com/xiaoshicae/xone/v2/xmetric"
+
+// Counter 计数
+xmetric.CounterInc("order_created_total", xmetric.T("channel", "wechat"))
+
+// Gauge 实时值
+xmetric.GaugeSet("ws_connections", 42, xmetric.T("app", "chat"))
+
+// Histogram 分布
+xmetric.HistogramObserve("db_query_duration_ms", 12.5, xmetric.T("table", "orders"))
+
+// 暴露 /metrics 端点
+e.GET("/metrics", gin.WrapH(xmetric.Handler()))
+```
+
+配置示例：
+
+```yaml
+XMetric:
+  Namespace: "myapp"
+  EnableGoMetrics: true
+  EnableLogErrorMetric: true
+```
+
 ### 链路追踪
 
 ```go
@@ -401,10 +432,18 @@ XTrace:
         - X-Auth-Token
         - X-Tenant-Id
 
+XMetric:
+  Namespace: "myapp"             # 指标命名空间前缀
+  Path: "/metrics"               # 端点路径（默认 /metrics）
+  EnableGoMetrics: true          # Go runtime 指标（默认 true）
+  EnableProcessMetrics: true     # 进程指标（默认 true）
+  EnableLogErrorMetric: true     # xlog.Error 自动上报（默认 true）
+
 XHttp:
   Timeout: "60s"               # 请求超时（默认 60s）
   RetryCount: 3                # 重试次数（默认 0）
   MaxIdleConns: 100            # 最大空闲连接（默认 100）
+  EnableMetric: true           # 出站请求指标采集（默认 true）
 
 XGorm:
   Driver: "postgres"           # 驱动（默认 postgres）
@@ -416,6 +455,7 @@ XGorm:
 
 ## 更新日志
 
+- **v2.9.0** (2026-03-11) - feat: add xmetric Prometheus module with Counter/Gauge/Histogram APIs, Gin middleware, xhttp outbound metrics, and xlog error auto-report
 - **v2.8.0** (2026-03-10) - feat: add domain-based header forwarding rules in xtrace HeaderPropagator via ForwardHeaderRules config
 - **v2.7.0** (2026-02-24) - feat: add custom header propagation in xtrace via HeaderPropagator for automatic forwarding of headers like X-Request-ID across services
 - **v2.6.0** (2026-02-17) - feat: add xpipeline streaming pipeline module with goroutine+channel chaining, monitor support, and 100% test coverage

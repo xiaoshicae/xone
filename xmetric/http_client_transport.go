@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/xiaoshicae/xone/v2/xutil"
 )
 
 var (
@@ -73,8 +74,56 @@ func (t *HTTPClientMetricTransport) RoundTrip(req *http.Request) (*http.Response
 		status = strconv.Itoa(resp.StatusCode)
 	}
 
-	clientRequestsTotal.WithLabelValues(method, host, status).Inc()
-	clientRequestDuration.WithLabelValues(method, host, status).Observe(durationMs)
+	exemplar := buildHTTPExemplar(req)
+	counter := clientRequestsTotal.WithLabelValues(method, host, status)
+	histogram := clientRequestDuration.WithLabelValues(method, host, status)
+
+	if exemplar != nil {
+		if adder, ok := counter.(prometheus.ExemplarAdder); ok {
+			adder.AddWithExemplar(1, exemplar)
+		} else {
+			counter.Inc()
+		}
+		if observer, ok := histogram.(prometheus.ExemplarObserver); ok {
+			observer.ObserveWithExemplar(durationMs, exemplar)
+		} else {
+			histogram.Observe(durationMs)
+		}
+	} else {
+		counter.Inc()
+		histogram.Observe(durationMs)
+	}
 
 	return resp, err
+}
+
+// exemplar 标签总 rune 数上限为 128（Prometheus 硬性限制），path 需截断防止 panic
+const maxExemplarPathLen = 64
+
+// buildHTTPExemplar 从请求中提取 exemplar 标签（path + trace_id + span_id）
+// 用于在 Grafana 中快速定位具体请求路径和链路
+// 无数据时返回 nil，避免高频场景下的空 map 分配
+func buildHTTPExemplar(req *http.Request) prometheus.Labels {
+	path := req.URL.Path
+	traceID := xutil.GetTraceIDFromCtx(req.Context())
+	spanID := xutil.GetSpanIDFromCtx(req.Context())
+
+	if path == "" && traceID == "" && spanID == "" {
+		return nil
+	}
+
+	labels := make(prometheus.Labels, 3)
+	if path != "" {
+		if runeLen := len([]rune(path)); runeLen > maxExemplarPathLen {
+			path = string([]rune(path)[:maxExemplarPathLen])
+		}
+		labels["path"] = path
+	}
+	if traceID != "" {
+		labels["trace_id"] = traceID
+	}
+	if spanID != "" {
+		labels["span_id"] = spanID
+	}
+	return labels
 }

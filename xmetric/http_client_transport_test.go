@@ -10,6 +10,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/xiaoshicae/xone/v2/xutil"
 )
 
 // resetClientMetricState 重置 HTTP client metric 相关全局状态
@@ -274,6 +275,92 @@ func TestHTTPClientMetricTransport_RoundTrip_DurationRecorded(t *testing.T) {
 		So(*histFamily.Metric[0].Histogram.SampleCount, ShouldEqual, 1)
 		// 耗时应 >= 0（mockRoundTripper 几乎无延迟）
 		So(*histFamily.Metric[0].Histogram.SampleSum, ShouldBeGreaterThanOrEqualTo, 0)
+	})
+}
+
+func TestHTTPClientMetricTransport_RoundTrip_Exemplar(t *testing.T) {
+	PatchConvey("TestRoundTrip-Exemplar携带path", t, func() {
+		resetClientMetricState()
+
+		mock := &mockRoundTripper{resp: &http.Response{StatusCode: 200}}
+		transport := NewHTTPClientMetricTransport(mock)
+
+		req, _ := http.NewRequest("GET", "http://api.example.com/users/123/orders", nil)
+		transport.RoundTrip(req)
+
+		metrics, err := defaultRegistry.Gather()
+		So(err, ShouldBeNil)
+
+		// 验证 counter exemplar 包含 path
+		counterFamily := findMetricFamily(metrics, "http_client_requests_total")
+		So(counterFamily, ShouldNotBeNil)
+		exemplar := counterFamily.Metric[0].Counter.Exemplar
+		So(exemplar, ShouldNotBeNil)
+
+		exemplarLabels := make(map[string]string)
+		for _, lp := range exemplar.Label {
+			exemplarLabels[*lp.Name] = *lp.Value
+		}
+		So(exemplarLabels["path"], ShouldEqual, "/users/123/orders")
+	})
+
+	PatchConvey("TestRoundTrip-Exemplar无path无trace时exemplar为nil", t, func() {
+		resetClientMetricState()
+
+		mock := &mockRoundTripper{resp: &http.Response{StatusCode: 200}}
+		transport := NewHTTPClientMetricTransport(mock)
+
+		req, _ := http.NewRequest("GET", "http://api.example.com", nil)
+		req.URL.Path = ""
+		resp, err := transport.RoundTrip(req)
+
+		So(err, ShouldBeNil)
+		So(resp.StatusCode, ShouldEqual, 200)
+
+		metrics, gatherErr := defaultRegistry.Gather()
+		So(gatherErr, ShouldBeNil)
+
+		counterFamily := findMetricFamily(metrics, "http_client_requests_total")
+		So(counterFamily, ShouldNotBeNil)
+		So(*counterFamily.Metric[0].Counter.Value, ShouldEqual, 1)
+		So(counterFamily.Metric[0].Counter.Exemplar, ShouldBeNil)
+	})
+}
+
+func TestBuildHTTPExemplar(t *testing.T) {
+	PatchConvey("TestBuildHTTPExemplar-有path", t, func() {
+		req, _ := http.NewRequest("GET", "http://example.com/api/users", nil)
+		labels := buildHTTPExemplar(req)
+		So(labels, ShouldNotBeNil)
+		So(labels["path"], ShouldEqual, "/api/users")
+	})
+
+	PatchConvey("TestBuildHTTPExemplar-无path无trace返回nil", t, func() {
+		req, _ := http.NewRequest("GET", "http://example.com", nil)
+		req.URL.Path = ""
+		labels := buildHTTPExemplar(req)
+		So(labels, ShouldBeNil)
+	})
+
+	PatchConvey("TestBuildHTTPExemplar-长path截断到64字符", t, func() {
+		longPath := "/api/v2/organizations/12345/projects/67890/resources/abcdef/actions/deploy/logs"
+		req, _ := http.NewRequest("GET", "http://example.com"+longPath, nil)
+		labels := buildHTTPExemplar(req)
+		So(labels, ShouldNotBeNil)
+		So(len([]rune(labels["path"])), ShouldBeLessThanOrEqualTo, maxExemplarPathLen)
+		So(labels["path"], ShouldEqual, string([]rune(longPath)[:maxExemplarPathLen]))
+	})
+
+	PatchConvey("TestBuildHTTPExemplar-有traceID和spanID", t, func() {
+		Mock(xutil.GetTraceIDFromCtx).Return("abc123def456").Build()
+		Mock(xutil.GetSpanIDFromCtx).Return("span789").Build()
+
+		req, _ := http.NewRequest("GET", "http://example.com/api", nil)
+		labels := buildHTTPExemplar(req)
+		So(labels, ShouldNotBeNil)
+		So(labels["path"], ShouldEqual, "/api")
+		So(labels["trace_id"], ShouldEqual, "abc123def456")
+		So(labels["span_id"], ShouldEqual, "span789")
 	})
 }
 

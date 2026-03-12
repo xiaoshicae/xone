@@ -482,6 +482,7 @@ XGorm:
 
 ## 更新日志
 
+- **v2.10.1** (2026-03-12) - fix: move HTTP outbound metrics from Transport to Resty layer to avoid retry inflation, add exemplar panic recovery
 - **v2.10.0** (2026-03-12) - feat: add Exemplar support to HTTP outbound metrics with path, trace_id, and span_id for request-level debugging
 - **v2.9.1** (2026-03-11) - refactor: consolidate xmetric config, unify HTTP duration buckets, auto-register /metrics endpoint in xgin, update docs and schema
 - **v2.9.0** (2026-03-11) - feat: add xmetric Prometheus module with Counter/Gauge/Histogram APIs, Gin middleware, xhttp outbound metrics, and xlog error auto-report

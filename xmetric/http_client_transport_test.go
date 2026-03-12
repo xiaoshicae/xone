@@ -60,9 +60,9 @@ func TestNewHTTPClientMetricTransport(t *testing.T) {
 
 		So(transport, ShouldNotBeNil)
 		So(transport.Next, ShouldEqual, mock)
-		// collector 应已注册
-		So(clientRequestsTotal, ShouldNotBeNil)
-		So(clientRequestDuration, ShouldNotBeNil)
+		// collector 延迟到首次 RecordHTTPClientMetric 时初始化
+		So(clientRequestsTotal, ShouldBeNil)
+		So(clientRequestDuration, ShouldBeNil)
 	})
 
 	PatchConvey("TestNewHTTPClientMetricTransport-带Namespace", t, func() {
@@ -342,7 +342,7 @@ func TestBuildHTTPExemplar(t *testing.T) {
 		So(labels, ShouldBeNil)
 	})
 
-	PatchConvey("TestBuildHTTPExemplar-长path截断到64字符", t, func() {
+	PatchConvey("TestBuildHTTPExemplar-长path截断到61字符", t, func() {
 		longPath := "/api/v2/organizations/12345/projects/67890/resources/abcdef/actions/deploy/logs"
 		req, _ := http.NewRequest("GET", "http://example.com"+longPath, nil)
 		labels := buildHTTPExemplar(req)
@@ -361,6 +361,65 @@ func TestBuildHTTPExemplar(t *testing.T) {
 		So(labels["path"], ShouldEqual, "/api")
 		So(labels["trace_id"], ShouldEqual, "abc123def456")
 		So(labels["span_id"], ShouldEqual, "span789")
+	})
+
+	PatchConvey("TestBuildHTTPExemplar-长path加trace加span总rune不超128", t, func() {
+		// W3C 标准：trace_id 32 hex chars, span_id 16 hex chars
+		Mock(xutil.GetTraceIDFromCtx).Return("abcdef1234567890abcdef1234567890").Build()
+		Mock(xutil.GetSpanIDFromCtx).Return("1234567890abcdef").Build()
+
+		longPath := "/api/v2/organizations/12345/projects/67890/resources/abcdef/actions/deploy/logs"
+		req, _ := http.NewRequest("GET", "http://example.com"+longPath, nil)
+		labels := buildHTTPExemplar(req)
+		So(labels, ShouldNotBeNil)
+
+		// 计算总 rune 数，必须 <= 128 否则 Prometheus 会 panic
+		var totalRunes int
+		for k, v := range labels {
+			totalRunes += len([]rune(k)) + len([]rune(v))
+		}
+		So(totalRunes, ShouldBeLessThanOrEqualTo, 128)
+	})
+}
+
+func TestSafeExemplar_PanicRecovery(t *testing.T) {
+	PatchConvey("TestSafeExemplar-panic时不崩溃", t, func() {
+		So(func() {
+			safeExemplar(func() { panic("exemplar validation failed") })
+		}, ShouldNotPanic)
+	})
+
+	PatchConvey("TestSafeExemplar-正常执行", t, func() {
+		called := false
+		safeExemplar(func() { called = true })
+		So(called, ShouldBeTrue)
+	})
+}
+
+func TestRecordHTTPClientMetric_ExemplarOverLimit(t *testing.T) {
+	PatchConvey("TestRecordHTTPClientMetric-exemplar超限不panic且指标正常记录", t, func() {
+		resetClientMetricState()
+
+		// 构造超长 trace_id 触发 exemplar 超 128 rune 上限
+		Mock(xutil.GetTraceIDFromCtx).Return("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").Build() // 52 chars
+		Mock(xutil.GetSpanIDFromCtx).Return("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb").Build()                      // 32 chars
+
+		req, _ := http.NewRequest("GET", "http://example.com/a]long/path/that/is/not/short", nil)
+		So(func() {
+			RecordHTTPClientMetric("GET", "example.com", "200", 50, req)
+		}, ShouldNotPanic)
+
+		// 指标应被正常记录（即使 exemplar 附加失败）
+		metrics, err := defaultRegistry.Gather()
+		So(err, ShouldBeNil)
+
+		counterFamily := findMetricFamily(metrics, "http_client_requests_total")
+		So(counterFamily, ShouldNotBeNil)
+		So(*counterFamily.Metric[0].Counter.Value, ShouldEqual, 1)
+
+		histFamily := findMetricFamily(metrics, "http_client_request_duration_ms")
+		So(histFamily, ShouldNotBeNil)
+		So(*histFamily.Metric[0].Histogram.SampleCount, ShouldEqual, 1)
 	})
 }
 

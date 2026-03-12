@@ -3,7 +3,10 @@ package xhttp
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
+	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -14,6 +17,7 @@ import (
 
 	"github.com/bytedance/mockey"
 	"github.com/go-resty/resty/v2"
+	dto "github.com/prometheus/client_model/go"
 	c "github.com/smartystreets/goconvey/convey"
 )
 
@@ -366,7 +370,7 @@ func TestSpanNameFormatter(t *testing.T) {
 }
 
 func TestInitHttpClient_WithMetric(t *testing.T) {
-	mockey.PatchConvey("TestInitHttpClient-启用metric包装transport", t, func() {
+	mockey.PatchConvey("TestInitHttpClient-启用metric注册Resty中间件", t, func() {
 		prevRawClient := rawHttpClient
 		prevDefaultClient := defaultClient
 		defer func() {
@@ -390,8 +394,257 @@ func TestInitHttpClient_WithMetric(t *testing.T) {
 		c.So(err, c.ShouldBeNil)
 		c.So(rawHttpClient, c.ShouldNotBeNil)
 
-		// Transport 应为 HTTPClientMetricTransport
-		_, ok := rawHttpClient.Transport.(*xmetric.HTTPClientMetricTransport)
+		// metric 从 Transport 层移到 Resty 层，Transport 不再包装 MetricTransport
+		_, ok := rawHttpClient.Transport.(*http.Transport)
 		c.So(ok, c.ShouldBeTrue)
+	})
+}
+
+// findMetricFamily 从 Gather 结果中查找指定名称的 MetricFamily
+func findMetricFamily(metrics []*dto.MetricFamily, name string) *dto.MetricFamily {
+	for _, m := range metrics {
+		if *m.Name == name {
+			return m
+		}
+	}
+	return nil
+}
+
+// findLabelValue 从 Metric 的 Label 中查找指定 name 的 value
+func findLabelValue(metric *dto.Metric, name string) string {
+	for _, l := range metric.Label {
+		if *l.Name == name {
+			return *l.Value
+		}
+	}
+	return ""
+}
+
+func TestRegisterMetricHooks_OnSuccess(t *testing.T) {
+	mockey.PatchConvey("TestRegisterMetricHooks-成功请求记录指标", t, func() {
+		// 启动测试 HTTP 服务
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(200)
+		}))
+		defer server.Close()
+
+		client := resty.New()
+		registerMetricHooks(client)
+
+		resp, err := client.R().Get(server.URL + "/api/test")
+		c.So(err, c.ShouldBeNil)
+		c.So(resp.StatusCode(), c.ShouldEqual, 200)
+
+		// 验证指标被记录
+		metrics, gatherErr := xmetric.Registry().Gather()
+		c.So(gatherErr, c.ShouldBeNil)
+
+		counterFamily := findMetricFamily(metrics, "http_client_requests_total")
+		c.So(counterFamily, c.ShouldNotBeNil)
+	})
+}
+
+func TestRegisterMetricHooks_OnError(t *testing.T) {
+	mockey.PatchConvey("TestRegisterMetricHooks-网络错误记录status0", t, func() {
+		client := resty.New()
+		client.SetTimeout(100 * time.Millisecond)
+		registerMetricHooks(client)
+
+		// 请求一个不存在的地址触发网络错误
+		_, err := client.R().Get("http://127.0.0.1:1/unreachable")
+		c.So(err, c.ShouldNotBeNil)
+
+		metrics, gatherErr := xmetric.Registry().Gather()
+		c.So(gatherErr, c.ShouldBeNil)
+
+		counterFamily := findMetricFamily(metrics, "http_client_requests_total")
+		c.So(counterFamily, c.ShouldNotBeNil)
+
+		// 应有 status=0 的记录
+		found := false
+		for _, m := range counterFamily.Metric {
+			if findLabelValue(m, "status") == "0" {
+				found = true
+			}
+		}
+		c.So(found, c.ShouldBeTrue)
+	})
+}
+
+func TestRegisterMetricHooks_RetryExhaustedWithResponse(t *testing.T) {
+	mockey.PatchConvey("TestRegisterMetricHooks-重试耗尽记录最终状态码500", t, func() {
+		// 始终返回 500 的服务
+		var callCount atomic.Int32
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			callCount.Add(1)
+			w.WriteHeader(500)
+		}))
+		defer server.Close()
+
+		client := resty.New()
+		client.SetRetryCount(2).
+			SetRetryWaitTime(1 * time.Millisecond).
+			SetRetryMaxWaitTime(5 * time.Millisecond).
+			AddRetryCondition(func(resp *resty.Response, err error) bool {
+				return resp != nil && resp.StatusCode() >= 500
+			})
+		registerMetricHooks(client)
+
+		resp, err := client.R().Get(server.URL + "/api/fail")
+		// 重试耗尽后网络正常 → err==nil，走 OnSuccess 路径
+		c.So(err, c.ShouldBeNil)
+		c.So(resp.StatusCode(), c.ShouldEqual, 500)
+		// 初始1次 + 重试2次 = 共3次调用
+		c.So(callCount.Load(), c.ShouldEqual, 3)
+
+		metrics, gatherErr := xmetric.Registry().Gather()
+		c.So(gatherErr, c.ShouldBeNil)
+
+		counterFamily := findMetricFamily(metrics, "http_client_requests_total")
+		c.So(counterFamily, c.ShouldNotBeNil)
+
+		// 验证 status=500 被正确记录，且只记录1次（不是3次）
+		host := server.Listener.Addr().String()
+		var count500 float64
+		for _, m := range counterFamily.Metric {
+			if findLabelValue(m, "host") == host && findLabelValue(m, "status") == "500" {
+				count500 += *m.Counter.Value
+			}
+		}
+		c.So(count500, c.ShouldEqual, 1)
+	})
+}
+
+func TestRegisterMetricHooks_RetryOnlyRecordsFinalResult(t *testing.T) {
+	mockey.PatchConvey("TestRegisterMetricHooks-重试只记录最终结果", t, func() {
+		// 前2次返回 404，第3次返回 200
+		var callCount atomic.Int32
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			n := callCount.Add(1)
+			if n <= 2 {
+				w.WriteHeader(404)
+				return
+			}
+			w.WriteHeader(200)
+		}))
+		defer server.Close()
+
+		client := resty.New()
+		client.SetRetryCount(3).
+			SetRetryWaitTime(1 * time.Millisecond).
+			SetRetryMaxWaitTime(5 * time.Millisecond).
+			AddRetryCondition(func(resp *resty.Response, err error) bool {
+				return resp != nil && resp.StatusCode() == 404
+			})
+		registerMetricHooks(client)
+
+		resp, err := client.R().Get(server.URL + "/api/retry-test")
+		c.So(err, c.ShouldBeNil)
+		c.So(resp.StatusCode(), c.ShouldEqual, 200)
+		// 确认服务端被调用了 3 次（2次404 + 1次200）
+		c.So(callCount.Load(), c.ShouldEqual, 3)
+
+		metrics, gatherErr := xmetric.Registry().Gather()
+		c.So(gatherErr, c.ShouldBeNil)
+
+		counterFamily := findMetricFamily(metrics, "http_client_requests_total")
+		c.So(counterFamily, c.ShouldNotBeNil)
+
+		// 遍历所有指标，查找匹配当前测试服务地址的记录
+		host := server.Listener.Addr().String()
+		var count200, count404 float64
+		for _, m := range counterFamily.Metric {
+			if findLabelValue(m, "host") == host {
+				status := findLabelValue(m, "status")
+				if status == "200" {
+					count200 += *m.Counter.Value
+				}
+				if status == "404" {
+					count404 += *m.Counter.Value
+				}
+			}
+		}
+		// OnSuccess 只在最终成功后调用一次，所以只有 1 次 200，没有 404
+		c.So(count200, c.ShouldEqual, 1)
+		c.So(count404, c.ShouldEqual, 0)
+	})
+}
+
+func TestRecordHTTPClientMetric_NilReq(t *testing.T) {
+	mockey.PatchConvey("TestRecordHTTPClientMetric-nil请求不panic", t, func() {
+		// req 为 nil 时不应 panic
+		c.So(func() {
+			xmetric.RecordHTTPClientMetric("GET", "example.com", "200", 100, nil)
+		}, c.ShouldNotPanic)
+	})
+}
+
+func TestRegisterMetricHooks_OnError_NilRawRequest(t *testing.T) {
+	mockey.PatchConvey("TestRegisterMetricHooks-OnError时RawRequest为nil不panic", t, func() {
+		client := resty.New()
+		registerMetricHooks(client)
+
+		// 模拟 OnError 被调用但 RawRequest 为 nil 的场景
+		// 通过发送无效请求触发
+		_, err := client.R().Get("://invalid-url")
+		// 应该不 panic，错误可以忽略
+		_ = err
+		// 只要不 panic 就通过
+		c.So(true, c.ShouldBeTrue)
+	})
+}
+
+func TestRegisterMetricHooks_DurationRecorded(t *testing.T) {
+	mockey.PatchConvey("TestRegisterMetricHooks-耗时被正确记录", t, func() {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			time.Sleep(10 * time.Millisecond)
+			w.WriteHeader(200)
+			fmt.Fprint(w, "ok")
+		}))
+		defer server.Close()
+
+		client := resty.New()
+		registerMetricHooks(client)
+
+		resp, err := client.R().Get(server.URL + "/api/slow")
+		c.So(err, c.ShouldBeNil)
+		c.So(resp.StatusCode(), c.ShouldEqual, 200)
+
+		metrics, gatherErr := xmetric.Registry().Gather()
+		c.So(gatherErr, c.ShouldBeNil)
+
+		histFamily := findMetricFamily(metrics, "http_client_request_duration_ms")
+		c.So(histFamily, c.ShouldNotBeNil)
+
+		// 应有至少 1 个 histogram 样本
+		host := server.Listener.Addr().String()
+		for _, m := range histFamily.Metric {
+			if findLabelValue(m, "host") == host {
+				c.So(*m.Histogram.SampleCount, c.ShouldBeGreaterThan, 0)
+				// 耗时应 >= 10ms
+				c.So(*m.Histogram.SampleSum, c.ShouldBeGreaterThanOrEqualTo, 10)
+			}
+		}
+	})
+}
+
+func TestMetricOnSuccess_NilResp(t *testing.T) {
+	mockey.PatchConvey("TestMetricOnSuccess-resp为nil不panic", t, func() {
+		c.So(func() {
+			metricOnSuccess(nil, nil)
+		}, c.ShouldNotPanic)
+	})
+}
+
+func TestMetricOnSuccess_NilRawRequest(t *testing.T) {
+	mockey.PatchConvey("TestMetricOnSuccess-RawRequest为nil不panic", t, func() {
+		resp := &resty.Response{
+			Request: &resty.Request{
+				RawRequest: nil,
+			},
+		}
+		c.So(func() {
+			metricOnSuccess(nil, resp)
+		}, c.ShouldNotPanic)
 	})
 }

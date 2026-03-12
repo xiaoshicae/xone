@@ -55,37 +55,48 @@ type HTTPClientMetricTransport struct {
 }
 
 // NewHTTPClientMetricTransport 创建出站请求 metric transport，注册指标采集器
+// 注意：该 Transport 记录每次 HTTP 往返的指标，包括重试中间状态
+// 如需只记录最终结果（跳过重试），请使用 RecordHTTPClientMetric 配合 Resty 中间件
 func NewHTTPClientMetricTransport(next http.RoundTripper) *HTTPClientMetricTransport {
-	initClientMetricCollectors()
 	return &HTTPClientMetricTransport{Next: next}
 }
 
 // RoundTrip 实现 http.RoundTripper 接口
 func (t *HTTPClientMetricTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	start := time.Now()
-	method := req.Method
-	host := req.URL.Host
 
 	resp, err := t.Next.RoundTrip(req)
 
-	durationMs := float64(time.Since(start).Milliseconds())
 	status := "0"
 	if resp != nil {
 		status = strconv.Itoa(resp.StatusCode)
 	}
+	durationMs := float64(time.Since(start).Milliseconds())
+	RecordHTTPClientMetric(req.Method, req.URL.Host, status, durationMs, req)
 
-	exemplar := buildHTTPExemplar(req)
+	return resp, err
+}
+
+// RecordHTTPClientMetric 记录 HTTP 出站请求指标
+// 调用方决定记录时机（如 Resty OnSuccess/OnError 只记录最终结果）
+func RecordHTTPClientMetric(method, host, status string, durationMs float64, req *http.Request) {
+	initClientMetricCollectors()
+
+	var exemplar prometheus.Labels
+	if req != nil {
+		exemplar = buildHTTPExemplar(req)
+	}
 	counter := clientRequestsTotal.WithLabelValues(method, host, status)
 	histogram := clientRequestDuration.WithLabelValues(method, host, status)
 
 	if exemplar != nil {
 		if adder, ok := counter.(prometheus.ExemplarAdder); ok {
-			adder.AddWithExemplar(1, exemplar)
+			safeExemplar(func() { adder.AddWithExemplar(1, exemplar) })
 		} else {
 			counter.Inc()
 		}
 		if observer, ok := histogram.(prometheus.ExemplarObserver); ok {
-			observer.ObserveWithExemplar(durationMs, exemplar)
+			safeExemplar(func() { observer.ObserveWithExemplar(durationMs, exemplar) })
 		} else {
 			histogram.Observe(durationMs)
 		}
@@ -93,12 +104,22 @@ func (t *HTTPClientMetricTransport) RoundTrip(req *http.Request) (*http.Response
 		counter.Inc()
 		histogram.Observe(durationMs)
 	}
-
-	return resp, err
 }
 
-// exemplar 标签总 rune 数上限为 128（Prometheus 硬性限制），path 需截断防止 panic
-const maxExemplarPathLen = 64
+// safeExemplar 执行附带 exemplar 的指标记录
+// Prometheus client 在 exemplar 验证失败时会 panic（如超 128 rune 上限）
+// 此时指标值已由底层 Add/Observe 记录完成，仅 exemplar 附加失败，静默降级即可
+func safeExemplar(fn func()) {
+	defer func() { recover() }()
+	fn()
+}
+
+// exemplar 标签总 rune 数上限为 128（Prometheus 硬性限制，超限会 panic）
+// 预算：标签名 "path"(4) + "trace_id"(8) + "span_id"(7) = 19
+//
+//	trace_id 值(32) + span_id 值(16) = 48
+//	path 值最大 = 128 - 19 - 48 = 61
+const maxExemplarPathLen = 61
 
 // buildHTTPExemplar 从请求中提取 exemplar 标签（path + trace_id + span_id）
 // 用于在 Grafana 中快速定位具体请求路径和链路

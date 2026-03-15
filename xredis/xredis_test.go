@@ -326,9 +326,19 @@ func TestInitXRedis(t *testing.T) {
 			{Addr: "host2:6379", Name: "session"},
 		}, nil).Build()
 
+		// 清空 clientMap
+		clientMu.Lock()
+		clear(clientMap)
+		clientMu.Unlock()
+
 		err := initXRedis()
 		c.So(err, c.ShouldNotBeNil)
 		c.So(err.Error(), c.ShouldContainSubstring, "newClient failed")
+
+		// 验证 clientMap 未被写入任何 client（延迟写入的效果）
+		clientMu.RLock()
+		c.So(len(clientMap), c.ShouldEqual, 0)
+		clientMu.RUnlock()
 	})
 }
 

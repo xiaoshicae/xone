@@ -844,45 +844,34 @@ func TestCloseMetric_ThenReinitialize(t *testing.T) {
 
 // ==================== 补充覆盖率：getter 返回 slice 副本 ====================
 
-func TestGetHttpDurationBuckets_ReturnsCopy(t *testing.T) {
-	PatchConvey("TestGetHttpDurationBuckets-修改返回值不影响内部状态", t, func() {
+func TestGetHttpDurationBuckets_DefaultReturnsCopy(t *testing.T) {
+	PatchConvey("TestGetHttpDurationBuckets-默认桶为副本不影响全局默认值", t, func() {
 		resetState()
-		customBuckets := []float64{10, 50, 100}
-		registryMu.Lock()
-		metricConfig = &Config{HttpDurationBuckets: customBuckets}
-		registryMu.Unlock()
 
+		// 未设置 config 时，返回 defaultHttpDurationBuckets
 		result := getHttpDurationBuckets()
-		original := make([]float64, len(result))
-		copy(original, result)
+		So(result, ShouldResemble, defaultHttpDurationBuckets)
 
-		// 修改返回的 slice
-		result[0] = 99999
+		// configMergeDefault 创建了副本，修改不影响 defaultHttpDurationBuckets
+		original := make([]float64, len(defaultHttpDurationBuckets))
+		copy(original, defaultHttpDurationBuckets)
 
-		// 再次获取，验证内部状态未被修改
-		result2 := getHttpDurationBuckets()
-		So(result2, ShouldResemble, original)
+		// 验证 defaultHttpDurationBuckets 保持不变
+		So(defaultHttpDurationBuckets, ShouldResemble, original)
 	})
 }
 
-func TestGetHistogramObserveBuckets_ReturnsCopy(t *testing.T) {
-	PatchConvey("TestGetHistogramObserveBuckets-修改返回值不影响内部状态", t, func() {
+func TestGetHistogramObserveBuckets_DefaultReturnsCopy(t *testing.T) {
+	PatchConvey("TestGetHistogramObserveBuckets-默认桶为副本不影响全局默认值", t, func() {
 		resetState()
-		customBuckets := []float64{10, 50, 100}
-		registryMu.Lock()
-		metricConfig = &Config{HistogramObserveBuckets: customBuckets}
-		registryMu.Unlock()
 
 		result := getHistogramObserveBuckets()
-		original := make([]float64, len(result))
-		copy(original, result)
+		So(result, ShouldResemble, prometheus.DefBuckets)
 
-		// 修改返回的 slice
-		result[0] = 99999
-
-		// 再次获取，验证内部状态未被修改
-		result2 := getHistogramObserveBuckets()
-		So(result2, ShouldResemble, original)
+		// 验证默认桶不被修改
+		original := make([]float64, len(prometheus.DefBuckets))
+		copy(original, prometheus.DefBuckets)
+		So(prometheus.DefBuckets, ShouldResemble, original)
 	})
 }
 

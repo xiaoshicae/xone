@@ -329,7 +329,7 @@ func TestRegisterZHTranslations_ValidatorEngineFail(t *testing.T) {
 
 		err := RegisterZHTranslations()
 		So(err, ShouldNotBeNil)
-		So(err.Error(), ShouldContainSubstring, "type assign")
+		So(err.Error(), ShouldContainSubstring, "type assert")
 	})
 }
 

@@ -33,7 +33,7 @@ func RegisterZHTranslations() error {
 
 	v, ok := binding.Validator.Engine().(*validator.Validate)
 	if !ok {
-		xutil.WarnIfEnableDebug("gin binding.Validator.Engine() type assign to *validator.Validate failed, translator not take effect")
+		xutil.WarnIfEnableDebug("gin binding.Validator.Engine() type assert to *validator.Validate failed, translator not take effect")
 		return xerror.Newf("xgin", "registerZHTranslations", "gin binding.Validator.Engine() type assert to *validator.Validate failed")
 	}
 

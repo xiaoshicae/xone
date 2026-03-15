@@ -811,11 +811,11 @@ func TestCloseMetric_ResetsRegistryToNewInstance(t *testing.T) {
 		err := closeMetric()
 		So(err, ShouldBeNil)
 
-		// 验证 defaultRegistry 是新实例
+		// 验证 defaultRegistry 是新实例（用指针比较，不是值比较）
 		registryMu.RLock()
 		newRegistry := defaultRegistry
 		registryMu.RUnlock()
-		So(newRegistry, ShouldNotEqual, oldRegistry)
+		So(newRegistry != oldRegistry, ShouldBeTrue)
 	})
 }
 

@@ -82,13 +82,13 @@ func TestRWithCtx(t *testing.T) {
 }
 
 func TestRawClient(t *testing.T) {
-	mockey.PatchConvey("TestRawClient-NotSet-FallbackWith30sTimeout", t, func() {
-		// rawHttpClient 为 nil 时返回带 30s 超时的兜底 client
+	mockey.PatchConvey("TestRawClient-NotSet-FallbackWith60sTimeout", t, func() {
+		// rawHttpClient 为 nil 时返回带 60s 超时的兜底 client
 		rawHttpClient = nil
 		mockey.Mock(xutil.WarnIfEnableDebug).Return().Build()
 		client := RawClient()
 		c.So(client, c.ShouldNotBeNil)
-		c.So(client.Timeout, c.ShouldEqual, 30*time.Second)
+		c.So(client.Timeout, c.ShouldEqual, 60*time.Second)
 	})
 
 	mockey.PatchConvey("TestRawClient-Set", t, func() {

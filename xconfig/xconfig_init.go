@@ -146,6 +146,8 @@ func mergeProfilesViperConfig(vp1, vp2 *viper.Viper) *viper.Viper {
 	return vp
 }
 
+// getTopLevelConfigs 获取所有一级配置
+// viper.AllSettings() 返回的 map key 已经是扁平的一级 key（嵌套值为 sub-map），无需额外过滤
 func getTopLevelConfigs(vp *viper.Viper) map[string]any {
 	return vp.AllSettings()
 }

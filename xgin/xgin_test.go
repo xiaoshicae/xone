@@ -786,21 +786,14 @@ func TestSetGinMode_DebugEnabled(t *testing.T) {
 
 func TestSetGinMode_ReleaseDefault(t *testing.T) {
 	PatchConvey("TestSetGinMode-ReleaseDefault", t, func() {
+		// mock EnableXOneDebug 返回 false，避免 sync.Once 缓存干扰
+		Mock(xutil.EnableXOneDebug).Return(false).Build()
+
 		oldGinMode := os.Getenv(gin.EnvGinMode)
-		oldDebug := os.Getenv(xutil.DebugKey)
-		oldLegacyDebug := os.Getenv("SERVER_ENABLE_DEBUG")
 		os.Unsetenv(gin.EnvGinMode)
-		os.Unsetenv(xutil.DebugKey)
-		os.Unsetenv("SERVER_ENABLE_DEBUG")
 		defer func() {
 			if oldGinMode != "" {
 				os.Setenv(gin.EnvGinMode, oldGinMode)
-			}
-			if oldDebug != "" {
-				os.Setenv(xutil.DebugKey, oldDebug)
-			}
-			if oldLegacyDebug != "" {
-				os.Setenv("SERVER_ENABLE_DEBUG", oldLegacyDebug)
 			}
 			gin.SetMode(gin.TestMode)
 		}()

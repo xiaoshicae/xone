@@ -55,7 +55,11 @@ func (p *Pool) worker() {
 // Submit 提交一个任务到任务池，任务将由空闲 worker 执行
 // 如果任务池已关闭，Submit 不执行任何操作
 func (p *Pool) Submit(task func()) {
-	defer func() { recover() }() // 防止 send on closed channel
+	defer func() {
+		if r := recover(); r != nil {
+			WarnIfEnableDebug("Pool.Submit recovered panic: %v", r)
+		}
+	}()
 
 	select {
 	case <-p.ctx.Done():

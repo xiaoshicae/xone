@@ -11,7 +11,7 @@ import (
 )
 
 var (
-	transMu sync.Mutex
+	transMu sync.RWMutex
 	trans   ut.Translator
 )
 
@@ -30,9 +30,9 @@ func ToZHErr(err error) error {
 	}
 
 	// 没有初始化，说明没有启用
-	transMu.Lock()
+	transMu.RLock()
 	t := trans
-	transMu.Unlock()
+	transMu.RUnlock()
 	if t == nil {
 		return err
 	}

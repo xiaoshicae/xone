@@ -21,6 +21,9 @@ import (
 	oteltrace "go.opentelemetry.io/otel/trace"
 )
 
+// defaultShutdownTimeout TracerProvider 关闭超时时间
+const defaultShutdownTimeout = 10 * time.Second
+
 var (
 	xTraceShutdownFunc func() error
 	shutdownExecuted   atomic.Bool // 确保 shutdown 只执行一次
@@ -116,7 +119,7 @@ func initXTraceByConfig(c *Config, serviceName, serviceVersion string) error {
 	// 使用互斥锁保护 shutdown 函数的设置，超时由 xhook stop hook 统一控制
 	shutdownMu.Lock()
 	xTraceShutdownFunc = func() error {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), defaultShutdownTimeout)
 		defer cancel()
 		return tp.Shutdown(ctx)
 	}

@@ -5,11 +5,14 @@ import (
 	"database/sql"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/xiaoshicae/xone/v2/xconfig"
+	"github.com/xiaoshicae/xone/v2/xlog"
 	"github.com/xiaoshicae/xone/v2/xutil"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 
 	. "github.com/bytedance/mockey"
 	// goconvey 使用别名导入，避免 convey.C 类型与 xgorm.C() 函数命名冲突
@@ -476,8 +479,8 @@ func TestNewGormLogger(t *testing.T) {
 		Mock(xlog.XLogLevel).Return("warn").Build()
 
 		gl := newGormLogger(&Config{
-			SlowThreshold:               "5s",
-			IgnoreRecordNotFoundErrorLog: true,
+			SlowThreshold:                "5s",
+			IgnoreRecordNotFoundErrorLog: true, //nolint:govet
 		})
 		c.So(gl, c.ShouldNotBeNil)
 		c.So(gl.logLevel, c.ShouldEqual, logger.Warn)

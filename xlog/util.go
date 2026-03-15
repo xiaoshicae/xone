@@ -12,10 +12,6 @@ type ctxKey struct{}
 // xLogCtxKVKey context 中存储日志 KV 容器的 key
 var xLogCtxKVKey = ctxKey{}
 
-// XLogCtxKVContainerKey 已废弃，请使用 CtxWithKV 函数注入 KV
-// Deprecated: 保留仅用于向后兼容，内部已切换到类型安全的 context key
-const XLogCtxKVContainerKey = "__xlog__ctx__kv__container__"
-
 func Error(ctx context.Context, msg string, args ...any) {
 	RawLog(ctx, logrus.ErrorLevel, msg, args...)
 }

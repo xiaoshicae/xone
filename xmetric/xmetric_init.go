@@ -62,6 +62,7 @@ func closeMetric() error {
 	defaultRegistry = prometheus.NewRegistry()
 	// 重置 clientMetricOnce，允许重新初始化
 	clientMetricOnce = sync.Once{}
+	// 注意：logHookOnce 不重置，因为 logrus.AddHook 不可撤销，重复注册会导致 hook 被触发多次
 	clientRequestsTotal = nil
 	clientRequestDuration = nil
 	return nil

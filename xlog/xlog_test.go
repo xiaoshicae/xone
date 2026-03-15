@@ -127,14 +127,10 @@ func TestCtxWithKV(t *testing.T) {
 			c.So(newCtx, c.ShouldNotBeNil)
 		})
 
-		mockey.PatchConvey("TestCtxWithKV-TypeSafeKey-OldStringKeyReturnsNil", func() {
-			// 使用新的 ctxKey 类型存储后，通过旧的 string key 读取返回 nil（向后不兼容性验证）
+		mockey.PatchConvey("TestCtxWithKV-TypeSafeKey", func() {
+			// 通过新的 ctxKey 类型读取应该成功
 			ctx := context.Background()
 			ctx = CtxWithKV(ctx, map[string]any{"key": "value"})
-			// 通过旧的 string 常量读取应该返回 nil
-			oldKeyResult := ctx.Value(XLogCtxKVContainerKey)
-			c.So(oldKeyResult, c.ShouldBeNil)
-			// 通过新的 ctxKey 类型读取应该成功
 			newKeyResult := ctx.Value(xLogCtxKVKey)
 			c.So(newKeyResult, c.ShouldNotBeNil)
 		})

@@ -877,12 +877,7 @@ func TestRunAutoBuilds(t *testing.T) {
 }
 
 func TestRunWithSwaggerInfo(t *testing.T) {
-	PatchConvey("TestRunWithSwaggerInfo", t, func() {
-		Mock(GetConfig).Return(&Config{Host: "127.0.0.1", Port: 0}).Build()
-		Mock(GetSwaggerConfig).Return(&SwaggerConfig{
-			Host:    "localhost",
-			Schemes: []string{"https"},
-		}).Build()
+	PatchConvey("TestRunWithSwaggerInfo-cachedConfig有Swagger", t, func() {
 		Mock(xconfig.GetServerVersion).Return("v2.0.0").Build()
 		Mock((*http.Server).ListenAndServe).Return(http.ErrServerClosed).Build()
 
@@ -893,8 +888,43 @@ func TestRunWithSwaggerInfo(t *testing.T) {
 		spec := &swag.Spec{InfoInstanceName: "test-run", SwaggerTemplate: "{}"}
 		g.WithSwagger(spec)
 
+		// 手动设置 cachedConfig（带 Swagger），模拟 Build 后的状态
+		g.cachedConfig = &Config{
+			Host: "127.0.0.1",
+			Port: 0,
+			Swagger: &SwaggerConfig{
+				Host:    "localhost",
+				Schemes: []string{"https"},
+			},
+		}
+		g.build = true
+
 		err := g.Run()
 		So(err, ShouldBeNil)
+		// 验证 swagger 信息被设置
+		So(spec.Host, ShouldEqual, "localhost")
+		So(spec.Version, ShouldEqual, "v2.0.0")
+	})
+
+	PatchConvey("TestRunWithSwaggerInfo-cachedConfig无Swagger用默认", t, func() {
+		Mock(xconfig.GetServerVersion).Return("v1.0.0").Build()
+		Mock((*http.Server).ListenAndServe).Return(http.ErrServerClosed).Build()
+
+		g := New(
+			options.EnableLogMiddleware(false),
+			options.EnableTraceMiddleware(false),
+		)
+		spec := &swag.Spec{InfoInstanceName: "test-run2", SwaggerTemplate: "{}"}
+		g.WithSwagger(spec)
+
+		// cachedConfig 无 Swagger 字段，Run 中会使用 swaggerConfigMergeDefault(nil)
+		g.cachedConfig = &Config{Host: "127.0.0.1", Port: 0}
+		g.build = true
+
+		err := g.Run()
+		So(err, ShouldBeNil)
+		// 默认 Schemes
+		So(spec.Schemes, ShouldResemble, defaultSchemes)
 	})
 }
 

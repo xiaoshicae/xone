@@ -54,6 +54,23 @@ func TestConfigMergeDefault(t *testing.T) {
 			c.So(config.MaxOpenConns, c.ShouldEqual, 10)
 			c.So(config.MaxIdleConns, c.ShouldEqual, 5)
 		})
+
+		PatchConvey("MaxIdleConns-Negative-SetToDefault", func() {
+			// MaxIdleConns 为 -1 时被设为默认值（等于 MaxOpenConns）
+			config := configMergeDefault(&Config{
+				MaxIdleConns: -1,
+			})
+			// MaxOpenConns 默认 50，MaxIdleConns <= 0 时等于 MaxOpenConns
+			c.So(config.MaxIdleConns, c.ShouldEqual, 50)
+		})
+
+		PatchConvey("MaxOpenConns-Negative-SetToDefault", func() {
+			// MaxOpenConns 为 -1 时被设为默认值 50
+			config := configMergeDefault(&Config{
+				MaxOpenConns: -1,
+			})
+			c.So(config.MaxOpenConns, c.ShouldEqual, 50)
+		})
 	})
 }
 
@@ -186,6 +203,45 @@ func TestInitXGorm(t *testing.T) {
 			err := initXGorm()
 			c.So(err, c.ShouldNotBeNil)
 			c.So(err.Error(), c.ShouldContainSubstring, "newClient failed")
+		})
+
+		PatchConvey("MultiClient-PartialFail-ClientMapNotPolluted", func() {
+			// 回滚场景中 clientMap 不被污染：第二个 client 创建失败时，第一个的连接被回滚，clientMap 不被写入
+			Mock(xconfig.ContainKey).Return(true).Build()
+			Mock(xutil.IsSlice).Return(true).Build()
+			Mock(getMultiConfig).Return([]*Config{
+				{Name: "n1", DSN: "test1"},
+				{Name: "n2", DSN: "test2"},
+			}, nil).Build()
+			Mock(xutil.InfoIfEnableDebug).Return().Build()
+
+			callCount := 0
+			mockDB := &gorm.DB{}
+			mockSqlDB := &sql.DB{}
+			Mock(newClient).To(func(cfg *Config) (*gorm.DB, error) {
+				callCount++
+				if callCount == 1 {
+					return mockDB, nil
+				}
+				return nil, errors.New("connect failed")
+			}).Build()
+			// 回滚时 client.DB() 被调用
+			Mock((*gorm.DB).DB).Return(mockSqlDB, nil).Build()
+			Mock((*sql.DB).Close).Return(nil).Build()
+
+			// 清空 clientMap
+			clientMu.Lock()
+			clear(clientMap)
+			clientMu.Unlock()
+
+			err := initXGorm()
+			c.So(err, c.ShouldNotBeNil)
+			c.So(err.Error(), c.ShouldContainSubstring, "newClient failed")
+
+			// 验证 clientMap 未被写入任何 client（延迟写入的效果）
+			clientMu.RLock()
+			c.So(len(clientMap), c.ShouldEqual, 0)
+			clientMu.RUnlock()
 		})
 	})
 }
@@ -381,6 +437,166 @@ func TestGetMultiConfig(t *testing.T) {
 				c.So(err, c.ShouldBeNil)
 				c.So(configs, c.ShouldHaveLength, 1)
 			})
+		})
+	})
+}
+
+// ==================== xgorm_logger.go ====================
+
+func TestResolveLoglevel(t *testing.T) {
+	PatchConvey("TestResolveLoglevel", t, func() {
+		PatchConvey("Info", func() {
+			c.So(resolveLoglevel("info"), c.ShouldEqual, logger.Info)
+		})
+
+		PatchConvey("Warn", func() {
+			c.So(resolveLoglevel("warn"), c.ShouldEqual, logger.Warn)
+		})
+
+		PatchConvey("Warning", func() {
+			c.So(resolveLoglevel("warning"), c.ShouldEqual, logger.Warn)
+		})
+
+		PatchConvey("Error", func() {
+			c.So(resolveLoglevel("error"), c.ShouldEqual, logger.Error)
+		})
+
+		PatchConvey("Unknown-DefaultInfo", func() {
+			c.So(resolveLoglevel("unknown"), c.ShouldEqual, logger.Info)
+		})
+
+		PatchConvey("UpperCase", func() {
+			c.So(resolveLoglevel("ERROR"), c.ShouldEqual, logger.Error)
+		})
+	})
+}
+
+func TestNewGormLogger(t *testing.T) {
+	PatchConvey("TestNewGormLogger", t, func() {
+		Mock(xlog.XLogLevel).Return("warn").Build()
+
+		gl := newGormLogger(&Config{
+			SlowThreshold:               "5s",
+			IgnoreRecordNotFoundErrorLog: true,
+		})
+		c.So(gl, c.ShouldNotBeNil)
+		c.So(gl.logLevel, c.ShouldEqual, logger.Warn)
+		c.So(gl.slowThreshold, c.ShouldEqual, 5*time.Second)
+		c.So(gl.ignoreRecordNotFoundError, c.ShouldBeTrue)
+	})
+}
+
+func TestGormLoggerLogMode(t *testing.T) {
+	PatchConvey("TestGormLoggerLogMode", t, func() {
+		gl := &gormLogger{logLevel: logger.Info}
+		newLogger := gl.LogMode(logger.Error)
+		// 返回新实例，不影响原实例
+		c.So(newLogger.(*gormLogger).logLevel, c.ShouldEqual, logger.Error)
+		c.So(gl.logLevel, c.ShouldEqual, logger.Info)
+	})
+}
+
+func TestGormLoggerInfoWarnError(t *testing.T) {
+	PatchConvey("TestGormLoggerInfoWarnError", t, func() {
+		gl := &gormLogger{logLevel: logger.Info}
+		ctx := context.Background()
+
+		PatchConvey("Info", func() {
+			Mock(xlog.Info).Return().Build()
+			gl.Info(ctx, "test %s", "info")
+		})
+
+		PatchConvey("Warn", func() {
+			Mock(xlog.Warn).Return().Build()
+			gl.Warn(ctx, "test %s", "warn")
+		})
+
+		PatchConvey("Error", func() {
+			Mock(xlog.Error).Return().Build()
+			gl.Error(ctx, "test %s", "error")
+		})
+	})
+}
+
+func TestGormLoggerTrace(t *testing.T) {
+	PatchConvey("TestGormLoggerTrace", t, func() {
+		ctx := context.Background()
+		fc := func() (string, int64) {
+			return "SELECT * FROM users", 10
+		}
+
+		PatchConvey("ErrorPath-WithError", func() {
+			errorCalled := false
+			Mock(xlog.Error).To(func(ctx context.Context, msg string, args ...any) {
+				errorCalled = true
+			}).Build()
+
+			gl := &gormLogger{logLevel: logger.Error, slowThreshold: 3 * time.Second}
+			gl.Trace(ctx, time.Now(), fc, errors.New("query error"))
+			c.So(errorCalled, c.ShouldBeTrue)
+		})
+
+		PatchConvey("ErrorPath-RecordNotFound-Ignored", func() {
+			errorCalled := false
+			Mock(xlog.Error).To(func(ctx context.Context, msg string, args ...any) {
+				errorCalled = true
+			}).Build()
+
+			gl := &gormLogger{logLevel: logger.Error, slowThreshold: 3 * time.Second, ignoreRecordNotFoundError: true}
+			gl.Trace(ctx, time.Now(), fc, gorm.ErrRecordNotFound)
+			c.So(errorCalled, c.ShouldBeFalse)
+		})
+
+		PatchConvey("SlowQueryPath", func() {
+			warnCalled := false
+			Mock(xlog.Warn).To(func(ctx context.Context, msg string, args ...any) {
+				warnCalled = true
+			}).Build()
+
+			gl := &gormLogger{logLevel: logger.Warn, slowThreshold: 1 * time.Millisecond}
+			// begin 设为过去，确保 cost > slowThreshold
+			gl.Trace(ctx, time.Now().Add(-1*time.Second), fc, nil)
+			c.So(warnCalled, c.ShouldBeTrue)
+		})
+
+		PatchConvey("InfoPath", func() {
+			infoCalled := false
+			Mock(xlog.Info).To(func(ctx context.Context, msg string, args ...any) {
+				infoCalled = true
+			}).Build()
+
+			gl := &gormLogger{logLevel: logger.Info, slowThreshold: 1 * time.Hour}
+			gl.Trace(ctx, time.Now(), fc, nil)
+			c.So(infoCalled, c.ShouldBeTrue)
+		})
+
+		PatchConvey("SilentPath-NoLog", func() {
+			logCalled := false
+			Mock(xlog.Error).To(func(ctx context.Context, msg string, args ...any) {
+				logCalled = true
+			}).Build()
+			Mock(xlog.Warn).To(func(ctx context.Context, msg string, args ...any) {
+				logCalled = true
+			}).Build()
+			Mock(xlog.Info).To(func(ctx context.Context, msg string, args ...any) {
+				logCalled = true
+			}).Build()
+
+			gl := &gormLogger{logLevel: logger.Silent, slowThreshold: 1 * time.Millisecond}
+			gl.Trace(ctx, time.Now().Add(-1*time.Second), fc, errors.New("err"))
+			c.So(logCalled, c.ShouldBeFalse)
+		})
+	})
+}
+
+func TestFormatRows(t *testing.T) {
+	PatchConvey("TestFormatRows", t, func() {
+		PatchConvey("Unknown", func() {
+			c.So(formatRows(-1), c.ShouldEqual, "-")
+		})
+
+		PatchConvey("Normal", func() {
+			c.So(formatRows(10), c.ShouldEqual, int64(10))
 		})
 	})
 }

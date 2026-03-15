@@ -207,3 +207,75 @@ func TestShutdownXTrace(t *testing.T) {
 		})
 	})
 }
+
+// ==================== util.go (traceEnabled 从模块变量读取) ====================
+
+func TestEnableTrace_ModuleVariable(t *testing.T) {
+	PatchConvey("TestEnableTrace_ModuleVariable", t, func() {
+		PatchConvey("DefaultTrue", func() {
+			// traceEnabled 默认值为 true
+			MockValue(&traceEnabled).To(true)
+			So(EnableTrace(), ShouldBeTrue)
+		})
+
+		PatchConvey("SetToFalse", func() {
+			MockValue(&traceEnabled).To(false)
+			So(EnableTrace(), ShouldBeFalse)
+		})
+
+		PatchConvey("SetToTrue", func() {
+			MockValue(&traceEnabled).To(true)
+			So(EnableTrace(), ShouldBeTrue)
+		})
+	})
+}
+
+// ==================== xtrace_init.go (initXTrace 设置 traceEnabled) ====================
+
+func TestInitXTrace_SetsTraceEnabled(t *testing.T) {
+	PatchConvey("TestInitXTrace_SetsTraceEnabled", t, func() {
+		PatchConvey("DisabledSetsTraceEnabledFalse", func() {
+			enableFalse := false
+			Mock(getConfig).Return(&Config{Enable: &enableFalse}, nil).Build()
+
+			err := initXTrace()
+			So(err, ShouldBeNil)
+			So(EnableTrace(), ShouldBeFalse)
+		})
+
+		PatchConvey("EnabledSetsTraceEnabledTrue", func() {
+			enableTrue := true
+			Mock(getConfig).Return(&Config{Enable: &enableTrue}, nil).Build()
+			Mock(xconfig.GetServerName).Return("test-svc").Build()
+			Mock(xconfig.GetServerVersion).Return("v1.0.0").Build()
+			Mock(xutil.InfoIfEnableDebug).Return().Build()
+			Mock(initXTraceByConfig).Return(nil).Build()
+
+			err := initXTrace()
+			So(err, ShouldBeNil)
+			So(EnableTrace(), ShouldBeTrue)
+		})
+	})
+}
+
+// ==================== xtrace_init.go (shutdown 超时) ====================
+
+func TestShutdownXTrace_WithTimeout(t *testing.T) {
+	PatchConvey("TestShutdownXTrace_WithTimeout", t, func() {
+		PatchConvey("ShutdownFuncUsesTimeout", func() {
+			// initXTraceByConfig 创建的 shutdown 闭包使用 10s 超时
+			shutdownExecuted.Store(false)
+			xTraceShutdownFunc = nil
+			err := initXTraceByConfig(&Config{Console: false}, "test-svc", "v1.0.0")
+			So(err, ShouldBeNil)
+			// xTraceShutdownFunc 不为 nil，说明已设置
+			So(xTraceShutdownFunc, ShouldNotBeNil)
+			// 执行 shutdown，应成功
+			err = shutdownXTrace()
+			So(err, ShouldBeNil)
+			// 再次调用应跳过（幂等）
+			err = shutdownXTrace()
+			So(err, ShouldBeNil)
+		})
+	})
+}

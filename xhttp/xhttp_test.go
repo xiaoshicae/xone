@@ -405,6 +405,7 @@ func TestInitHttpClient_WithMetric(t *testing.T) {
 			defaultClient = prevDefaultClient
 		}()
 
+		mockey.Mock(xconfig.ContainKey).Return(true).Build()
 		mockey.Mock(getConfig).Return(&Config{
 			Timeout:             "60s",
 			DialTimeout:         "30s",

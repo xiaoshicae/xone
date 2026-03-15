@@ -30,7 +30,10 @@ func ToZHErr(err error) error {
 	}
 
 	// 没有初始化，说明没有启用
-	if trans == nil {
+	transMu.Lock()
+	t := trans
+	transMu.Unlock()
+	if t == nil {
 		return err
 	}
 
@@ -41,7 +44,7 @@ func ToZHErr(err error) error {
 
 	result := make(map[string][]string)
 	for _, e := range ves {
-		result[e.Field()] = append(result[e.Field()], e.Translate(trans))
+		result[e.Field()] = append(result[e.Field()], e.Translate(t))
 	}
 
 	kvs := make([]VErrKV, 0)

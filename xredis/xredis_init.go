@@ -58,23 +58,28 @@ func initMulti() error {
 	xutil.InfoIfEnableDebug("XOne init %s got config: %s", XRedisConfigKey, xutil.ToJsonString(sanitizeConfigsForLog(configs)))
 
 	// 先创建所有 client，部分失败时回滚已创建的连接
-	created := make([]*redis.Client, 0, len(configs))
-	for idx, config := range configs {
+	type namedClient struct {
+		name   string
+		client *redis.Client
+	}
+	created := make([]namedClient, 0, len(configs))
+	for _, config := range configs {
 		client, err := newClient(config)
 		if err != nil {
 			// 回滚已创建的连接
-			for _, c := range created {
-				_ = c.Close()
+			for _, nc := range created {
+				_ = nc.client.Close()
 			}
 			return xerror.Newf("xredis", "init", "newClient failed, name=[%v], err=[%v]", config.Name, err)
 		}
+		created = append(created, namedClient{name: config.Name, client: client})
+	}
 
-		created = append(created, client)
-		set(config.Name, client)
-
-		// 第一个 client 为 C() 默认获取的 client
+	// 所有 client 创建成功后再写入全局 clientMap
+	for idx, nc := range created {
+		set(nc.name, nc.client)
 		if idx == 0 {
-			setDefault(client)
+			setDefault(nc.client)
 		}
 	}
 	return nil

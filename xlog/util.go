@@ -3,12 +3,17 @@ package xlog
 import (
 	"context"
 
-	"github.com/xiaoshicae/xone/v2/xconfig"
-	"github.com/xiaoshicae/xone/v2/xutil"
-
 	"github.com/sirupsen/logrus"
 )
 
+// ctxKey 自定义 context key 类型，避免与其他包冲突
+type ctxKey struct{}
+
+// xLogCtxKVKey context 中存储日志 KV 容器的 key
+var xLogCtxKVKey = ctxKey{}
+
+// XLogCtxKVContainerKey 已废弃，请使用 CtxWithKV 函数注入 KV
+// Deprecated: 保留仅用于向后兼容，内部已切换到类型安全的 context key
 const XLogCtxKVContainerKey = "__xlog__ctx__kv__container__"
 
 func Error(ctx context.Context, msg string, args ...any) {
@@ -75,14 +80,14 @@ func CtxWithKV(ctx context.Context, kvs map[string]any) context.Context {
 	if kvs == nil {
 		kvs = make(map[string]any)
 	}
-	kvContainer, ok := ctx.Value(XLogCtxKVContainerKey).(map[string]any)
+	kvContainer, ok := ctx.Value(xLogCtxKVKey).(map[string]any)
 	if !ok || kvContainer == nil {
 		// 创建副本避免外部修改影响
 		newKvs := make(map[string]any, len(kvs))
 		for k, v := range kvs {
 			newKvs[k] = v
 		}
-		return context.WithValue(ctx, XLogCtxKVContainerKey, newKvs)
+		return context.WithValue(ctx, xLogCtxKVKey, newKvs)
 	}
 	// 合并已有的和新的kv，创建新map保证并发安全
 	newContainer := make(map[string]any, len(kvContainer)+len(kvs))
@@ -92,9 +97,15 @@ func CtxWithKV(ctx context.Context, kvs map[string]any) context.Context {
 	for k, v := range kvs {
 		newContainer[k] = v
 	}
-	return context.WithValue(ctx, XLogCtxKVContainerKey, newContainer)
+	return context.WithValue(ctx, xLogCtxKVKey, newContainer)
 }
 
+// XLogLevel 获取当前日志级别
 func XLogLevel() string {
-	return xutil.GetOrDefault(xconfig.GetString(XLogConfigKey+".Level"), "Info")
+	logLevelMu.RLock()
+	defer logLevelMu.RUnlock()
+	if logLevel != "" {
+		return logLevel
+	}
+	return "info"
 }

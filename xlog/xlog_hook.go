@@ -19,7 +19,7 @@ import (
 const (
 	colorRed    = 31
 	colorYellow = 33
-	colorBlue   = 36
+	colorCyan   = 36
 	colorGray   = 37
 )
 
@@ -42,8 +42,12 @@ func (m *xLogHook) Fire(entry *logrus.Entry) error {
 		entry.Data["servername"] = m.ServerName
 	}
 
-	entry.Data["ip"] = m.IP
-	entry.Data["pid"] = m.PidStr
+	if _, ok := entry.Data["ip"]; !ok {
+		entry.Data["ip"] = m.IP
+	}
+	if _, ok := entry.Data["pid"]; !ok {
+		entry.Data["pid"] = m.PidStr
+	}
 
 	// 设置文件名和行号
 	caller := m.ensureCaller(entry)
@@ -106,7 +110,7 @@ func (m *xLogHook) ensureCaller(entry *logrus.Entry) *runtime.Frame {
 	return m.getCaller(0)
 }
 
-// getCaller retrieves the name of the first non-logrus calling function
+// getCaller 获取第一个非 logrus 内部的调用者信息
 func (m *xLogHook) getCaller(callDepth int) *runtime.Frame {
 	return xutil.GetLogCaller(callDepth, m.SuffixToIgnore)
 }
@@ -139,7 +143,7 @@ func getLogConsoleLogColor(l logrus.Level) int {
 	case logrus.ErrorLevel, logrus.FatalLevel, logrus.PanicLevel:
 		return colorRed
 	default:
-		return colorBlue
+		return colorCyan
 	}
 }
 
@@ -151,7 +155,7 @@ func callerPretty(f *runtime.Frame) string {
 }
 
 func getXLogContainerFromCtx(ctx context.Context) map[string]any {
-	kvContainer, ok := ctx.Value(XLogCtxKVContainerKey).(map[string]any)
+	kvContainer, ok := ctx.Value(xLogCtxKVKey).(map[string]any)
 	if !ok || kvContainer == nil {
 		return nil
 	}

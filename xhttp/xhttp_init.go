@@ -30,10 +30,16 @@ func closeHttpClient() error {
 		rawHttpClient.CloseIdleConnections()
 		rawHttpClient = nil
 	}
+	defaultClient = resty.New()
 	return nil
 }
 
 func initHttpClient() error {
+	if !xconfig.ContainKey(XHttpConfigKey) {
+		xutil.WarnIfEnableDebug("XOne init %s skipped, config key [%s] not exists", XHttpConfigKey, XHttpConfigKey)
+		return nil
+	}
+
 	c, err := getConfig()
 	if err != nil {
 		return xerror.Newf("xhttp", "init", "getConfig failed, err=[%v]", err)

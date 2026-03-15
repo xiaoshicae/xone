@@ -526,15 +526,51 @@ func filterJSONBody(bodyBytes []byte) string {
 }
 
 // bodyMayContainSensitiveField 快速预检 body 是否可能包含敏感字段
-// 使用 bytes.ToLower + bytes.Contains，比 JSON 解析+遍历+序列化 开销小得多
+// 使用 containsFold 逐字段匹配，避免 bytes.ToLower 的整体内存拷贝
 func bodyMayContainSensitiveField(body []byte, fieldBytes [][]byte) bool {
-	lowerBody := bytes.ToLower(body)
 	for _, fb := range fieldBytes {
-		if bytes.Contains(lowerBody, fb) {
+		if containsFold(body, fb) {
 			return true
 		}
 	}
 	return false
+}
+
+// containsFold 大小写不敏感地检查 b 是否包含 sub
+func containsFold(b, sub []byte) bool {
+	if len(sub) == 0 {
+		return true
+	}
+	if len(b) < len(sub) {
+		return false
+	}
+	for i := 0; i <= len(b)-len(sub); i++ {
+		if equalFold(b[i:i+len(sub)], sub) {
+			return true
+		}
+	}
+	return false
+}
+
+// equalFold 比较两个等长 byte slice 是否大小写不敏感相等
+func equalFold(a, b []byte) bool {
+	for i := range a {
+		ca, cb := a[i], b[i]
+		if ca == cb {
+			continue
+		}
+		// ASCII 大小写转换
+		if ca >= 'A' && ca <= 'Z' {
+			ca += 'a' - 'A'
+		}
+		if cb >= 'A' && cb <= 'Z' {
+			cb += 'a' - 'A'
+		}
+		if ca != cb {
+			return false
+		}
+	}
+	return true
 }
 
 func filterAnySensitiveFields(data any, fieldMap map[string]bool) {

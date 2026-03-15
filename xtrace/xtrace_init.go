@@ -4,6 +4,7 @@ import (
 	"context"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/xiaoshicae/xone/v2/xconfig"
 	"github.com/xiaoshicae/xone/v2/xerror"
@@ -24,6 +25,9 @@ var (
 	xTraceShutdownFunc func() error
 	shutdownExecuted   atomic.Bool // 确保 shutdown 只执行一次
 	shutdownMu         sync.Mutex
+
+	traceEnabled   = true // 默认开启
+	traceEnabledMu sync.RWMutex
 )
 
 func init() {
@@ -43,15 +47,22 @@ func initXTrace() error {
 	}
 
 	if c.Enable != nil && !*c.Enable {
+		traceEnabledMu.Lock()
+		traceEnabled = false
+		traceEnabledMu.Unlock()
 		otel.SetTracerProvider(oteltrace.NewNoopTracerProvider())
 		xutil.InfoIfEnableDebug("XOne initXTrace ignored, because of config XTrace.Enable=false")
 		return nil
 	}
 
+	traceEnabledMu.Lock()
+	traceEnabled = true
+	traceEnabledMu.Unlock()
+
 	serviceName := xconfig.GetServerName()
 	serviceVersion := xconfig.GetServerVersion()
 
-	xutil.InfoIfEnableDebug("XOne initXTrace got param: ServiceName:%s, ServiceVersion:%s", serviceName, serviceVersion)
+	xutil.InfoIfEnableDebug("XOne initXTrace got param, ServiceName=[%s], ServiceVersion=[%s]", serviceName, serviceVersion)
 
 	return initXTraceByConfig(c, serviceName, serviceVersion)
 }
@@ -105,7 +116,9 @@ func initXTraceByConfig(c *Config, serviceName, serviceVersion string) error {
 	// 使用互斥锁保护 shutdown 函数的设置，超时由 xhook stop hook 统一控制
 	shutdownMu.Lock()
 	xTraceShutdownFunc = func() error {
-		return tp.Shutdown(context.Background())
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		return tp.Shutdown(ctx)
 	}
 	// 重置 shutdown 标志，允许新的 shutdown
 	shutdownExecuted.Store(false)

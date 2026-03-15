@@ -15,10 +15,9 @@ import (
 	"golang.org/x/exp/slices"
 )
 
-var (
-	defaultStopTimeout = 60 * time.Second
-	maxHookNum         = 1000
-)
+const maxHookNum = 1000
+
+var defaultStopTimeout = 60 * time.Second
 
 var (
 	beforeStartHooks       = make([]hook, 0)

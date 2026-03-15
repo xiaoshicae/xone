@@ -69,25 +69,30 @@ func initMulti() error {
 	xutil.InfoIfEnableDebug("XOne init %s got config: %s", XGormConfigKey, xutil.ToJsonString(sanitizeConfigsForLog(configs)))
 
 	// 先创建所有 client，部分失败时回滚已创建的连接
-	created := make([]*gorm.DB, 0, len(configs))
-	for idx, config := range configs {
+	type namedClient struct {
+		name   string
+		client *gorm.DB
+	}
+	created := make([]namedClient, 0, len(configs))
+	for _, config := range configs {
 		client, err := newClient(config)
 		if err != nil {
 			// 回滚已创建的连接
-			for _, c := range created {
-				if db, dbErr := c.DB(); dbErr == nil {
+			for _, nc := range created {
+				if db, dbErr := nc.client.DB(); dbErr == nil {
 					_ = db.Close()
 				}
 			}
 			return xerror.Newf("xgorm", "init", "newClient failed, name=[%v], err=[%v]", config.Name, err)
 		}
+		created = append(created, namedClient{name: config.Name, client: client})
+	}
 
-		created = append(created, client)
-		set(config.Name, client)
-
-		// 第一个client为C()默认获取的client
+	// 所有 client 创建成功后再写入全局 clientMap
+	for idx, nc := range created {
+		set(nc.name, nc.client)
 		if idx == 0 {
-			setDefault(client)
+			setDefault(nc.client)
 		}
 	}
 	return nil

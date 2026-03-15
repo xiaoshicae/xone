@@ -20,25 +20,5 @@ func GinXSessionMiddleware() gin.HandlerFunc {
 }
 
 func ctxWithKV(ctx context.Context, kvs map[string]any) context.Context {
-	if kvs == nil {
-		kvs = make(map[string]any)
-	}
-	kvContainer, ok := ctx.Value(xlog.XLogCtxKVContainerKey).(map[string]any)
-	if !ok || kvContainer == nil {
-		// 创建副本避免外部修改影响
-		newKvs := make(map[string]any, len(kvs))
-		for k, v := range kvs {
-			newKvs[k] = v
-		}
-		return context.WithValue(ctx, xlog.XLogCtxKVContainerKey, newKvs)
-	}
-	// 合并已有的和新的 kv，创建新 map 保证并发安全（与 xlog.CtxWithKV 行为一致）
-	newContainer := make(map[string]any, len(kvContainer)+len(kvs))
-	for k, v := range kvContainer {
-		newContainer[k] = v
-	}
-	for k, v := range kvs {
-		newContainer[k] = v
-	}
-	return context.WithValue(ctx, xlog.XLogCtxKVContainerKey, newContainer)
+	return xlog.CtxWithKV(ctx, kvs)
 }

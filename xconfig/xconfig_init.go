@@ -26,6 +26,14 @@ var envPlaceholderRegex = regexp.MustCompile(`\$\{([^}:]+)(?::-([^}]*))?\}`)
 
 func init() {
 	xhook.BeforeStart(initXConfig, xhook.Order(1))
+	xhook.BeforeStop(closeXConfig, xhook.Order(1))
+}
+
+func closeXConfig() error {
+	vipMu.Lock()
+	vip = nil
+	vipMu.Unlock()
+	return nil
 }
 
 func initXConfig() error {
@@ -139,18 +147,7 @@ func mergeProfilesViperConfig(vp1, vp2 *viper.Viper) *viper.Viper {
 }
 
 func getTopLevelConfigs(vp *viper.Viper) map[string]any {
-	allSettings := vp.AllSettings()
-	topLevelConfigs := make(map[string]any)
-	for k, v := range allSettings {
-		if !isNestedKey(k) {
-			topLevelConfigs[k] = v
-		}
-	}
-	return topLevelConfigs
-}
-
-func isNestedKey(key string) bool {
-	return strings.Contains(key, ".")
+	return vp.AllSettings()
 }
 
 // getTopLevelAndServerSecondLevelConfigs 获取所有一级key+server下的二级可以对应的配置
@@ -177,7 +174,7 @@ func getTopLevelAndServerSecondLevelConfigs(vp *viper.Viper) map[string]any {
 	// 收集剩下的一级key
 	allSettings := vp.AllSettings()
 	for k, v := range allSettings {
-		if !isNestedKey(k) && k != "server" {
+		if k != "server" {
 			configs[k] = v
 		}
 	}
@@ -197,7 +194,7 @@ func expandEnvPlaceholder(val string) string {
 		if len(matches) >= 3 {
 			defaultVal = matches[2]
 		}
-		if envVal := os.Getenv(envKey); envVal != "" {
+		if envVal, exists := os.LookupEnv(envKey); exists {
 			return envVal
 		}
 		return defaultVal

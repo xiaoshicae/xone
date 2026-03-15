@@ -1,13 +1,12 @@
 package trans
 
 import (
-	"errors"
-
 	"github.com/gin-gonic/gin/binding"
 	"github.com/go-playground/locales/zh"
 	ut "github.com/go-playground/universal-translator"
 	"github.com/go-playground/validator/v10"
 	zt "github.com/go-playground/validator/v10/translations/zh"
+	"github.com/xiaoshicae/xone/v2/xerror"
 	"github.com/xiaoshicae/xone/v2/xutil"
 )
 
@@ -29,13 +28,13 @@ func RegisterZHTranslations() error {
 	t, ok := uni.GetTranslator("zh")
 	if !ok {
 		xutil.WarnIfEnableDebug("zh translator not found, translator not take effect")
-		return errors.New("zh translator not found")
+		return xerror.Newf("xgin", "registerZHTranslations", "zh translator not found")
 	}
 
 	v, ok := binding.Validator.Engine().(*validator.Validate)
 	if !ok {
 		xutil.WarnIfEnableDebug("gin binding.Validator.Engine() type assign to *validator.Validate failed, translator not take effect")
-		return errors.New("gin binding.Validator.Engine() type assign to *validator.Validate failed")
+		return xerror.Newf("xgin", "registerZHTranslations", "gin binding.Validator.Engine() type assert to *validator.Validate failed")
 	}
 
 	if err := zt.RegisterDefaultTranslations(v, t); err != nil {

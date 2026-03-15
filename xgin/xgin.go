@@ -57,9 +57,10 @@ type XGin struct {
 	swaggerInfo     *swag.Spec
 	swaggerOpts     []options.SwaggerOption
 
-	srvMu sync.Mutex   // 保护 srv 字段的并发访问
-	srv   *http.Server // 对gin进行包装后的http server
-	build bool         // XGin实例是否已经build完成
+	srvMu        sync.Mutex   // 保护 srv 字段的并发访问
+	srv          *http.Server // 对gin进行包装后的http server
+	build        bool         // XGin实例是否已经build完成
+	cachedConfig *Config      // 缓存的配置，Build 时读取
 }
 
 func (g *XGin) WithRouteRegister(f ...func(*gin.Engine)) *XGin {
@@ -108,6 +109,9 @@ func (g *XGin) Build() *XGin {
 		}
 	}
 
+	// 缓存配置，避免运行时散落读取 xconfig
+	g.cachedConfig = GetConfig()
+
 	g.build = true
 	return g
 }
@@ -130,8 +134,7 @@ func (g *XGin) Run() error {
 		g.Build()
 	}
 
-	// 从 xconfig 读取配置（此时 xconfig 已通过 BeforeStart hook 初始化）
-	ginConfig := GetConfig()
+	ginConfig := g.cachedConfig
 
 	// 校验 TLS 配置完整性
 	if (ginConfig.CertFile == "") != (ginConfig.KeyFile == "") {
@@ -140,7 +143,11 @@ func (g *XGin) Run() error {
 
 	// 填充 swagger 配置
 	if g.swaggerInfo != nil {
-		setGinSwaggerInfo(g.swaggerInfo)
+		swaggerConfig := ginConfig.Swagger
+		if swaggerConfig == nil {
+			swaggerConfig = swaggerConfigMergeDefault(nil)
+		}
+		setGinSwaggerInfo(g.swaggerInfo, swaggerConfig)
 	}
 
 	addr := net.JoinHostPort(ginConfig.Host, strconv.Itoa(ginConfig.Port))
@@ -281,8 +288,7 @@ func injectSwaggerInfo(swaggerInfo *swag.Spec, engine *gin.Engine, opts ...optio
 	engine.GET(swaggerUrl, swagger.SwaggerHandler)
 }
 
-func setGinSwaggerInfo(swaggerInfo *swag.Spec) {
-	ginSwaggerConfig := GetSwaggerConfig()
+func setGinSwaggerInfo(swaggerInfo *swag.Spec, ginSwaggerConfig *SwaggerConfig) {
 	swaggerInfo.Version = xconfig.GetServerVersion()
 	swaggerInfo.Host = ginSwaggerConfig.Host
 	swaggerInfo.BasePath = ginSwaggerConfig.BasePath

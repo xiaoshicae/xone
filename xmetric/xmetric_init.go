@@ -3,6 +3,7 @@ package xmetric
 import (
 	"sync"
 
+	"github.com/prometheus/client_golang/prometheus"
 	promcollectors "github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/sirupsen/logrus"
@@ -29,10 +30,10 @@ func initMetric() error {
 
 	// 注册 Go runtime 和进程指标
 	if *c.EnableGoMetrics {
-		defaultRegistry.MustRegister(promcollectors.NewGoCollector())
+		safeRegister(promcollectors.NewGoCollector())
 	}
 	if *c.EnableProcessMetrics {
-		defaultRegistry.MustRegister(promcollectors.NewProcessCollector(promcollectors.ProcessCollectorOpts{}))
+		safeRegister(promcollectors.NewProcessCollector(promcollectors.ProcessCollectorOpts{}))
 	}
 
 	// 设置全局配置
@@ -58,6 +59,11 @@ func closeMetric() error {
 	defer registryMu.Unlock()
 	metricsHandler = nil
 	metricConfig = nil
+	defaultRegistry = prometheus.NewRegistry()
+	// 重置 clientMetricOnce，允许重新初始化
+	clientMetricOnce = sync.Once{}
+	clientRequestsTotal = nil
+	clientRequestDuration = nil
 	return nil
 }
 

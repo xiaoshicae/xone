@@ -826,16 +826,6 @@ func TestGetTopLevelConfigs(t *testing.T) {
 	})
 }
 
-func TestIsNestedKey(t *testing.T) {
-	PatchConvey("TestIsNestedKey", t, func() {
-		So(isNestedKey(""), ShouldBeFalse)
-		So(isNestedKey("1"), ShouldBeFalse)
-		So(isNestedKey("."), ShouldBeTrue)
-		So(isNestedKey(".1"), ShouldBeTrue)
-		So(isNestedKey("1.1"), ShouldBeTrue)
-	})
-}
-
 func TestGetTopLevelAndServerSecondLevelConfigs(t *testing.T) {
 	PatchConvey("TestGetTopLevelAndServerSecondLevelConfigs", t, func() {
 		vp := viper.New()

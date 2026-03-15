@@ -44,7 +44,7 @@ func (h *metricLogHook) Fire(entry *logrus.Entry) error {
 	exemplar := buildExemplar(entry)
 	if exemplar != nil {
 		if adder, ok := counter.(prometheus.ExemplarAdder); ok {
-			adder.AddWithExemplar(1, exemplar)
+			safeExemplar(func() { adder.AddWithExemplar(1, exemplar) })
 			return nil
 		}
 	}

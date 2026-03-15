@@ -57,20 +57,18 @@ func (l *gormLogger) Error(ctx context.Context, s string, i ...interface{}) {
 
 func (l *gormLogger) Trace(ctx context.Context, begin time.Time, fc func() (sql string, rowsAffected int64), err error) {
 	cost := time.Since(begin)
+	costMS := strconv.FormatInt(cost.Milliseconds(), 10) + "ms"
 
 	switch {
 	case err != nil && l.logLevel >= logger.Error && (!errors.Is(err, gorm.ErrRecordNotFound) || !l.ignoreRecordNotFoundError):
 		sql, rows := fc()
-		costMS := strconv.FormatInt(cost.Milliseconds(), 10) + "ms"
-		xlog.Error(ctx, "latency: %s, rowsAffected: %v, sql: %s, err: %v", costMS, formatRows(rows), sql, err)
+		xlog.Error(ctx, "latency=[%s], rowsAffected=[%v], sql=[%s], err=[%v]", costMS, formatRows(rows), sql, err)
 	case cost > l.slowThreshold && l.slowThreshold != 0 && l.logLevel >= logger.Warn:
 		sql, rows := fc()
-		costMS := strconv.FormatInt(cost.Milliseconds(), 10) + "ms"
-		xlog.Warn(ctx, "SLOW SQL >= %v, latency: %s, rowsAffected: %v, sql: %s", l.slowThreshold, costMS, formatRows(rows), sql)
+		xlog.Warn(ctx, "SLOW SQL >= %v, latency=[%s], rowsAffected=[%v], sql=[%s]", l.slowThreshold, costMS, formatRows(rows), sql)
 	case l.logLevel == logger.Info:
 		sql, rows := fc()
-		costMS := strconv.FormatInt(cost.Milliseconds(), 10) + "ms"
-		xlog.Info(ctx, "latency: %s, rowsAffected: %v, sql: %s", costMS, formatRows(rows), sql)
+		xlog.Info(ctx, "latency=[%s], rowsAffected=[%v], sql=[%s]", costMS, formatRows(rows), sql)
 	}
 }
 

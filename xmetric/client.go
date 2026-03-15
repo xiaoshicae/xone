@@ -93,16 +93,25 @@ func getHttpDurationBuckets() []float64 {
 	registryMu.RLock()
 	defer registryMu.RUnlock()
 	if metricConfig != nil && len(metricConfig.HttpDurationBuckets) > 0 {
-		return metricConfig.HttpDurationBuckets
+		result := make([]float64, len(metricConfig.HttpDurationBuckets))
+		copy(result, metricConfig.HttpDurationBuckets)
+		return result
 	}
-	return defaultHttpDurationBuckets
+	result := make([]float64, len(defaultHttpDurationBuckets))
+	copy(result, defaultHttpDurationBuckets)
+	return result
 }
 
 func getHistogramObserveBuckets() []float64 {
 	registryMu.RLock()
 	defer registryMu.RUnlock()
 	if metricConfig != nil && len(metricConfig.HistogramObserveBuckets) > 0 {
-		return metricConfig.HistogramObserveBuckets
+		result := make([]float64, len(metricConfig.HistogramObserveBuckets))
+		copy(result, metricConfig.HistogramObserveBuckets)
+		return result
 	}
-	return prometheus.DefBuckets
+	defBuckets := prometheus.DefBuckets
+	result := make([]float64, len(defBuckets))
+	copy(result, defBuckets)
+	return result
 }

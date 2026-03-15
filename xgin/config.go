@@ -6,8 +6,8 @@ import (
 )
 
 const (
-	ginConfigKey        = "XGin"
-	ginSwaggerConfigKey = "XGin.Swagger"
+	XGinConfigKey        = "XGin"
+	XGinSwaggerConfigKey = "XGin.Swagger"
 
 	defaultHost = "0.0.0.0"
 	defaultPort = 8000
@@ -69,7 +69,7 @@ type SwaggerConfig struct {
 // GetConfig 获取Gin相关配置
 func GetConfig() *Config {
 	config := &Config{}
-	if err := xconfig.UnmarshalConfig(ginConfigKey, config); err != nil {
+	if err := xconfig.UnmarshalConfig(XGinConfigKey, config); err != nil {
 		xutil.WarnIfEnableDebug("XGin GetConfig unmarshal failed, use default, err=[%v]", err)
 	}
 	return configMergeDefault(config)
@@ -78,7 +78,7 @@ func GetConfig() *Config {
 // GetSwaggerConfig 获取Gin-Swagger相关配置
 func GetSwaggerConfig() *SwaggerConfig {
 	config := &SwaggerConfig{}
-	if err := xconfig.UnmarshalConfig(ginSwaggerConfigKey, config); err != nil {
+	if err := xconfig.UnmarshalConfig(XGinSwaggerConfigKey, config); err != nil {
 		xutil.WarnIfEnableDebug("XGin GetSwaggerConfig unmarshal failed, use default, err=[%v]", err)
 	}
 	return swaggerConfigMergeDefault(config)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/go-resty/resty/v2"
 	"github.com/xiaoshicae/xone/v2/xutil"
@@ -28,16 +29,16 @@ func RWithCtx(ctx context.Context) *resty.Request {
 }
 
 // RawClient 获取原生 http.Client，用于需要直接操作 response body 的场景（如 SSE 流式请求）
-// 注意：必须在 xone 启动后调用，否则返回的 client 未经配置（无超时等）
+// 注意：必须在 xone 启动后调用，否则返回的 client 未经配置（仅有 30s 超时兜底）
 func RawClient() *http.Client {
 	clientMu.RLock()
 	defer clientMu.RUnlock()
 	if rawHttpClient != nil {
 		return rawHttpClient
 	}
-	// 兜底返回，实际使用中应确保 xone 已启动
-	xutil.WarnIfEnableDebug("XHttp RawClient called before xone started, returning http.DefaultClient without custom config")
-	return http.DefaultClient
+	// 兜底返回带默认超时的 client，避免无超时导致请求永久阻塞
+	xutil.WarnIfEnableDebug("XHttp RawClient called before xone started, returning fallback client with 30s timeout")
+	return &http.Client{Timeout: 30 * time.Second}
 }
 
 func setDefaultClient(client *resty.Client) {

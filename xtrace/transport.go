@@ -11,6 +11,10 @@ type HostAwareTransport struct {
 
 // RoundTrip 实现 http.RoundTripper 接口
 func (t *HostAwareTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	next := t.Next
+	if next == nil {
+		next = http.DefaultTransport
+	}
 	ctx := WithTargetHost(req.Context(), req.URL.Host)
-	return t.Next.RoundTrip(req.WithContext(ctx))
+	return next.RoundTrip(req.WithContext(ctx))
 }

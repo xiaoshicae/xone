@@ -83,7 +83,7 @@ func configMergeDefault(c *Config) *Config {
 	if c.MaxOpenConns <= 0 {
 		c.MaxOpenConns = 50
 	}
-	if c.MaxIdleConns == 0 {
+	if c.MaxIdleConns <= 0 {
 		c.MaxIdleConns = c.MaxOpenConns
 	}
 	if c.MaxLifetime == "" {

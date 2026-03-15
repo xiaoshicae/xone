@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/xiaoshicae/xone/v2/xconfig"
@@ -24,6 +25,9 @@ var (
 		"/xlog/util.go",
 		"/xlog/xlog_hook.go",
 	}
+
+	logLevel   string
+	logLevelMu sync.RWMutex
 )
 
 func init() {
@@ -41,8 +45,13 @@ func initXLog() error {
 }
 
 func initXLogByConfig(c *Config) error {
+	// 缓存日志级别配置
+	logLevelMu.Lock()
+	logLevel = c.Level
+	logLevelMu.Unlock()
+
 	if !xutil.DirExist(c.Path) { // 日志所在文件夹不存在则创建
-		if err := os.MkdirAll(c.Path, os.ModePerm); err != nil {
+		if err := os.MkdirAll(c.Path, 0755); err != nil {
 			return xerror.Newf("xlog", "init", "os.MkdirAll failed, path=[%s], err=[%v]", c.Path, err)
 		}
 	}

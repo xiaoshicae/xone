@@ -108,7 +108,7 @@ func TestCtxWithKV(t *testing.T) {
 			ctx := context.Background()
 			newCtx := CtxWithKV(ctx, map[string]any{"key": "value"})
 			c.So(newCtx, c.ShouldNotBeNil)
-			kv := newCtx.Value(XLogCtxKVContainerKey).(map[string]any)
+			kv := newCtx.Value(xLogCtxKVKey).(map[string]any)
 			c.So(kv["key"], c.ShouldEqual, "value")
 		})
 
@@ -116,7 +116,7 @@ func TestCtxWithKV(t *testing.T) {
 			ctx := context.Background()
 			ctx = CtxWithKV(ctx, map[string]any{"key1": "value1"})
 			ctx = CtxWithKV(ctx, map[string]any{"key2": "value2"})
-			kv := ctx.Value(XLogCtxKVContainerKey).(map[string]any)
+			kv := ctx.Value(xLogCtxKVKey).(map[string]any)
 			c.So(kv["key1"], c.ShouldEqual, "value1")
 			c.So(kv["key2"], c.ShouldEqual, "value2")
 		})
@@ -126,22 +126,34 @@ func TestCtxWithKV(t *testing.T) {
 			newCtx := CtxWithKV(ctx, nil)
 			c.So(newCtx, c.ShouldNotBeNil)
 		})
+
+		mockey.PatchConvey("TestCtxWithKV-TypeSafeKey-OldStringKeyReturnsNil", func() {
+			// 使用新的 ctxKey 类型存储后，通过旧的 string key 读取返回 nil（向后不兼容性验证）
+			ctx := context.Background()
+			ctx = CtxWithKV(ctx, map[string]any{"key": "value"})
+			// 通过旧的 string 常量读取应该返回 nil
+			oldKeyResult := ctx.Value(XLogCtxKVContainerKey)
+			c.So(oldKeyResult, c.ShouldBeNil)
+			// 通过新的 ctxKey 类型读取应该成功
+			newKeyResult := ctx.Value(xLogCtxKVKey)
+			c.So(newKeyResult, c.ShouldNotBeNil)
+		})
 	})
 }
 
 func TestXLogLevel(t *testing.T) {
-	mockey.PatchConvey("TestXLogLevel", t, func() {
-		mockey.PatchConvey("TestXLogLevel-Default", func() {
-			mockey.Mock(xconfig.GetString).Return("").Build()
-			level := XLogLevel()
-			c.So(level, c.ShouldEqual, "Info")
-		})
+	mockey.PatchConvey("TestXLogLevel-Default", t, func() {
+		// logLevel 为空时返回默认值 "info"
+		mockey.MockValue(&logLevel).To("")
+		level := XLogLevel()
+		c.So(level, c.ShouldEqual, "info")
+	})
 
-		mockey.PatchConvey("TestXLogLevel-Custom", func() {
-			mockey.Mock(xconfig.GetString).Return("debug").Build()
-			level := XLogLevel()
-			c.So(level, c.ShouldEqual, "debug")
-		})
+	mockey.PatchConvey("TestXLogLevel-Custom", t, func() {
+		// logLevel 设置后返回对应值
+		mockey.MockValue(&logLevel).To("debug")
+		level := XLogLevel()
+		c.So(level, c.ShouldEqual, "debug")
 	})
 }
 
@@ -241,9 +253,10 @@ func TestGetLogConsoleLogColor(t *testing.T) {
 			c.So(color, c.ShouldEqual, colorRed)
 		})
 
-		mockey.PatchConvey("TestInfoLevel", func() {
+		mockey.PatchConvey("TestInfoLevel-colorCyan", func() {
+			// colorBlue 已重命名为 colorCyan，InfoLevel 返回 colorCyan
 			color := getLogConsoleLogColor(logrus.InfoLevel)
-			c.So(color, c.ShouldEqual, colorBlue)
+			c.So(color, c.ShouldEqual, colorCyan)
 		})
 	})
 }
@@ -321,6 +334,46 @@ func TestXLogHook(t *testing.T) {
 			err := hook.Fire(entry)
 			c.So(err, c.ShouldBeNil)
 			c.So(entry.Data["servername"], c.ShouldEqual, "existing-server")
+		})
+
+		mockey.PatchConvey("TestXLogHook-Fire-WithExistingIP-NotOverwritten", func() {
+			// entry.Data 中已有 ip 时不被覆盖
+			hook := &xLogHook{
+				IP:         "127.0.0.1",
+				ServerName: "test-server",
+				PidStr:     "12345",
+			}
+			entry := &logrus.Entry{
+				Logger:  logrus.New(),
+				Data:    logrus.Fields{"ip": "10.0.0.1"},
+				Context: context.Background(),
+				Time:    time.Now(),
+				Level:   logrus.InfoLevel,
+				Message: "test",
+			}
+			err := hook.Fire(entry)
+			c.So(err, c.ShouldBeNil)
+			c.So(entry.Data["ip"], c.ShouldEqual, "10.0.0.1")
+		})
+
+		mockey.PatchConvey("TestXLogHook-Fire-WithExistingPid-NotOverwritten", func() {
+			// entry.Data 中已有 pid 时不被覆盖
+			hook := &xLogHook{
+				IP:         "127.0.0.1",
+				ServerName: "test-server",
+				PidStr:     "12345",
+			}
+			entry := &logrus.Entry{
+				Logger:  logrus.New(),
+				Data:    logrus.Fields{"pid": "99999"},
+				Context: context.Background(),
+				Time:    time.Now(),
+				Level:   logrus.InfoLevel,
+				Message: "test",
+			}
+			err := hook.Fire(entry)
+			c.So(err, c.ShouldBeNil)
+			c.So(entry.Data["pid"], c.ShouldEqual, "99999")
 		})
 
 		mockey.PatchConvey("TestXLogHook-Fire-WithCtxKV", func() {
@@ -542,6 +595,40 @@ func TestTimeFormatter(t *testing.T) {
 }
 
 func TestInitXLogByConfig(t *testing.T) {
+	mockey.PatchConvey("TestInitXLogByConfig-LogLevelCached", t, func() {
+		// initXLogByConfig 调用后 logLevel 被正确设置
+		mockey.Mock(xutil.DirExist).Return(false).Build()
+		mockey.Mock(os.MkdirAll).Return(errors.New("mkdir failed")).Build()
+
+		config := &Config{
+			Path:  "/test/path",
+			Level: "warn",
+		}
+		// 即使后续初始化失败，logLevel 也应该已被设置
+		_ = initXLogByConfig(config)
+		logLevelMu.RLock()
+		c.So(logLevel, c.ShouldEqual, "warn")
+		logLevelMu.RUnlock()
+	})
+
+	mockey.PatchConvey("TestInitXLogByConfig-MkdirAll-Permission0755", t, func() {
+		// 验证 MkdirAll 被调用（权限改为 0755）
+		mkdirCalled := false
+		mockey.Mock(xutil.DirExist).Return(false).Build()
+		mockey.Mock(os.MkdirAll).To(func(path string, perm os.FileMode) error {
+			mkdirCalled = true
+			c.So(perm, c.ShouldEqual, os.FileMode(0755))
+			return errors.New("mkdir failed")
+		}).Build()
+
+		config := &Config{
+			Path:  "/test/path",
+			Level: "info",
+		}
+		_ = initXLogByConfig(config)
+		c.So(mkdirCalled, c.ShouldBeTrue)
+	})
+
 	mockey.PatchConvey("TestInitXLogByConfig-DirNotExist-MkdirFail", t, func() {
 		mockey.Mock(xutil.DirExist).Return(false).Build()
 		mockey.Mock(os.MkdirAll).Return(errors.New("mkdir failed")).Build()

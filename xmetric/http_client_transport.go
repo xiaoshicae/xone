@@ -58,6 +58,9 @@ type HTTPClientMetricTransport struct {
 // 注意：该 Transport 记录每次 HTTP 往返的指标，包括重试中间状态
 // 如需只记录最终结果（跳过重试），请使用 RecordHTTPClientMetric 配合 Resty 中间件
 func NewHTTPClientMetricTransport(next http.RoundTripper) *HTTPClientMetricTransport {
+	if next == nil {
+		next = http.DefaultTransport
+	}
 	return &HTTPClientMetricTransport{Next: next}
 }
 

@@ -19,7 +19,7 @@ func C(name ...string) *redis.Client {
 	if len(name) > 0 {
 		n = name[0]
 	}
-	xlog.Error(context.Background(), "no redis client found for name: %s, maybe config not assigned", n)
+	xlog.Error(context.Background(), "no redis client found, name=[%s], maybe config not assigned", n)
 	return nil
 }
 

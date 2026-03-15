@@ -49,20 +49,18 @@ func TestConfigMergeDefault(t *testing.T) {
 
 func TestEnableTrace(t *testing.T) {
 	PatchConvey("TestEnableTrace", t, func() {
-		PatchConvey("NotConfigured", func() {
-			Mock(xconfig.ContainKey).Return(false).Build()
+		PatchConvey("DefaultTrue", func() {
+			MockValue(&traceEnabled).To(true)
 			So(EnableTrace(), ShouldBeTrue)
 		})
 
 		PatchConvey("ExplicitFalse", func() {
-			Mock(xconfig.ContainKey).Return(true).Build()
-			Mock(xconfig.GetBool).Return(false).Build()
+			MockValue(&traceEnabled).To(false)
 			So(EnableTrace(), ShouldBeFalse)
 		})
 
 		PatchConvey("ExplicitTrue", func() {
-			Mock(xconfig.ContainKey).Return(true).Build()
-			Mock(xconfig.GetBool).Return(true).Build()
+			MockValue(&traceEnabled).To(true)
 			So(EnableTrace(), ShouldBeTrue)
 		})
 	})

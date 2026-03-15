@@ -25,7 +25,7 @@ func UnmarshalConfig(key string, conf any) error {
 		return err
 	}
 	if err := getViperConfig().UnmarshalKey(key, conf); err != nil {
-		return err
+		return xerror.Newf("xconfig", "UnmarshalConfig", "unmarshal key=[%s] failed, err=[%v]", key, err)
 	}
 	return nil
 }
@@ -96,7 +96,7 @@ func getViperConfig() *viper.Viper {
 	v := vip
 	vipMu.RUnlock()
 	if v == nil {
-		xutil.WarnIfEnableDebug("config not found，please init config first")
+		xutil.WarnIfEnableDebug("config not found, please init config first")
 		return viper.New()
 	}
 	return v

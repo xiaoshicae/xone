@@ -82,12 +82,13 @@ func TestRWithCtx(t *testing.T) {
 }
 
 func TestRawClient(t *testing.T) {
-	mockey.PatchConvey("TestRawClient-NotSet", t, func() {
-		// Reset rawHttpClient to nil
+	mockey.PatchConvey("TestRawClient-NotSet-FallbackWith30sTimeout", t, func() {
+		// rawHttpClient 为 nil 时返回带 30s 超时的兜底 client
 		rawHttpClient = nil
+		mockey.Mock(xutil.WarnIfEnableDebug).Return().Build()
 		client := RawClient()
 		c.So(client, c.ShouldNotBeNil)
-		c.So(client, c.ShouldEqual, http.DefaultClient)
+		c.So(client.Timeout, c.ShouldEqual, 30*time.Second)
 	})
 
 	mockey.PatchConvey("TestRawClient-Set", t, func() {
@@ -142,7 +143,17 @@ func TestGetConfigXHttp(t *testing.T) {
 }
 
 func TestInitHttpClient(t *testing.T) {
+	mockey.PatchConvey("TestInitHttpClient-ContainKeyFalse-SkipInit", t, func() {
+		// ContainKey 返回 false 时跳过初始化
+		mockey.Mock(xconfig.ContainKey).Return(false).Build()
+		mockey.Mock(xutil.WarnIfEnableDebug).Return().Build()
+
+		err := initHttpClient()
+		c.So(err, c.ShouldBeNil)
+	})
+
 	mockey.PatchConvey("TestInitHttpClient-GetConfigFail", t, func() {
+		mockey.Mock(xconfig.ContainKey).Return(true).Build()
 		mockey.Mock(getConfig).Return(nil, errors.New("config failed")).Build()
 
 		err := initHttpClient()
@@ -151,6 +162,7 @@ func TestInitHttpClient(t *testing.T) {
 	})
 
 	mockey.PatchConvey("TestInitHttpClient-Success-NoTrace", t, func() {
+		mockey.Mock(xconfig.ContainKey).Return(true).Build()
 		mockey.Mock(getConfig).Return(&Config{
 			Timeout:             "60s",
 			DialTimeout:         "30s",
@@ -168,6 +180,7 @@ func TestInitHttpClient(t *testing.T) {
 	})
 
 	mockey.PatchConvey("TestInitHttpClient-Success-WithTrace", t, func() {
+		mockey.Mock(xconfig.ContainKey).Return(true).Build()
 		mockey.Mock(getConfig).Return(&Config{
 			Timeout:             "60s",
 			DialTimeout:         "30s",
@@ -185,6 +198,7 @@ func TestInitHttpClient(t *testing.T) {
 	})
 
 	mockey.PatchConvey("TestInitHttpClient-Success-WithRetry", t, func() {
+		mockey.Mock(xconfig.ContainKey).Return(true).Build()
 		mockey.Mock(getConfig).Return(&Config{
 			Timeout:             "60s",
 			DialTimeout:         "30s",
@@ -204,6 +218,7 @@ func TestInitHttpClient(t *testing.T) {
 	})
 
 	mockey.PatchConvey("TestInitHttpClient-Success-WithCustomDialTimeout", t, func() {
+		mockey.Mock(xconfig.ContainKey).Return(true).Build()
 		mockey.Mock(getConfig).Return(&Config{
 			Timeout:             "60s",
 			DialTimeout:         "5s",
@@ -327,18 +342,28 @@ func TestDialConfigMerge(t *testing.T) {
 // ==================== 补充覆盖率 ====================
 
 func TestCloseHttpClient(t *testing.T) {
-	mockey.PatchConvey("TestCloseHttpClient-有client时关闭并置nil", t, func() {
+	mockey.PatchConvey("TestCloseHttpClient-有client时关闭并重置", t, func() {
 		rawHttpClient = &http.Client{}
+		oldDefaultClient := defaultClient
+		defer func() { defaultClient = oldDefaultClient }()
+
 		err := closeHttpClient()
 		c.So(err, c.ShouldBeNil)
 		c.So(rawHttpClient, c.ShouldBeNil)
+		// close 后 defaultClient 不为 nil，被重置为新的 resty.New()
+		c.So(defaultClient, c.ShouldNotBeNil)
 	})
 
-	mockey.PatchConvey("TestCloseHttpClient-无client时安全返回", t, func() {
+	mockey.PatchConvey("TestCloseHttpClient-无client时安全返回且defaultClient重置", t, func() {
 		rawHttpClient = nil
+		oldDefaultClient := defaultClient
+		defer func() { defaultClient = oldDefaultClient }()
+
 		err := closeHttpClient()
 		c.So(err, c.ShouldBeNil)
 		c.So(rawHttpClient, c.ShouldBeNil)
+		// 即使 rawHttpClient 为 nil，defaultClient 也被重置
+		c.So(defaultClient, c.ShouldNotBeNil)
 	})
 }
 

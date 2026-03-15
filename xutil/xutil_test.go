@@ -384,8 +384,11 @@ func TestCallerPretty(t *testing.T) {
 // ==================== env.go ====================
 
 func TestEnableDebug(t *testing.T) {
+	// EnableXOneDebug 使用 sync.Once 缓存结果，每个子测试需要重置 debugOnce 和 debugValue
 	mockey.PatchConvey("TestEnableDebug", t, func() {
 		mockey.PatchConvey("TestEnableDebug-True", func() {
+			mockey.MockValue(&debugOnce).To(sync.Once{})
+			mockey.MockValue(&debugValue).To(false)
 			os.Setenv(DebugKey, "true")
 			os.Unsetenv(legacyDebugKey)
 			defer os.Unsetenv(DebugKey)
@@ -393,6 +396,8 @@ func TestEnableDebug(t *testing.T) {
 		})
 
 		mockey.PatchConvey("TestEnableDebug-1", func() {
+			mockey.MockValue(&debugOnce).To(sync.Once{})
+			mockey.MockValue(&debugValue).To(false)
 			os.Setenv(DebugKey, "1")
 			os.Unsetenv(legacyDebugKey)
 			defer os.Unsetenv(DebugKey)
@@ -400,6 +405,8 @@ func TestEnableDebug(t *testing.T) {
 		})
 
 		mockey.PatchConvey("TestEnableDebug-Yes", func() {
+			mockey.MockValue(&debugOnce).To(sync.Once{})
+			mockey.MockValue(&debugValue).To(false)
 			os.Setenv(DebugKey, "yes")
 			os.Unsetenv(legacyDebugKey)
 			defer os.Unsetenv(DebugKey)
@@ -407,6 +414,8 @@ func TestEnableDebug(t *testing.T) {
 		})
 
 		mockey.PatchConvey("TestEnableDebug-On", func() {
+			mockey.MockValue(&debugOnce).To(sync.Once{})
+			mockey.MockValue(&debugValue).To(false)
 			os.Setenv(DebugKey, "on")
 			os.Unsetenv(legacyDebugKey)
 			defer os.Unsetenv(DebugKey)
@@ -414,6 +423,8 @@ func TestEnableDebug(t *testing.T) {
 		})
 
 		mockey.PatchConvey("TestEnableDebug-False", func() {
+			mockey.MockValue(&debugOnce).To(sync.Once{})
+			mockey.MockValue(&debugValue).To(false)
 			os.Setenv(DebugKey, "false")
 			os.Unsetenv(legacyDebugKey)
 			defer os.Unsetenv(DebugKey)
@@ -421,12 +432,16 @@ func TestEnableDebug(t *testing.T) {
 		})
 
 		mockey.PatchConvey("TestEnableDebug-Empty", func() {
+			mockey.MockValue(&debugOnce).To(sync.Once{})
+			mockey.MockValue(&debugValue).To(false)
 			os.Unsetenv(DebugKey)
 			os.Unsetenv(legacyDebugKey)
 			c.So(EnableXOneDebug(), c.ShouldBeFalse)
 		})
 
 		mockey.PatchConvey("TestEnableDebug-Legacy", func() {
+			mockey.MockValue(&debugOnce).To(sync.Once{})
+			mockey.MockValue(&debugValue).To(false)
 			os.Unsetenv(DebugKey)
 			os.Setenv(legacyDebugKey, "true")
 			defer os.Unsetenv(legacyDebugKey)
@@ -434,12 +449,31 @@ func TestEnableDebug(t *testing.T) {
 		})
 
 		mockey.PatchConvey("TestEnableDebug-Precedence", func() {
+			mockey.MockValue(&debugOnce).To(sync.Once{})
+			mockey.MockValue(&debugValue).To(false)
 			os.Setenv(DebugKey, "false")
 			os.Setenv(legacyDebugKey, "true")
 			defer os.Unsetenv(DebugKey)
 			defer os.Unsetenv(legacyDebugKey)
 			c.So(EnableXOneDebug(), c.ShouldBeFalse)
 		})
+	})
+}
+
+func TestEnableDebug_CacheConsistency(t *testing.T) {
+	// 验证 EnableXOneDebug 缓存行为：多次调用返回一致的值
+	mockey.PatchConvey("TestEnableDebug_CacheConsistency", t, func() {
+		mockey.MockValue(&debugOnce).To(sync.Once{})
+		mockey.MockValue(&debugValue).To(false)
+		os.Unsetenv(DebugKey)
+		os.Unsetenv(legacyDebugKey)
+
+		v1 := EnableXOneDebug()
+		v2 := EnableXOneDebug()
+		v3 := EnableXOneDebug()
+		c.So(v1, c.ShouldEqual, v2)
+		c.So(v2, c.ShouldEqual, v3)
+		c.So(v1, c.ShouldBeFalse)
 	})
 }
 
@@ -1080,6 +1114,21 @@ func TestPool_Shutdown(t *testing.T) {
 			// 第二次 Shutdown 不 panic
 			c.So(func() { p.Shutdown() }, c.ShouldNotPanic)
 		})
+	})
+}
+
+func TestPool_SubmitAfterShutdown(t *testing.T) {
+	mockey.PatchConvey("TestPool_SubmitAfterShutdown", t, func() {
+		p := NewPool(2)
+		p.Shutdown()
+		// Shutdown 后 Submit 不应 panic，验证 recover 保护和 ctx.Done 检查
+		c.So(func() { p.Submit(func() {}) }, c.ShouldNotPanic)
+		// 多次 Submit 同样安全
+		c.So(func() {
+			for range 10 {
+				p.Submit(func() {})
+			}
+		}, c.ShouldNotPanic)
 	})
 }
 

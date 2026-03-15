@@ -290,6 +290,23 @@ func TestToZHErr_NonValidationErrorWithTrans(t *testing.T) {
 	}
 }
 
+func TestToZHErr_TransNilWithLock(t *testing.T) {
+	PatchConvey("TestToZHErr-trans为nil时加锁读取后返回原始错误", t, func() {
+		MockValue(&trans).To(nil)
+
+		validate := validator.New()
+		type TestStruct struct {
+			Name string `validate:"required"`
+		}
+		err := validate.Struct(&TestStruct{})
+		So(err, ShouldNotBeNil)
+
+		result := ToZHErr(err)
+		// trans 为 nil 时应直接返回原始错误，不做翻译
+		So(result, ShouldEqual, err)
+	})
+}
+
 func TestRegisterZHTranslations_GetTranslatorFail(t *testing.T) {
 	PatchConvey("TestRegisterZHTranslations-GetTranslatorFail", t, func() {
 		MockValue(&trans).To(nil)

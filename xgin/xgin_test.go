@@ -542,17 +542,18 @@ func TestRunWithServerClosed(t *testing.T) {
 
 func TestSetGinSwaggerInfo(t *testing.T) {
 	PatchConvey("TestSetGinSwaggerInfo", t, func() {
-		Mock(GetSwaggerConfig).Return(&SwaggerConfig{
+		Mock(xconfig.GetServerVersion).Return("v2.0.0").Build()
+
+		swaggerCfg := &SwaggerConfig{
 			Host:        "localhost",
 			BasePath:    "/api",
 			Title:       "Test API",
 			Description: "Test Description",
 			Schemes:     []string{"https"},
-		}).Build()
-		Mock(xconfig.GetServerVersion).Return("v2.0.0").Build()
+		}
 
 		spec := &swag.Spec{}
-		setGinSwaggerInfo(spec)
+		setGinSwaggerInfo(spec, swaggerCfg)
 
 		So(spec.Version, ShouldEqual, "v2.0.0")
 		So(spec.Host, ShouldEqual, "localhost")
@@ -894,6 +895,57 @@ func TestRunWithSwaggerInfo(t *testing.T) {
 
 		err := g.Run()
 		So(err, ShouldBeNil)
+	})
+}
+
+// ==================== banner.go 测试 ====================
+
+// ==================== config.go 常量测试 ====================
+
+func TestXGinConfigKey(t *testing.T) {
+	PatchConvey("TestXGinConfigKey-值为XGin", t, func() {
+		So(XGinConfigKey, ShouldEqual, "XGin")
+	})
+}
+
+// ==================== cachedConfig 缓存测试 ====================
+
+func TestBuildCachesConfig(t *testing.T) {
+	PatchConvey("TestBuildCachesConfig-Build后cachedConfig不为nil", t, func() {
+		Mock(xconfig.UnmarshalConfig).Return(nil).Build()
+
+		g := New(
+			options.EnableLogMiddleware(false),
+			options.EnableTraceMiddleware(false),
+		)
+
+		So(g.cachedConfig, ShouldBeNil)
+
+		g.Build()
+
+		So(g.cachedConfig, ShouldNotBeNil)
+		So(g.cachedConfig.Host, ShouldEqual, defaultHost)
+		So(g.cachedConfig.Port, ShouldEqual, defaultPort)
+	})
+}
+
+func TestRunUsesCachedConfig(t *testing.T) {
+	PatchConvey("TestRunUsesCachedConfig-Run使用Build缓存的配置", t, func() {
+		Mock((*http.Server).ListenAndServe).Return(http.ErrServerClosed).Build()
+
+		g := New(
+			options.EnableLogMiddleware(false),
+			options.EnableTraceMiddleware(false),
+		)
+
+		// 手动设置 cachedConfig
+		g.cachedConfig = &Config{Host: "10.0.0.1", Port: 9090}
+		g.build = true
+
+		err := g.Run()
+		So(err, ShouldBeNil)
+		// 验证 srv 的 Addr 使用了缓存的配置
+		So(g.srv.Addr, ShouldEqual, "10.0.0.1:9090")
 	})
 }
 

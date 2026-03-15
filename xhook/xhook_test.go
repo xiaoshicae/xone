@@ -81,17 +81,11 @@ func TestXHookBeforeStop(t *testing.T) {
 
 		var h HookFunc
 		So(func() { BeforeStop(h) }, ShouldPanicWith, "XOne BeforeStop hook can not be nil")
-
-		maxHookNum = 1
-
-		BeforeStop(IntFunc1)
-		So(func() { BeforeStop(IntFunc2) }, ShouldPanicWith, "XOne BeforeStop hook can not be more than 1")
 	})
 
 	PatchConvey("TestXHookBeforeStop-Sort", t, func() {
 		resetHooks()
 		defer resetHooks()
-		maxHookNum = 10
 
 		h1 := func() error { println("h1"); return errors.New("h1") }
 		h2 := func() error { println("h2"); return errors.New("h2") }

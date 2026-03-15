@@ -59,5 +59,13 @@ func TestHostAwareTransport_RoundTrip(t *testing.T) {
 			So(mock.lastReq.URL.Path, ShouldEqual, "/data")
 			So(mock.lastReq.Header.Get("Content-Type"), ShouldEqual, "application/json")
 		})
+
+		PatchConvey("NextNilFallsBackToDefault", func() {
+			// Next 为 nil 时使用 http.DefaultTransport，不 panic
+			transport := &HostAwareTransport{Next: nil}
+			req, _ := http.NewRequest("GET", "https://example.com/test", nil)
+			// 由于没有真正的服务器，会返回网络错误，但不应 panic
+			So(func() { transport.RoundTrip(req) }, ShouldNotPanic)
+		})
 	})
 }

@@ -251,6 +251,7 @@ func TestInitHttpClientDefaultTransportFallback(t *testing.T) {
 			defaultClient = prevDefaultClient
 		}()
 
+		mockey.Mock(xconfig.ContainKey).Return(true).Build()
 		mockey.Mock(getConfig).Return(&Config{
 			Timeout:             "60s",
 			DialTimeout:         "30s",
@@ -279,6 +280,7 @@ func TestDialTimeoutApplied(t *testing.T) {
 		}()
 
 		// 设置自定义 DialTimeout 和 DialKeepAlive
+		mockey.Mock(xconfig.ContainKey).Return(true).Build()
 		mockey.Mock(getConfig).Return(&Config{
 			Timeout:             "60s",
 			DialTimeout:         "5s",

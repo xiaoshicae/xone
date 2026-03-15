@@ -65,6 +65,16 @@ func TestNewHTTPClientMetricTransport(t *testing.T) {
 		So(clientRequestDuration, ShouldBeNil)
 	})
 
+	PatchConvey("TestNewHTTPClientMetricTransport-next为nil时使用DefaultTransport", t, func() {
+		resetClientMetricState()
+
+		transport := NewHTTPClientMetricTransport(nil)
+
+		So(transport, ShouldNotBeNil)
+		So(transport.Next, ShouldNotBeNil)
+		So(transport.Next, ShouldEqual, http.DefaultTransport)
+	})
+
 	PatchConvey("TestNewHTTPClientMetricTransport-带Namespace", t, func() {
 		resetClientMetricState()
 		registryMu.Lock()

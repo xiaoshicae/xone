@@ -774,6 +774,118 @@ func TestConstLabels(t *testing.T) {
 	})
 }
 
+// ==================== 补充覆盖率：initMetric 多次调用不 panic ====================
+
+func TestInitMetric_MultipleCallsNoPanic(t *testing.T) {
+	PatchConvey("TestInitMetric-多次调用safeRegister不panic", t, func() {
+		resetState()
+		Mock(xconfig.UnmarshalConfig).Return(nil).Build()
+		Mock(xconfig.ContainKey).Return(false).Build()
+
+		// 第一次初始化
+		err := initMetric()
+		So(err, ShouldBeNil)
+
+		// 重置 once 以允许再次初始化（模拟重启场景）
+		resetState()
+
+		// 第二次初始化不应 panic（safeRegister 替代 MustRegister）
+		So(func() {
+			err = initMetric()
+		}, ShouldNotPanic)
+		So(err, ShouldBeNil)
+	})
+}
+
+// ==================== 补充覆盖率：closeMetric 重建 registry ====================
+
+func TestCloseMetric_ResetsRegistryToNewInstance(t *testing.T) {
+	PatchConvey("TestCloseMetric-registry为新实例", t, func() {
+		resetState()
+		registryMu.Lock()
+		metricConfig = &Config{}
+		registryMu.Unlock()
+
+		oldRegistry := defaultRegistry
+
+		err := closeMetric()
+		So(err, ShouldBeNil)
+
+		// 验证 defaultRegistry 是新实例
+		registryMu.RLock()
+		newRegistry := defaultRegistry
+		registryMu.RUnlock()
+		So(newRegistry, ShouldNotEqual, oldRegistry)
+	})
+}
+
+func TestCloseMetric_ThenReinitialize(t *testing.T) {
+	PatchConvey("TestCloseMetric-关闭后可重新初始化", t, func() {
+		resetState()
+		Mock(xconfig.UnmarshalConfig).Return(nil).Build()
+		Mock(xconfig.ContainKey).Return(false).Build()
+
+		// 初始化
+		err := initMetric()
+		So(err, ShouldBeNil)
+		So(Handler(), ShouldNotBeNil)
+
+		// 关闭
+		err = closeMetric()
+		So(err, ShouldBeNil)
+		So(metricConfig, ShouldBeNil)
+
+		// 重新初始化应成功
+		err = initMetric()
+		So(err, ShouldBeNil)
+		So(Handler(), ShouldNotBeNil)
+	})
+}
+
+// ==================== 补充覆盖率：getter 返回 slice 副本 ====================
+
+func TestGetHttpDurationBuckets_ReturnsCopy(t *testing.T) {
+	PatchConvey("TestGetHttpDurationBuckets-修改返回值不影响内部状态", t, func() {
+		resetState()
+		customBuckets := []float64{10, 50, 100}
+		registryMu.Lock()
+		metricConfig = &Config{HttpDurationBuckets: customBuckets}
+		registryMu.Unlock()
+
+		result := getHttpDurationBuckets()
+		original := make([]float64, len(result))
+		copy(original, result)
+
+		// 修改返回的 slice
+		result[0] = 99999
+
+		// 再次获取，验证内部状态未被修改
+		result2 := getHttpDurationBuckets()
+		So(result2, ShouldResemble, original)
+	})
+}
+
+func TestGetHistogramObserveBuckets_ReturnsCopy(t *testing.T) {
+	PatchConvey("TestGetHistogramObserveBuckets-修改返回值不影响内部状态", t, func() {
+		resetState()
+		customBuckets := []float64{10, 50, 100}
+		registryMu.Lock()
+		metricConfig = &Config{HistogramObserveBuckets: customBuckets}
+		registryMu.Unlock()
+
+		result := getHistogramObserveBuckets()
+		original := make([]float64, len(result))
+		copy(original, result)
+
+		// 修改返回的 slice
+		result[0] = 99999
+
+		// 再次获取，验证内部状态未被修改
+		result2 := getHistogramObserveBuckets()
+		So(result2, ShouldResemble, original)
+	})
+}
+
 func TestGetConstLabels(t *testing.T) {
 	PatchConvey("TestGetConstLabels-返回全局常量标签", t, func() {
 		resetState()

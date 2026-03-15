@@ -1011,6 +1011,62 @@ func TestBodyMayContainSensitiveField(t *testing.T) {
 	}
 }
 
+// ==================== containsFold 测试 ====================
+
+func TestContainsFold(t *testing.T) {
+	tests := []struct {
+		name     string
+		b        []byte
+		sub      []byte
+		expected bool
+	}{
+		{"空sub返回true", []byte("hello"), []byte{}, true},
+		{"精确匹配", []byte("password"), []byte("password"), true},
+		{"大小写不敏感匹配", []byte(`{"Password":"secret"}`), []byte("password"), true},
+		{"不匹配", []byte(`{"username":"john"}`), []byte("password"), false},
+		{"sub比b长返回false", []byte("ab"), []byte("abc"), false},
+		{"混合大小写匹配", []byte("PaSsWoRd"), []byte("password"), true},
+		{"中间位置匹配", []byte(`xxx_PASSWORD_yyy`), []byte("password"), true},
+		{"末尾匹配", []byte(`xxx_password`), []byte("password"), true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := containsFold(tt.b, tt.sub)
+			if result != tt.expected {
+				t.Errorf("containsFold(%q, %q) = %v, want %v", tt.b, tt.sub, result, tt.expected)
+			}
+		})
+	}
+}
+
+// ==================== equalFold 测试 ====================
+
+func TestEqualFold(t *testing.T) {
+	tests := []struct {
+		name     string
+		a        []byte
+		b        []byte
+		expected bool
+	}{
+		{"相等", []byte("abc"), []byte("abc"), true},
+		{"大小写不敏感相等", []byte("ABC"), []byte("abc"), true},
+		{"不等", []byte("abc"), []byte("def"), false},
+		{"部分不等", []byte("abc"), []byte("abd"), false},
+		{"空切片", []byte{}, []byte{}, true},
+		{"混合大小写", []byte("AbCdEf"), []byte("aBcDeF"), true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := equalFold(tt.a, tt.b)
+			if result != tt.expected {
+				t.Errorf("equalFold(%q, %q) = %v, want %v", tt.a, tt.b, result, tt.expected)
+			}
+		})
+	}
+}
+
 // ==================== filterJSONBody 快速路径测试 ====================
 
 func TestFilterJSONBody_FastPath(t *testing.T) {

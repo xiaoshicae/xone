@@ -968,3 +968,105 @@ func TestSetNestedValue(t *testing.T) {
 		})
 	})
 }
+
+// ==================== xconfig_init.go (closeXConfig) ====================
+
+func TestCloseXConfig(t *testing.T) {
+	PatchConvey("TestCloseXConfig", t, func() {
+		origVip := vip
+		defer func() { vip = origVip }()
+
+		PatchConvey("VipNotNil", func() {
+			vip = viper.New()
+			vip.Set("key", "value")
+			So(vip, ShouldNotBeNil)
+
+			err := closeXConfig()
+			So(err, ShouldBeNil)
+			So(vip, ShouldBeNil)
+		})
+
+		PatchConvey("VipAlreadyNil", func() {
+			vip = nil
+			err := closeXConfig()
+			So(err, ShouldBeNil)
+			So(vip, ShouldBeNil)
+		})
+	})
+}
+
+// ==================== xconfig_init.go (expandEnvPlaceholder LookupEnv) ====================
+
+func TestExpandEnvPlaceholder_LookupEnv(t *testing.T) {
+	PatchConvey("TestExpandEnvPlaceholder_LookupEnv", t, func() {
+		PatchConvey("EnvSetToEmptyString", func() {
+			// 环境变量设置为空字符串时，应返回空字符串而非默认值
+			os.Setenv("TEST_EMPTY_VAR", "")
+			defer os.Unsetenv("TEST_EMPTY_VAR")
+
+			result := expandEnvPlaceholder("${TEST_EMPTY_VAR:-fallback}")
+			So(result, ShouldEqual, "")
+		})
+
+		PatchConvey("EnvNotSet", func() {
+			// 环境变量未设置时，应返回默认值
+			os.Unsetenv("TEST_UNSET_VAR")
+
+			result := expandEnvPlaceholder("${TEST_UNSET_VAR:-fallback}")
+			So(result, ShouldEqual, "fallback")
+		})
+
+		PatchConvey("EnvSetToValue", func() {
+			// 环境变量设置为非空值时，应返回该值
+			os.Setenv("TEST_VAL_VAR", "actual")
+			defer os.Unsetenv("TEST_VAL_VAR")
+
+			result := expandEnvPlaceholder("${TEST_VAL_VAR:-fallback}")
+			So(result, ShouldEqual, "actual")
+		})
+	})
+}
+
+// ==================== util.go (UnmarshalConfig xerror 格式) ====================
+
+func TestUnmarshalConfig_XerrorFormat(t *testing.T) {
+	PatchConvey("TestUnmarshalConfig_XerrorFormat", t, func() {
+		origVip := vip
+		defer func() { vip = origVip }()
+
+		PatchConvey("UnmarshalKeyErrorContainsXerror", func() {
+			vip = viper.New()
+			Mock((*viper.Viper).UnmarshalKey).Return(errors.New("decode error")).Build()
+
+			conf := &struct {
+				Key string `mapstructure:"key"`
+			}{}
+			err := UnmarshalConfig("test", conf)
+			So(err, ShouldNotBeNil)
+			// 验证错误信息包含 xconfig 模块和操作信息
+			So(err.Error(), ShouldContainSubstring, "xconfig")
+			So(err.Error(), ShouldContainSubstring, "UnmarshalConfig")
+			So(err.Error(), ShouldContainSubstring, "unmarshal key=[test]")
+		})
+	})
+}
+
+// ==================== xconfig_init.go (getTopLevelConfigs 返回 AllSettings) ====================
+
+func TestGetTopLevelConfigs_AllSettings(t *testing.T) {
+	PatchConvey("TestGetTopLevelConfigs_AllSettings", t, func() {
+		PatchConvey("ReturnsAllSettings", func() {
+			vp := viper.New()
+			vp.Set("a", "1")
+			vp.Set("b", map[string]any{"c": 2})
+			res := getTopLevelConfigs(vp)
+			So(res, ShouldResemble, vp.AllSettings())
+		})
+
+		PatchConvey("EmptyViper", func() {
+			vp := viper.New()
+			res := getTopLevelConfigs(vp)
+			So(res, ShouldResemble, map[string]any{})
+		})
+	})
+}

@@ -20,13 +20,12 @@ import (
 
 func TestConfigMergeDefault(t *testing.T) {
 	PatchConvey("TestConfigMergeDefault", t, func() {
-		PatchConvey("Nil", func() {
+		PatchConvey("Nil-DefaultPostgres", func() {
+			// 默认驱动为 postgres，MySQL 子块保持零值（不补 MySQL 专属默认值）
 			config := configMergeDefault(nil)
 			c.So(config, c.ShouldResemble, &Config{
 				Driver:        "postgres",
 				DialTimeout:   "500ms",
-				ReadTimeout:   "3s",
-				WriteTimeout:  "5s",
 				MaxOpenConns:  50,
 				MaxIdleConns:  50,
 				MaxLifetime:   "5m",
@@ -35,13 +34,29 @@ func TestConfigMergeDefault(t *testing.T) {
 			})
 		})
 
+		PatchConvey("MySQL-DefaultsApplied", func() {
+			// 指定 mysql 驱动时才补 MySQL 子块默认值
+			config := configMergeDefault(&Config{Driver: "mysql"})
+			c.So(config.MySQL.ReadTimeout, c.ShouldEqual, "3s")
+			c.So(config.MySQL.WriteTimeout, c.ShouldEqual, "5s")
+		})
+
+		PatchConvey("Postgres-NoMySQLDefaults", func() {
+			// 显式 postgres 驱动时 MySQL 子块保持空
+			config := configMergeDefault(&Config{Driver: "postgres"})
+			c.So(config.MySQL.ReadTimeout, c.ShouldEqual, "")
+			c.So(config.MySQL.WriteTimeout, c.ShouldEqual, "")
+		})
+
 		PatchConvey("ExistingValues", func() {
 			config := configMergeDefault(&Config{
-				Driver:        "mysql",
-				DSN:           "test",
-				DialTimeout:   "1s",
-				ReadTimeout:   "2s",
-				WriteTimeout:  "3s",
+				Driver:      "mysql",
+				DSN:         "test",
+				DialTimeout: "1s",
+				MySQL: MySQLOptions{
+					ReadTimeout:  "2s",
+					WriteTimeout: "3s",
+				},
 				MaxOpenConns:  10,
 				MaxIdleConns:  5,
 				MaxLifetime:   "10m",
@@ -53,6 +68,8 @@ func TestConfigMergeDefault(t *testing.T) {
 			c.So(config.Driver, c.ShouldEqual, "mysql")
 			c.So(config.MaxOpenConns, c.ShouldEqual, 10)
 			c.So(config.MaxIdleConns, c.ShouldEqual, 5)
+			c.So(config.MySQL.ReadTimeout, c.ShouldEqual, "2s")
+			c.So(config.MySQL.WriteTimeout, c.ShouldEqual, "3s")
 		})
 	})
 }
@@ -307,15 +324,220 @@ func TestResolveMySQLDSN(t *testing.T) {
 
 		PatchConvey("Success", func() {
 			dsn, err := resolveMySQLDSN(&Config{
-				DSN:          "root:pass@tcp(127.0.0.1:3306)/testdb",
-				DialTimeout:  "1s",
-				ReadTimeout:  "2s",
-				WriteTimeout: "3s",
+				DSN:         "root:pass@tcp(127.0.0.1:3306)/testdb",
+				DialTimeout: "1s",
+				MySQL: MySQLOptions{
+					ReadTimeout:  "2s",
+					WriteTimeout: "3s",
+				},
 			})
 			c.So(err, c.ShouldBeNil)
 			c.So(dsn, c.ShouldContainSubstring, "timeout=1s")
 			c.So(dsn, c.ShouldContainSubstring, "readTimeout=2s")
 			c.So(dsn, c.ShouldContainSubstring, "writeTimeout=3s")
+		})
+
+		PatchConvey("DSN-ExplicitWins", func() {
+			// DSN 中已有 timeout=10s，configMergeDefault 的 DialTimeout 不应覆盖
+			dsn, err := resolveMySQLDSN(&Config{
+				DSN:         "root:pass@tcp(127.0.0.1:3306)/testdb?timeout=10s&readTimeout=20s",
+				DialTimeout: "1s",
+				MySQL: MySQLOptions{
+					ReadTimeout:  "2s",
+					WriteTimeout: "3s",
+				},
+			})
+			c.So(err, c.ShouldBeNil)
+			c.So(dsn, c.ShouldContainSubstring, "timeout=10s")
+			c.So(dsn, c.ShouldContainSubstring, "readTimeout=20s")
+			c.So(dsn, c.ShouldContainSubstring, "writeTimeout=3s")
+			c.So(dsn, c.ShouldNotContainSubstring, "timeout=1s")
+		})
+	})
+}
+
+// ==================== resolvePostgresDSN ====================
+
+func TestResolvePostgresDSN(t *testing.T) {
+	PatchConvey("TestResolvePostgresDSN", t, func() {
+		PatchConvey("EmptyInject-Passthrough", func() {
+			// DialTimeout 为空且 Postgres 配置为空时 DSN 不变
+			dsn, err := resolvePostgresDSN(&Config{DSN: "host=localhost"})
+			c.So(err, c.ShouldBeNil)
+			c.So(dsn, c.ShouldEqual, "host=localhost")
+		})
+
+		PatchConvey("KVFormat-AllFieldsInjected", func() {
+			dsn, err := resolvePostgresDSN(&Config{
+				DSN:         "host=localhost user=test dbname=testdb",
+				DialTimeout: "2s",
+				Postgres: PostgresOptions{
+					StatementTimeout: "5s",
+					LockTimeout:      "3s",
+					IdleInTxTimeout:  "60s",
+				},
+			})
+			c.So(err, c.ShouldBeNil)
+			c.So(dsn, c.ShouldContainSubstring, "connect_timeout=2")
+			c.So(dsn, c.ShouldContainSubstring, "statement_timeout=5000")
+			c.So(dsn, c.ShouldContainSubstring, "lock_timeout=3000")
+			c.So(dsn, c.ShouldContainSubstring, "idle_in_transaction_session_timeout=60000")
+		})
+
+		PatchConvey("KVFormat-ExplicitKeyPreserved", func() {
+			// DSN 中已有 connect_timeout=5，配置的 DialTimeout 不应覆盖
+			dsn, err := resolvePostgresDSN(&Config{
+				DSN:         "host=localhost connect_timeout=5",
+				DialTimeout: "2s",
+				Postgres: PostgresOptions{
+					StatementTimeout: "1s",
+				},
+			})
+			c.So(err, c.ShouldBeNil)
+			c.So(dsn, c.ShouldContainSubstring, "connect_timeout=5")
+			c.So(dsn, c.ShouldNotContainSubstring, "connect_timeout=2")
+			c.So(dsn, c.ShouldContainSubstring, "statement_timeout=1000")
+		})
+
+		PatchConvey("URLFormat-AllFieldsInjected", func() {
+			dsn, err := resolvePostgresDSN(&Config{
+				DSN:         "postgres://root:pass@localhost:5432/testdb?sslmode=disable",
+				DialTimeout: "3s",
+				Postgres: PostgresOptions{
+					StatementTimeout: "8s",
+				},
+			})
+			c.So(err, c.ShouldBeNil)
+			c.So(dsn, c.ShouldContainSubstring, "sslmode=disable")
+			c.So(dsn, c.ShouldContainSubstring, "connect_timeout=3")
+			c.So(dsn, c.ShouldContainSubstring, "statement_timeout=8000")
+		})
+
+		PatchConvey("URLFormat-PostgresqlPrefix", func() {
+			dsn, err := resolvePostgresDSN(&Config{
+				DSN:         "postgresql://user:pw@host:5432/db",
+				DialTimeout: "1s",
+			})
+			c.So(err, c.ShouldBeNil)
+			c.So(dsn, c.ShouldContainSubstring, "connect_timeout=1")
+		})
+
+		PatchConvey("URLFormat-ExplicitKeyPreserved", func() {
+			dsn, err := resolvePostgresDSN(&Config{
+				DSN:         "postgres://u:p@h:5432/d?connect_timeout=9",
+				DialTimeout: "2s",
+			})
+			c.So(err, c.ShouldBeNil)
+			c.So(dsn, c.ShouldContainSubstring, "connect_timeout=9")
+			c.So(dsn, c.ShouldNotContainSubstring, "connect_timeout=2")
+		})
+
+		PatchConvey("ParamsPassthrough", func() {
+			dsn, err := resolvePostgresDSN(&Config{
+				DSN:         "host=localhost",
+				DialTimeout: "1s",
+				Postgres: PostgresOptions{
+					Params: map[string]string{
+						"application_name":                 "my-svc",
+						"client_connection_check_interval": "10000",
+					},
+				},
+			})
+			c.So(err, c.ShouldBeNil)
+			c.So(dsn, c.ShouldContainSubstring, "application_name=my-svc")
+			c.So(dsn, c.ShouldContainSubstring, "client_connection_check_interval=10000")
+		})
+
+		PatchConvey("ParamsOverrideFieldValue", func() {
+			// Params 同 key 时优先级高于字段默认
+			dsn, err := resolvePostgresDSN(&Config{
+				DSN:         "host=localhost",
+				DialTimeout: "2s",
+				Postgres: PostgresOptions{
+					StatementTimeout: "3s",
+					Params: map[string]string{
+						"statement_timeout": "9999",
+					},
+				},
+			})
+			c.So(err, c.ShouldBeNil)
+			c.So(dsn, c.ShouldContainSubstring, "statement_timeout=9999")
+			c.So(dsn, c.ShouldNotContainSubstring, "statement_timeout=3000")
+		})
+
+		PatchConvey("SubSecondDialTimeoutRoundsUp", func() {
+			// 500ms 应向上取整为 1 秒
+			dsn, err := resolvePostgresDSN(&Config{
+				DSN:         "host=localhost",
+				DialTimeout: "500ms",
+			})
+			c.So(err, c.ShouldBeNil)
+			c.So(dsn, c.ShouldContainSubstring, "connect_timeout=1")
+		})
+
+		PatchConvey("URLInvalid", func() {
+			// url.Parse 对于含控制字符的字符串会返回错误
+			_, err := resolvePostgresDSN(&Config{
+				DSN:         "postgres://bad\x00dsn",
+				DialTimeout: "1s",
+			})
+			c.So(err, c.ShouldNotBeNil)
+		})
+	})
+}
+
+func TestInjectPostgresKV(t *testing.T) {
+	PatchConvey("TestInjectPostgresKV", t, func() {
+		PatchConvey("AppendWithLeadingSpace", func() {
+			// 原 DSN 末尾无空格，追加时应先补空格
+			got := injectPostgresKV("host=localhost", map[string]string{"connect_timeout": "2"})
+			c.So(got, c.ShouldEqual, "host=localhost connect_timeout=2")
+		})
+
+		PatchConvey("SortedOutput", func() {
+			got := injectPostgresKV("host=h", map[string]string{
+				"z_last":  "1",
+				"a_first": "2",
+			})
+			c.So(got, c.ShouldEqual, "host=h a_first=2 z_last=1")
+		})
+
+		PatchConvey("ValueQuoting", func() {
+			got := injectPostgresKV("host=h", map[string]string{
+				"application_name": "my svc",
+			})
+			c.So(got, c.ShouldContainSubstring, "application_name='my svc'")
+		})
+	})
+}
+
+func TestQuotePostgresKVValue(t *testing.T) {
+	PatchConvey("TestQuotePostgresKVValue", t, func() {
+		c.So(quotePostgresKVValue(""), c.ShouldEqual, "''")
+		c.So(quotePostgresKVValue("plain"), c.ShouldEqual, "plain")
+		c.So(quotePostgresKVValue("has space"), c.ShouldEqual, "'has space'")
+		c.So(quotePostgresKVValue(`back\slash`), c.ShouldEqual, `'back\\slash'`)
+		c.So(quotePostgresKVValue(`a'b`), c.ShouldEqual, `'a\'b'`)
+	})
+}
+
+func TestDurationConversions(t *testing.T) {
+	PatchConvey("TestDurationConversions", t, func() {
+		PatchConvey("ToSeconds", func() {
+			c.So(durationToSeconds(""), c.ShouldEqual, "")
+			c.So(durationToSeconds("0s"), c.ShouldEqual, "")
+			c.So(durationToSeconds("1s"), c.ShouldEqual, "1")
+			c.So(durationToSeconds("500ms"), c.ShouldEqual, "1") // 向上取整
+			c.So(durationToSeconds("2500ms"), c.ShouldEqual, "3")
+			c.So(durationToSeconds("2s"), c.ShouldEqual, "2")
+		})
+
+		PatchConvey("ToMillis", func() {
+			c.So(durationToMillis(""), c.ShouldEqual, "")
+			c.So(durationToMillis("0s"), c.ShouldEqual, "")
+			c.So(durationToMillis("1s"), c.ShouldEqual, "1000")
+			c.So(durationToMillis("500ms"), c.ShouldEqual, "500")
+			c.So(durationToMillis("1m"), c.ShouldEqual, "60000")
 		})
 	})
 }

@@ -3,6 +3,11 @@ package xgorm
 import (
 	"context"
 	"errors"
+	"math"
+	"net/url"
+	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -208,8 +213,12 @@ func resolveDialector(c *Config) (gorm.Dialector, error) {
 		return mysql.Open(resolvedDSN), nil
 
 	case DriverPostgres:
-		xutil.InfoIfEnableDebug("XOne initXGorm newClient use Postgres DSN: %s", sanitizeDSN(c.DSN))
-		return postgres.Open(c.DSN), nil
+		resolvedDSN, err := resolvePostgresDSN(c)
+		if err != nil {
+			return nil, xerror.Newf("xgorm", "resolveDialector", "resolve postgres dsn failed, err=[%v]", err)
+		}
+		xutil.InfoIfEnableDebug("XOne initXGorm newClient resolve Postgres DSN: %s", sanitizeDSN(resolvedDSN))
+		return postgres.Open(resolvedDSN), nil
 
 	default:
 		return nil, xerror.Newf("xgorm", "resolveDialector", "unsupported driver: %s, supported: mysql, postgres", c.GetDriver())
@@ -218,18 +227,19 @@ func resolveDialector(c *Config) (gorm.Dialector, error) {
 
 // resolveMySQLDSN 根据config构建MySQL DSN
 // DSN协议: [username[:password]@][protocol[(address)]]/dbname[?param1=value1&param2=value2&...]
+// 用户在 DSN 中显式写的 timeout/readTimeout/writeTimeout 不会被覆盖
 func resolveMySQLDSN(c *Config) (string, error) {
 	mysqlConfig, err := stdMysql.ParseDSN(c.DSN)
 	if err != nil {
 		return "", err
 	}
 
-	if mysqlConfig.ReadTimeout == 0 && c.ReadTimeout != "" {
-		mysqlConfig.ReadTimeout = xutil.ToDuration(c.ReadTimeout)
+	if mysqlConfig.ReadTimeout == 0 && c.MySQL.ReadTimeout != "" {
+		mysqlConfig.ReadTimeout = xutil.ToDuration(c.MySQL.ReadTimeout)
 	}
 
-	if mysqlConfig.WriteTimeout == 0 && c.WriteTimeout != "" {
-		mysqlConfig.WriteTimeout = xutil.ToDuration(c.WriteTimeout)
+	if mysqlConfig.WriteTimeout == 0 && c.MySQL.WriteTimeout != "" {
+		mysqlConfig.WriteTimeout = xutil.ToDuration(c.MySQL.WriteTimeout)
 	}
 
 	if mysqlConfig.Timeout == 0 && c.DialTimeout != "" {
@@ -237,6 +247,151 @@ func resolveMySQLDSN(c *Config) (string, error) {
 	}
 
 	return mysqlConfig.FormatDSN(), nil
+}
+
+// resolvePostgresDSN 根据config把 PG 相关超时/参数注入到 DSN 中
+//
+// 规则：
+//  1. 支持 URL 格式（postgres://... 或 postgresql://...）与 key=value 格式两种 DSN
+//  2. 用户在 DSN 中显式写的 key 不会被覆盖（字段值仅作为默认值）
+//  3. DialTimeout    → connect_timeout（向上取整为秒）
+//  4. StatementTimeout/LockTimeout/IdleInTxTimeout → 对应 PG GUC（毫秒）
+//  5. Postgres.Params 中任意 key 直通注入
+func resolvePostgresDSN(c *Config) (string, error) {
+	injects := make(map[string]string)
+
+	if c.DialTimeout != "" {
+		if v := durationToSeconds(c.DialTimeout); v != "" {
+			injects["connect_timeout"] = v
+		}
+	}
+
+	pg := c.Postgres
+	if pg.StatementTimeout != "" {
+		if v := durationToMillis(pg.StatementTimeout); v != "" {
+			injects["statement_timeout"] = v
+		}
+	}
+	if pg.LockTimeout != "" {
+		if v := durationToMillis(pg.LockTimeout); v != "" {
+			injects["lock_timeout"] = v
+		}
+	}
+	if pg.IdleInTxTimeout != "" {
+		if v := durationToMillis(pg.IdleInTxTimeout); v != "" {
+			injects["idle_in_transaction_session_timeout"] = v
+		}
+	}
+	// 用户的 Params 优先级高于字段默认值：同 key 时以 Params 为准
+	for k, v := range pg.Params {
+		if v != "" {
+			injects[k] = v
+		}
+	}
+
+	return injectPostgresDSN(c.DSN, injects)
+}
+
+// injectPostgresDSN 根据 DSN 格式（URL 或 key=value）把 injects 中的键值追加到 DSN
+// DSN 中已存在的 key 不会被覆盖
+func injectPostgresDSN(dsn string, injects map[string]string) (string, error) {
+	if len(injects) == 0 {
+		return dsn, nil
+	}
+	if strings.HasPrefix(dsn, "postgres://") || strings.HasPrefix(dsn, "postgresql://") {
+		return injectPostgresURL(dsn, injects)
+	}
+	return injectPostgresKV(dsn, injects), nil
+}
+
+// injectPostgresURL 向 URL 格式 DSN 的 query string 追加参数，已存在的 key 保留
+func injectPostgresURL(dsn string, injects map[string]string) (string, error) {
+	u, err := url.Parse(dsn)
+	if err != nil {
+		return "", err
+	}
+	q := u.Query()
+	for _, k := range sortedKeys(injects) {
+		if _, exists := q[k]; exists {
+			continue
+		}
+		q.Set(k, injects[k])
+	}
+	u.RawQuery = q.Encode()
+	return u.String(), nil
+}
+
+// pgKeyRegex 匹配 key=value 格式 DSN 中的 key
+// 简化实现：不处理 value 内部含 key= 子串的极端情况（生产中极少见）
+var pgKeyRegex = regexp.MustCompile(`(?:^|\s)([a-zA-Z_][a-zA-Z0-9_]*)=`)
+
+// injectPostgresKV 向 key=value 格式 DSN 追加参数，已存在的 key 保留
+func injectPostgresKV(dsn string, injects map[string]string) string {
+	existing := make(map[string]struct{})
+	for _, m := range pgKeyRegex.FindAllStringSubmatch(dsn, -1) {
+		existing[m[1]] = struct{}{}
+	}
+
+	var sb strings.Builder
+	sb.WriteString(dsn)
+	for _, k := range sortedKeys(injects) {
+		if _, dup := existing[k]; dup {
+			continue
+		}
+		v := injects[k]
+		if sb.Len() > 0 && !strings.HasSuffix(sb.String(), " ") {
+			sb.WriteByte(' ')
+		}
+		sb.WriteString(k)
+		sb.WriteByte('=')
+		sb.WriteString(quotePostgresKVValue(v))
+	}
+	return sb.String()
+}
+
+// quotePostgresKVValue 如果 value 含空格/单引号/反斜杠，按 libpq 规则加引号并转义
+func quotePostgresKVValue(v string) string {
+	if v == "" {
+		return "''"
+	}
+	if !strings.ContainsAny(v, " '\\") {
+		return v
+	}
+	escaped := strings.ReplaceAll(v, `\`, `\\`)
+	escaped = strings.ReplaceAll(escaped, `'`, `\'`)
+	return "'" + escaped + "'"
+}
+
+// sortedKeys 返回 map 键的排序切片，保证注入顺序稳定（方便测试）
+func sortedKeys(m map[string]string) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// durationToSeconds 把时长字符串向上取整为整数秒字符串（供 PG connect_timeout 使用）
+// <= 0 的时长返回空串，由调用方决定是否注入
+// < 1s 的时长向上取整为 1s（libpq 要求整数秒，最小 1）
+func durationToSeconds(s string) string {
+	d := xutil.ToDuration(s)
+	if d <= 0 {
+		return ""
+	}
+	secs := max(int64(math.Ceil(d.Seconds())), 1)
+	return strconv.FormatInt(secs, 10)
+}
+
+// durationToMillis 把时长字符串转为毫秒整数字符串（供 PG statement_timeout 等 GUC 使用）
+// <= 0 的时长返回空串
+func durationToMillis(s string) string {
+	d := xutil.ToDuration(s)
+	if d <= 0 {
+		return ""
+	}
+	return strconv.FormatInt(d.Milliseconds(), 10)
 }
 
 func getConfig() (*Config, error) {

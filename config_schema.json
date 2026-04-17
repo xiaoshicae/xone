@@ -274,11 +274,11 @@
         "DialTimeout": {
           "$ref": "#/definitions/GormConfig/properties/DialTimeout"
         },
-        "ReadTimeout": {
-          "$ref": "#/definitions/GormConfig/properties/ReadTimeout"
+        "MySQL": {
+          "$ref": "#/definitions/GormConfig/properties/MySQL"
         },
-        "WriteTimeout": {
-          "$ref": "#/definitions/GormConfig/properties/WriteTimeout"
+        "Postgres": {
+          "$ref": "#/definitions/GormConfig/properties/Postgres"
         },
         "MaxOpenConns": {
           "$ref": "#/definitions/GormConfig/properties/MaxOpenConns"
@@ -326,15 +326,46 @@
         },
         "DialTimeout": {
           "type": "string",
-          "description": "建连超时时间，默认500ms"
+          "description": "建连超时时间，默认500ms(MySQL→timeout, PG→connect_timeout)"
         },
-        "ReadTimeout": {
-          "type": "string",
-          "description": "读超时(仅MySQL有效)，默认3s"
+        "MySQL": {
+          "type": "object",
+          "description": "MySQL 驱动特化配置(仅 Driver=mysql 时生效)",
+          "properties": {
+            "ReadTimeout": {
+              "type": "string",
+              "description": "MySQL DSN 的 readTimeout，默认3s"
+            },
+            "WriteTimeout": {
+              "type": "string",
+              "description": "MySQL DSN 的 writeTimeout，默认5s"
+            }
+          }
         },
-        "WriteTimeout": {
-          "type": "string",
-          "description": "写超时(仅MySQL有效)，默认5s"
+        "Postgres": {
+          "type": "object",
+          "description": "PostgreSQL 驱动特化配置(仅 Driver=postgres 时生效)，会注入 DSN 为会话级 GUC",
+          "properties": {
+            "StatementTimeout": {
+              "type": "string",
+              "description": "PG statement_timeout，单条 SQL 最长执行时间，默认不限制"
+            },
+            "LockTimeout": {
+              "type": "string",
+              "description": "PG lock_timeout，等锁最长时间，默认不限制"
+            },
+            "IdleInTxTimeout": {
+              "type": "string",
+              "description": "PG idle_in_transaction_session_timeout，事务内空闲超时，默认不限制"
+            },
+            "Params": {
+              "type": "object",
+              "description": "其它任意 PG runtime param 直通(如 application_name、timezone 等)",
+              "additionalProperties": {
+                "type": "string"
+              }
+            }
+          }
         },
         "MaxOpenConns": {
           "type": ["integer", "string"],

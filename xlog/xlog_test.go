@@ -1,6 +1,7 @@
 package xlog
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -753,18 +754,28 @@ func TestAsyncWriter(t *testing.T) {
 }
 
 type mockWriteCloser struct {
-	written []byte
-	closed  bool
+	mu       sync.Mutex
+	written  []byte
+	closed   bool
+	writeErr error
+	closeErr error
 }
 
 func (m *mockWriteCloser) Write(p []byte) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.writeErr != nil {
+		return 0, m.writeErr
+	}
 	m.written = append(m.written, p...)
 	return len(p), nil
 }
 
 func (m *mockWriteCloser) Close() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.closed = true
-	return nil
+	return m.closeErr
 }
 
 func TestGetConfig(t *testing.T) {
@@ -856,3 +867,218 @@ func TestReinitKeepsWritesAlive(t *testing.T) {
 		c.So(closeFileWriter(), c.ShouldBeNil)
 	})
 }
+
+func TestRawLogNilCtx(t *testing.T) {
+	mockey.PatchConvey("TestRawLogNilCtx", t, func() {
+		// ctx 为 nil 时直接返回，不应 panic 也不应产生输出
+		fileW := &mockWriter{}
+		handler.Store(&xHandler{fileWriter: fileW, level: slogLevelTrace})
+
+		//nolint:staticcheck // 有意传入 nil 验证兜底行为
+		RawLog(nil, InfoLevel, "不应输出")
+		c.So(fileW.written, c.ShouldBeEmpty)
+	})
+}
+
+func TestHandlerAndLoggerAccessors(t *testing.T) {
+	mockey.PatchConvey("TestHandlerAndLoggerAccessors", t, func() {
+		fileW := &mockWriter{}
+		h := &xHandler{fileWriter: fileW, level: slogLevelTrace}
+		handler.Store(h)
+
+		mockey.PatchConvey("Handler 返回当前处理器", func() {
+			c.So(Handler(), c.ShouldEqual, h)
+		})
+
+		mockey.PatchConvey("Logger 可直接交给 slog 使用", func() {
+			l := Logger()
+			c.So(l, c.ShouldNotBeNil)
+			l.Info("来自 slog.Logger")
+			c.So(string(fileW.written), c.ShouldContainSubstring, "来自 slog.Logger")
+		})
+	})
+}
+
+func TestReplaceAttr(t *testing.T) {
+	mockey.PatchConvey("TestReplaceAttr", t, func() {
+		mockey.PatchConvey("分组内字段保持原样", func() {
+			a := slog.String(slog.TimeKey, "原值")
+			c.So(replaceAttr([]string{"g"}, a), c.ShouldResemble, a)
+		})
+
+		mockey.PatchConvey("level 值类型异常时原样返回", func() {
+			a := slog.String(slog.LevelKey, "不是 slog.Level")
+			c.So(replaceAttr(nil, a), c.ShouldResemble, a)
+		})
+
+		mockey.PatchConvey("其他字段不受影响", func() {
+			a := slog.String("custom", "v")
+			c.So(replaceAttr(nil, a), c.ShouldResemble, a)
+		})
+	})
+}
+
+func TestHandlerErrorPaths(t *testing.T) {
+	newRec := func() slog.Record { return slog.NewRecord(time.Now(), slog.LevelInfo, "m", 0) }
+
+	mockey.PatchConvey("TestHandlerErrorPaths", t, func() {
+		mockey.PatchConvey("JSON 序列化失败时控制台仍照常输出", func() {
+			// slog 的 JSONHandler 对任何值都不返回错误（内部有兜底），
+			// 该分支只能通过 mock 触发，但仍需保证失败时不连累控制台输出
+			mockey.Mock((*slog.JSONHandler).Handle).Return(errors.New("encode failed")).Build()
+
+			fileW, consoleW := &mockWriter{}, &mockWriter{}
+			h := &xHandler{fileWriter: fileW, consoleWriter: consoleW, level: slogLevelTrace}
+
+			err := h.Handle(context.Background(), newRec())
+			c.So(err, c.ShouldNotBeNil)
+			c.So(err.Error(), c.ShouldContainSubstring, "encode failed")
+			// JSON 未产出，文件侧不应写入半成品
+			c.So(fileW.written, c.ShouldBeEmpty)
+			// 控制台的可读格式不依赖 JSON，应仍然写出
+			c.So(string(consoleW.written), c.ShouldContainSubstring, "m")
+		})
+
+		mockey.PatchConvey("文件与控制台同时失败时保留先发生的错误", func() {
+			fileErr := errors.New("disk full")
+			h := &xHandler{
+				fileWriter:    &errWriter{err: fileErr},
+				consoleWriter: &errWriter{err: errors.New("broken pipe")},
+				level:         slogLevelTrace,
+			}
+			c.So(h.Handle(context.Background(), newRec()), c.ShouldEqual, fileErr)
+		})
+
+		mockey.PatchConvey("仅控制台失败时返回控制台错误", func() {
+			consoleErr := errors.New("broken pipe")
+			h := &xHandler{consoleWriter: &errWriter{err: consoleErr}, level: slogLevelTrace}
+			c.So(h.Handle(context.Background(), newRec()), c.ShouldEqual, consoleErr)
+		})
+
+		mockey.PatchConvey("超大日志行的编码器不归还池", func() {
+			fileW := &mockWriter{}
+			h := &xHandler{fileWriter: fileW, level: slogLevelTrace}
+			r := slog.NewRecord(time.Now(), slog.LevelInfo, strings.Repeat("x", maxPoolBufSize+1), 0)
+			c.So(h.Handle(context.Background(), r), c.ShouldBeNil)
+			c.So(len(fileW.written), c.ShouldBeGreaterThan, maxPoolBufSize)
+		})
+	})
+}
+
+func TestInitXLog(t *testing.T) {
+	mockey.PatchConvey("TestInitXLog", t, func() {
+		mockey.PatchConvey("配置读取失败时返回错误", func() {
+			mockey.Mock(xconfig.UnmarshalConfig).Return(errors.New("unmarshal failed")).Build()
+			err := initXLog()
+			c.So(err, c.ShouldNotBeNil)
+			c.So(err.Error(), c.ShouldContainSubstring, "getConfig failed")
+		})
+
+		mockey.PatchConvey("配置正常时完成初始化", func() {
+			mockey.Mock(xconfig.UnmarshalConfig).Return(nil).Build()
+			c.So(initXLog(), c.ShouldBeNil)
+			c.So(handler.Load(), c.ShouldNotBeNil)
+		})
+	})
+}
+
+func TestSwapFileWriterCloseError(t *testing.T) {
+	mockey.PatchConvey("TestSwapFileWriterCloseError", t, func() {
+		// 旧写入器关闭失败不应影响新写入器生效
+		failing := &mockWriteCloser{closeErr: errors.New("close failed")}
+		swapFileWriter(newAsyncWriter(failing, 8))
+
+		next := &mockWriteCloser{}
+		swapFileWriter(newAsyncWriter(next, 8))
+		c.So(failing.closed, c.ShouldBeTrue)
+
+		c.So(closeFileWriter(), c.ShouldBeNil)
+	})
+}
+
+func TestAsyncWriterEdgeCases(t *testing.T) {
+	mockey.PatchConvey("TestAsyncWriterEdgeCases", t, func() {
+		mockey.PatchConvey("关闭后写入返回错误", func() {
+			aw := newAsyncWriter(&mockWriteCloser{}, 8)
+			c.So(aw.Close(), c.ShouldBeNil)
+
+			n, err := aw.Write([]byte("late"))
+			c.So(n, c.ShouldEqual, 0)
+			c.So(err, c.ShouldEqual, errAsyncWriterClosed)
+		})
+
+		mockey.PatchConvey("缓冲区满时被关闭则放弃该条日志", func() {
+			// 底层写入阻塞，缓冲区填满后 Write 会阻塞在发送上
+			release := make(chan struct{})
+			mw := &blockingWriteCloser{release: release}
+			aw := newAsyncWriter(mw, 1)
+
+			_, _ = aw.Write([]byte("first"))  // 被消费协程取走后阻塞在底层写入
+			_, _ = aw.Write([]byte("second")) // 占满缓冲区
+
+			errCh := make(chan error, 1)
+			go func() {
+				_, err := aw.Write([]byte("third")) // 阻塞在发送
+				errCh <- err
+			}()
+
+			// 关闭应让阻塞中的 Write 立即返回
+			go func() {
+				time.Sleep(20 * time.Millisecond)
+				close(release)
+				_ = aw.Close()
+			}()
+
+			select {
+			case err := <-errCh:
+				// 要么在关闭前成功入队，要么因关闭被放弃，两者都可接受
+				if err != nil {
+					c.So(err, c.ShouldEqual, errAsyncWriterClosed)
+				}
+			case <-time.After(3 * time.Second):
+				t.Fatal("关闭后 Write 仍未返回")
+			}
+		})
+
+		mockey.PatchConvey("底层关闭失败时返回该错误", func() {
+			closeErr := errors.New("close failed")
+			aw := newAsyncWriter(&mockWriteCloser{closeErr: closeErr}, 8)
+			c.So(aw.Close(), c.ShouldEqual, closeErr)
+			// 重复关闭返回同一错误
+			c.So(aw.Close(), c.ShouldEqual, closeErr)
+		})
+
+		mockey.PatchConvey("底层写入失败由 Close 返回", func() {
+			writeErr := errors.New("disk full")
+			aw := newAsyncWriter(&mockWriteCloser{writeErr: writeErr}, 8)
+			_, _ = aw.Write([]byte("a"))
+			_, _ = aw.Write([]byte("b"))
+			c.So(aw.Close(), c.ShouldEqual, writeErr)
+		})
+
+		mockey.PatchConvey("超大数据不复用池中 buffer", func() {
+			mw := &mockWriteCloser{}
+			aw := newAsyncWriter(mw, 8)
+			big := bytes.Repeat([]byte("x"), maxPoolBufSize+1)
+
+			n, err := aw.Write(big)
+			c.So(err, c.ShouldBeNil)
+			c.So(n, c.ShouldEqual, len(big))
+			c.So(aw.Close(), c.ShouldBeNil)
+			c.So(len(mw.written), c.ShouldEqual, len(big))
+		})
+	})
+}
+
+// blockingWriteCloser 首次写入阻塞到 release 关闭，用于填满异步缓冲区
+type blockingWriteCloser struct {
+	release chan struct{}
+	once    sync.Once
+}
+
+func (w *blockingWriteCloser) Write(p []byte) (int, error) {
+	w.once.Do(func() { <-w.release })
+	return len(p), nil
+}
+
+func (w *blockingWriteCloser) Close() error { return nil }

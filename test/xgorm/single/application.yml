@@ -2,7 +2,8 @@ Server:
   Name: "xgorm-single-test"
 
 XLog:
-  EnableConsole: true
+  Console:
+    Enable: true
 
 XGorm:
   Driver: "postgres"

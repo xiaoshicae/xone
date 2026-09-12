@@ -414,13 +414,17 @@ XGin:
   KeyFile: ""                  # TLS 私钥路径
 
 XLog:
-  Level: "info"                # 日志级别（默认 info）
-  EnableFile: false            # 是否写日志文件（默认 false，仅输出到标准输出）
-  EnableConsole: true          # 控制台打印（默认 true）
-  ConsoleFormatIsRaw: false    # 控制台输出原始 JSON（默认 false）
-  Path: "./log/"               # 日志文件夹（默认 ./log/，仅 EnableFile 为 true 时生效）
-  MaxAge: "7d"                 # 日志保留时长（默认 7d，仅 EnableFile 为 true 时生效）
-  RotateTime: "1d"             # 切割周期（默认 1d，仅 EnableFile 为 true 时生效）
+  Level: "info"                # 日志级别（默认 info），两路输出共用
+  Timezone: "Asia/Shanghai"    # 时区（默认 Asia/Shanghai），两路输出共用
+  Console:
+    Enable: true               # 控制台输出（默认 true）
+    Format: "text"             # 输出格式（默认 text），可选 text / json
+  File:
+    Enable: false              # 写日志文件（默认 false，仅输出到标准输出）
+    Path: "./log"              # 日志文件夹（默认 ./log）
+    Name: "app"                # 日志文件名（默认 app）
+    MaxAge: "7d"               # 日志保留时长（默认 7d）
+    RotateTime: "1d"           # 切割周期（默认 1d，最小 1m）
 
 XTrace:
   Enable: true                 # 启用链路追踪（默认 true）
@@ -483,6 +487,7 @@ XGorm:
 
 ## 更新日志
 
+- **v2.15.0** (2026-09-12) - refactor(xlog)!: split the log configuration into Console and File blocks, each owning its own settings, and replace ConsoleFormatIsRaw with Console.Format ("text" / "json"); reject a RotateTime below one minute, which the filename's time suffix cannot express (BREAKING: move EnableFile/Path/Name/MaxAge/RotateTime under File, EnableConsole/ConsoleFormatIsRaw under Console; the old top-level keys are no longer read)
 - **v2.14.2** (2026-09-12) - fix(xlog): an unparseable or negative RotateTime silently degraded daily rotation into a new file every minute; re-initialization also closed the previous file writer before publishing the new handler, dropping anything logged during the switch. Raise every file in the module to full statement coverage, mostly over the error paths the writers had never exercised
 - **v2.14.1** (2026-09-12) - perf(xlog): cache caller lookups by program counter, skipping the symbol resolution that dominated the remaining log path (1.6x throughput, 60% less garbage); isolate observer panics, serialize console writes so long lines such as panic stacks cannot interleave, and collapse a redundant attribute pass
 - **v2.14.0** (2026-09-12) - refactor(xlog)!: move the logging backend to the standard library's log/slog and drop logrus, leaving the module with no third-party logging dependency (~2.1x throughput, 46% fewer allocations on top of v2.13.0); expose xlog.Handler/xlog.Logger so third-party libraries can share the same output configuration (BREAKING: xutil.LogIfEnableDebug is now unexported, use Error/Warn/InfoIfEnableDebug)

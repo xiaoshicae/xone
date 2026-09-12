@@ -2,7 +2,8 @@ Server:
   Name: "xredis-multi-test"
 
 XLog:
-  EnableConsole: true
+  Console:
+    Enable: true
 
 XRedis:
   - Name: "cache"

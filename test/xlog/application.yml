@@ -2,9 +2,11 @@ Server:
   AppId: "x.y.z"
 
 XLog:
-  EnableFile: true
-  Path: ./data/log
-  Name: abc
   Level: "DEBUG"
-  EnableConsole: true
-  ConsoleFormatIsRaw: true
+  Console:
+    Enable: true
+    Format: "json"
+  File:
+    Enable: true
+    Path: ./data/log
+    Name: abc

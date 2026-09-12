@@ -86,10 +86,10 @@ func initXLogByConfig(c *Config) error {
 		loc = time.Local
 	}
 
-	// 按需创建文件写入器，EnableFile 为 false 时不触碰文件系统
+	// 按需创建文件写入器，File.Enable 为 false 时不触碰文件系统
 	// 此处只创建不替换：需等新 handler 生效后再关闭旧写入器
 	var aw *asyncWriter
-	if c.EnableFile {
+	if c.File.Enable {
 		var err error
 		if aw, err = newFileWriter(c); err != nil {
 			return err
@@ -97,7 +97,7 @@ func initXLogByConfig(c *Config) error {
 	}
 
 	var cw io.Writer
-	if *c.EnableConsole {
+	if *c.Console.Enable {
 		cw = os.Stdout
 	}
 
@@ -126,7 +126,7 @@ func newHandler(c *Config, loc *time.Location, consoleWriter, fileWriter io.Writ
 		callerResolver: defaultCallerResolver,
 		location:       loc,
 		consoleWriter:  newLockedWriter(consoleWriter),
-		consoleRaw:     c.ConsoleFormatIsRaw,
+		consoleJSON:    c.Console.IsJSON(),
 		fileWriter:     fileWriter,
 		level:          level,
 	}
@@ -143,14 +143,14 @@ func fileWriterOf(aw *asyncWriter) io.Writer {
 
 // newFileWriter 创建轮转日志文件并包装为异步写入器
 func newFileWriter(c *Config) (*asyncWriter, error) {
-	if !xutil.DirExist(c.Path) { // 日志所在文件夹不存在则创建
-		if err := os.MkdirAll(c.Path, os.ModePerm); err != nil {
-			return nil, xerror.Newf("xlog", "init", "os.MkdirAll failed, path=[%s], err=[%v]", c.Path, err)
+	if !xutil.DirExist(c.File.Path) { // 日志所在文件夹不存在则创建
+		if err := os.MkdirAll(c.File.Path, os.ModePerm); err != nil {
+			return nil, xerror.Newf("xlog", "init", "os.MkdirAll failed, path=[%s], err=[%v]", c.File.Path, err)
 		}
 	}
 
-	logFilePath := path.Join(c.Path, c.Name+".log")
-	w, err := newRotateWriter(logFilePath, xutil.ToDuration(c.MaxAge), xutil.ToDuration(c.RotateTime))
+	logFilePath := path.Join(c.File.Path, c.File.Name+".log")
+	w, err := newRotateWriter(logFilePath, xutil.ToDuration(c.File.MaxAge), xutil.ToDuration(c.File.RotateTime))
 	if err != nil {
 		return nil, err
 	}

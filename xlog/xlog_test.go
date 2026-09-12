@@ -24,100 +24,106 @@ func TestXLogConfig(t *testing.T) {
 	mockey.PatchConvey("TestXLogConfig-configMergeDefault-Nil", t, func() {
 		config := configMergeDefault(nil)
 		c.So(config, c.ShouldResemble, &Config{
-			Level:              "info",
-			EnableFile:         false,
-			Name:               "app",
-			Path:               "./log",
-			EnableConsole:      xutil.ToPtr(true),
-			ConsoleFormatIsRaw: false,
-			MaxAge:             "7d",
-			RotateTime:         "1d",
-			Timezone:           "Asia/Shanghai",
+			Level:    "info",
+			Timezone: "Asia/Shanghai",
+			Console: ConsoleConfig{
+				Enable: xutil.ToPtr(true),
+				Format: FormatText,
+			},
+			File: FileConfig{
+				Enable:     false,
+				Path:       "./log",
+				Name:       "app",
+				MaxAge:     "7d",
+				RotateTime: "1d",
+			},
 		})
 	})
 
 	mockey.PatchConvey("TestXLogConfig-configMergeDefault-NotNil", t, func() {
 		mockey.Mock(xconfig.GetServerName).Return("a.b.c").Build()
-		config := &Config{
-			Level:              "1",
-			EnableFile:         true,
-			Name:               "2",
-			Path:               "3",
-			EnableConsole:      xutil.ToPtr(true),
-			ConsoleFormatIsRaw: true,
-			MaxAge:             "4",
-			RotateTime:         "5",
-			Timezone:           "UTC",
+		want := &Config{
+			Level:    "1",
+			Timezone: "UTC",
+			Console: ConsoleConfig{
+				Enable: xutil.ToPtr(true),
+				Format: FormatJSON,
+			},
+			File: FileConfig{
+				Enable:     true,
+				Path:       "3",
+				Name:       "2",
+				MaxAge:     "4",
+				RotateTime: "5",
+			},
 		}
-		config = configMergeDefault(config)
-		c.So(config, c.ShouldResemble, &Config{
-			Level:              "1",
-			EnableFile:         true,
-			Name:               "2",
-			Path:               "3",
-			EnableConsole:      xutil.ToPtr(true),
-			ConsoleFormatIsRaw: true,
-			MaxAge:             "4",
-			RotateTime:         "5",
-			Timezone:           "UTC",
+		// RotateTime "5" 会被解析为 5 纳秒，低于下限，回退到默认值
+		want.File.RotateTime = defaultRotateTime
+		config := configMergeDefault(&Config{
+			Level:    "1",
+			Timezone: "UTC",
+			Console:  ConsoleConfig{Enable: xutil.ToPtr(true), Format: FormatJSON},
+			File:     FileConfig{Enable: true, Path: "3", Name: "2", MaxAge: "4", RotateTime: "5"},
 		})
+		c.So(config, c.ShouldResemble, want)
 	})
 
 	mockey.PatchConvey("TestXLogConfig-configMergeDefault-DefaultIsConsoleOnly", t, func() {
 		// 默认不写文件，仅打印到控制台
 		config := configMergeDefault(&Config{})
-		c.So(config.EnableFile, c.ShouldBeFalse)
-		c.So(*config.EnableConsole, c.ShouldBeTrue)
+		c.So(config.File.Enable, c.ShouldBeFalse)
+		c.So(*config.Console.Enable, c.ShouldBeTrue)
 	})
 
 	mockey.PatchConvey("TestXLogConfig-configMergeDefault-FileOnly", t, func() {
 		// 开启文件写入后，显式关闭的 EnableConsole 不会被强制打开
-		config := configMergeDefault(&Config{EnableFile: true, EnableConsole: xutil.ToPtr(false)})
-		c.So(config.EnableFile, c.ShouldBeTrue)
-		c.So(*config.EnableConsole, c.ShouldBeFalse)
+		config := configMergeDefault(&Config{File: FileConfig{Enable: true}, Console: ConsoleConfig{Enable: xutil.ToPtr(false)}})
+		c.So(config.File.Enable, c.ShouldBeTrue)
+		c.So(*config.Console.Enable, c.ShouldBeFalse)
 	})
 
 	mockey.PatchConvey("TestXLogConfig-configMergeDefault-BothDisabledForceConsole", t, func() {
 		// 文件和控制台都关闭时强制打开控制台，避免日志无处输出
-		config := configMergeDefault(&Config{EnableFile: false, EnableConsole: xutil.ToPtr(false)})
-		c.So(*config.EnableConsole, c.ShouldBeTrue)
+		config := configMergeDefault(&Config{Console: ConsoleConfig{Enable: xutil.ToPtr(false)}})
+		c.So(*config.Console.Enable, c.ShouldBeTrue)
 	})
 
 	mockey.PatchConvey("TestXLogConfig-configMergeDefault-InvalidRotateTime", t, func() {
 		// 回归：无法解析的轮转周期会让 ToDuration 返回 0，
 		// 进而退化为按分钟切割（一天上千个文件），必须回退到默认值
-		for _, bad := range []string{"abc", "-1d", "0"} {
-			config := configMergeDefault(&Config{RotateTime: bad})
-			c.So(config.RotateTime, c.ShouldEqual, defaultRotateTime)
-			c.So(xutil.ToDuration(config.RotateTime), c.ShouldBeGreaterThan, 0)
+		// "5" 无单位会被解析为 5 纳秒，"30s" 低于一分钟下限，均无法兑现
+		for _, bad := range []string{"abc", "-1d", "0", "5", "30s"} {
+			config := configMergeDefault(&Config{File: FileConfig{RotateTime: bad}})
+			c.So(config.File.RotateTime, c.ShouldEqual, defaultRotateTime)
+			c.So(xutil.ToDuration(config.File.RotateTime), c.ShouldBeGreaterThan, 0)
 		}
 	})
 
 	mockey.PatchConvey("TestXLogConfig-configMergeDefault-ValidRotateTimeKept", t, func() {
-		for _, ok := range []string{"1d", "6h", "30m", "2d12h"} {
-			c.So(configMergeDefault(&Config{RotateTime: ok}).RotateTime, c.ShouldEqual, ok)
+		for _, ok := range []string{"1d", "6h", "30m", "1m", "2d12h"} {
+			c.So(configMergeDefault(&Config{File: FileConfig{RotateTime: ok}}).File.RotateTime, c.ShouldEqual, ok)
 		}
 	})
 
 	mockey.PatchConvey("TestXLogConfig-configMergeDefault-NegativeMaxAge", t, func() {
 		// 负数保留时长会让历史文件立即过期
-		c.So(configMergeDefault(&Config{MaxAge: "-1d"}).MaxAge, c.ShouldEqual, defaultMaxAge)
+		c.So(configMergeDefault(&Config{File: FileConfig{MaxAge: "-1d"}}).File.MaxAge, c.ShouldEqual, defaultMaxAge)
 		// 0 表示不清理，是合法配置，应保留
-		c.So(configMergeDefault(&Config{MaxAge: "0"}).MaxAge, c.ShouldEqual, "0")
+		c.So(configMergeDefault(&Config{File: FileConfig{MaxAge: "0"}}).File.MaxAge, c.ShouldEqual, "0")
 	})
 
 	mockey.PatchConvey("TestXLogConfig-configMergeDefault-Idempotent", t, func() {
 		// 重复合并结果一致，initXLogByConfig 的兜底调用依赖该性质
-		once := configMergeDefault(&Config{Level: "debug", EnableFile: true, EnableConsole: xutil.ToPtr(false)})
+		once := configMergeDefault(&Config{Level: "debug", File: FileConfig{Enable: true}, Console: ConsoleConfig{Enable: xutil.ToPtr(false)}})
 		twice := configMergeDefault(once)
 		c.So(twice, c.ShouldResemble, once)
 	})
 
 	mockey.PatchConvey("TestXLogConfig-configMergeDefault-ForceConsoleKeepFormat", t, func() {
 		// 强制打开 EnableConsole 不影响用户配置的输出格式
-		config := configMergeDefault(&Config{EnableConsole: xutil.ToPtr(false), ConsoleFormatIsRaw: true})
-		c.So(*config.EnableConsole, c.ShouldBeTrue)
-		c.So(config.ConsoleFormatIsRaw, c.ShouldBeTrue)
+		config := configMergeDefault(&Config{Console: ConsoleConfig{Enable: xutil.ToPtr(false), Format: FormatJSON}})
+		c.So(*config.Console.Enable, c.ShouldBeTrue)
+		c.So(config.Console.IsJSON(), c.ShouldBeTrue)
 	})
 }
 
@@ -483,7 +489,7 @@ func TestHandler(t *testing.T) {
 
 		mockey.PatchConvey("TestHandler-控制台raw模式复用JSON", func() {
 			consoleW := &mockWriter{}
-			h := &xHandler{consoleWriter: consoleW, consoleRaw: true, level: slogLevelTrace}
+			h := &xHandler{consoleWriter: consoleW, consoleJSON: true, level: slogLevelTrace}
 			c.So(h.Handle(context.Background(), newTestRecord(slog.LevelInfo, "m")), c.ShouldBeNil)
 			c.So(decodeJSON(t, consoleW.written)["msg"], c.ShouldEqual, "m")
 		})
@@ -552,9 +558,8 @@ func TestInitXLogByConfig(t *testing.T) {
 		mockey.Mock(os.MkdirAll).Return(errors.New("mkdir failed")).Build()
 
 		config := &Config{
-			Path:          "/test/path",
-			EnableFile:    true,
-			EnableConsole: xutil.ToPtr(false),
+			File:    FileConfig{Enable: true, Path: "/test/path"},
+			Console: ConsoleConfig{Enable: xutil.ToPtr(false)},
 		}
 		err := initXLogByConfig(config)
 		c.So(err, c.ShouldNotBeNil)
@@ -566,12 +571,8 @@ func TestInitXLogByConfig(t *testing.T) {
 		mockey.Mock(newRotateWriter).Return(nil, errors.New("open log file failed")).Build()
 
 		config := &Config{
-			Path:          "/test/path",
-			Name:          "test",
-			MaxAge:        "7d",
-			RotateTime:    "1d",
-			EnableFile:    true,
-			EnableConsole: xutil.ToPtr(false),
+			File:    FileConfig{Enable: true, Path: "/test/path", Name: "test", MaxAge: "7d", RotateTime: "1d"},
+			Console: ConsoleConfig{Enable: xutil.ToPtr(false)},
 		}
 		err := initXLogByConfig(config)
 		c.So(err, c.ShouldNotBeNil)
@@ -795,7 +796,7 @@ func TestGetConfig(t *testing.T) {
 		c.So(config, c.ShouldNotBeNil)
 		// 验证默认值已合并
 		c.So(config.Level, c.ShouldEqual, "info")
-		c.So(config.Name, c.ShouldEqual, "app")
+		c.So(config.File.Name, c.ShouldEqual, "app")
 	})
 }
 
@@ -848,7 +849,7 @@ func (w *chunkedWriter) Write(p []byte) (int, error) {
 func TestReinitKeepsWritesAlive(t *testing.T) {
 	mockey.PatchConvey("TestReinitKeepsWritesAlive", t, func() {
 		dir := t.TempDir()
-		cfg := &Config{EnableFile: true, Path: dir, Name: "app", EnableConsole: xutil.ToPtr(false)}
+		cfg := &Config{File: FileConfig{Enable: true, Path: dir, Name: "app"}, Console: ConsoleConfig{Enable: xutil.ToPtr(false)}}
 
 		c.So(initXLogByConfig(cfg), c.ShouldBeNil)
 		firstHandler := handler.Load()
@@ -1082,3 +1083,27 @@ func (w *blockingWriteCloser) Write(p []byte) (int, error) {
 }
 
 func (w *blockingWriteCloser) Close() error { return nil }
+
+func TestConsoleConfigIsJSON(t *testing.T) {
+	mockey.PatchConvey("TestConsoleConfigIsJSON", t, func() {
+		c.So(ConsoleConfig{Format: FormatJSON}.IsJSON(), c.ShouldBeTrue)
+		c.So(ConsoleConfig{Format: "JSON"}.IsJSON(), c.ShouldBeTrue)
+		c.So(ConsoleConfig{Format: FormatText}.IsJSON(), c.ShouldBeFalse)
+		c.So(ConsoleConfig{}.IsJSON(), c.ShouldBeFalse)
+	})
+}
+
+func TestConsoleFormatFallback(t *testing.T) {
+	mockey.PatchConvey("TestConsoleFormatFallback", t, func() {
+		mockey.PatchConvey("未知格式回退为 text", func() {
+			// 笔误不应让控制台意外变成 JSON 或反之
+			config := configMergeDefault(&Config{Console: ConsoleConfig{Format: "yaml"}})
+			c.So(config.Console.Format, c.ShouldEqual, FormatText)
+		})
+
+		mockey.PatchConvey("大小写不敏感且归一化", func() {
+			c.So(configMergeDefault(&Config{Console: ConsoleConfig{Format: "JSON"}}).Console.Format, c.ShouldEqual, FormatJSON)
+			c.So(configMergeDefault(&Config{Console: ConsoleConfig{Format: "TEXT"}}).Console.Format, c.ShouldEqual, FormatText)
+		})
+	})
+}

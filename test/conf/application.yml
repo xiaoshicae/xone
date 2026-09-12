@@ -12,9 +12,11 @@ Server:
     Port: 9000
 
 XLog:
-  EnableConsole: true          # 打印到标准输出，由部署环境的日志采集组件收集
-  ConsoleFormatIsRaw: true     # 原始的json格式打印
-  MaxAge: "3d"
+  Console:
+    Enable: true              # 打印到标准输出，由部署环境的日志采集组件收集
+    Format: "json"            # 结构化格式，便于采集器解析
+  File:
+    MaxAge: "3d"
 
 # 业务自定义配置示例，用于验证嵌套结构体与 map 的反序列化
 MyApp:

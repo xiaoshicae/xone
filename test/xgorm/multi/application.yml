@@ -2,7 +2,8 @@ Server:
   Name: "xgorm-multi-test"
 
 XLog:
-  EnableConsole: true
+  Console:
+    Enable: true
 
 XGorm:
   - Name: "primary"

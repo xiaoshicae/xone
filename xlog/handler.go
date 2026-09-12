@@ -59,7 +59,9 @@ type xHandler struct {
 
 	// consoleWriter 为 nil 表示不输出到控制台
 	consoleWriter io.Writer
-	consoleRaw    bool
+
+	// consoleJSON 控制台是否输出 JSON 格式
+	consoleJSON bool
 
 	// fileWriter 为 nil 表示不写入日志文件
 	fileWriter io.Writer
@@ -171,7 +173,7 @@ func (h *xHandler) Handle(ctx context.Context, r slog.Record) error {
 	var jsonLine []byte
 	var jsonErr error
 	var enc *jsonEncoder
-	if h.fileWriter != nil || (h.consoleWriter != nil && h.consoleRaw) {
+	if h.fileWriter != nil || (h.consoleWriter != nil && h.consoleJSON) {
 		enc = acquireEncoder()
 		defer releaseEncoder(enc)
 
@@ -198,9 +200,10 @@ func (h *xHandler) Handle(ctx context.Context, r slog.Record) error {
 	return firstErr
 }
 
-// writeConsole 输出到控制台，raw 模式直接复用已序列化的 JSON
+// writeConsole 输出到控制台
 func (h *xHandler) writeConsole(r slog.Record, caller *runtime.Frame, jsonLine []byte, traceID, panicStack string) error {
-	if h.consoleRaw {
+	if h.consoleJSON {
+		// JSON 格式直接复用已序列化的结果
 		_, err := h.consoleWriter.Write(jsonLine)
 		return err
 	}

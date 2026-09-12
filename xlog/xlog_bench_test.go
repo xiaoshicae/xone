@@ -9,7 +9,7 @@ import (
 )
 
 // setupBenchLogger 将日志输出重定向到 io.Discard，排除终端 I/O 对测量的干扰
-func setupBenchLogger(consoleRaw bool, withFile bool) {
+func setupBenchLogger(consoleJSON bool, withFile bool) {
 	var fw io.Writer
 	if withFile {
 		fw = io.Discard
@@ -21,7 +21,7 @@ func setupBenchLogger(consoleRaw bool, withFile bool) {
 		callerResolver: defaultCallerResolver,
 		location:       time.UTC,
 		consoleWriter:  io.Discard,
-		consoleRaw:     consoleRaw,
+		consoleJSON:    consoleJSON,
 		fileWriter:     fw,
 		level:          slog.LevelInfo,
 	})

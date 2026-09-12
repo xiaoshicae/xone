@@ -17,66 +17,74 @@
 
 ### 2. 配置参数
 
+`Level` 与 `Timezone` 为两路输出共用，控制台与文件各自的配置分别位于 `Console` 与 `File` 子块：
+
 ```yaml
 XLog:
   Level: "info"               # 日志级别（optional, default "info"），可选 debug/info/warn/error/fatal，大小写不敏感
-  EnableFile: false           # 是否写入日志文件（optional, default false）
-  EnableConsole: true         # 是否打印到控制台（标准输出）（optional, default true）
-  ConsoleFormatIsRaw: false   # 控制台是否输出原始 JSON 格式（optional, default false）
-  Name: "app"                 # 日志文件名称（optional, default "app"），仅 EnableFile 为 true 时生效
-  Path: "./log"               # 日志文件夹路径（optional, default "./log"），仅 EnableFile 为 true 时生效
-  MaxAge: "7d"                # 日志保存最大时长（optional, default "7d"），仅 EnableFile 为 true 时生效
-  RotateTime: "1d"            # 日志切割周期（optional, default "1d"），仅 EnableFile 为 true 时生效
   Timezone: "Asia/Shanghai"   # 日志时间时区（optional, default "Asia/Shanghai"），加载失败时回退系统本地时区
+
+  Console:
+    Enable: true              # 是否输出到控制台（optional, default true）
+    Format: "text"            # 输出格式（optional, default "text"），可选 text / json
+
+  File:
+    Enable: false             # 是否写入日志文件（optional, default false）
+    Path: "./log"             # 日志文件夹路径（optional, default "./log"）
+    Name: "app"               # 日志文件名称（optional, default "app"）
+    MaxAge: "7d"              # 日志保留时长（optional, default "7d"），设为 0 表示不清理
+    RotateTime: "1d"          # 日志切割周期（optional, default "1d"），最小 1m
 ```
 
-时间类配置支持 `d`（天）前缀及 Go duration 单位，如 `7d`、`1d12h`、`500ms`。
-所有配置项均支持环境变量占位符，如 `EnableFile: "${XLOG_ENABLE_FILE:-false}"`。
+时间类配置支持 `d`（天）前缀及 Go duration 单位，如 `7d`、`1d12h`、`6h`。
+所有配置项均支持环境变量占位符，如 `Enable: "${XLOG_FILE_ENABLE:-false}"`。
 
 #### 输出目标
 
-日志输出由 `EnableFile` 和 `EnableConsole` 两个开关共同决定：
+两路输出各自独立开关：
 
-| EnableFile | EnableConsole | 输出结果 | 典型场景 |
-|------------|---------------|---------|---------|
+| File.Enable | Console.Enable | 输出结果 | 典型场景 |
+|-------------|----------------|---------|---------|
 | `false`（默认） | `true`（默认） | 仅标准输出 | K8s / 容器 |
 | `true` | `true` | 文件 + 标准输出 | 本地开发调试 |
 | `true` | `false` | 仅文件 | 物理机 / 虚拟机部署 |
 | `false` | `false` | 强制回退为仅标准输出 | 配置错误保护 |
 
-`EnableFile` 为 `false` 时不会创建日志目录，也不会创建轮转文件，`Name` / `Path` / `MaxAge` / `RotateTime` 均不生效。
+`File.Enable` 为 `false` 时不会创建日志目录，也不会创建轮转文件，`File` 子块的其余配置均不生效。
 
 #### K8s / 容器环境
 
 容器环境中日志一般由采集器（Filebeat / Fluent Bit / Loki 等）从容器标准输出收集，无需落盘，
-这正是本模块的默认行为，不配置即可使用。建议开启原始 JSON 输出，便于采集器解析与日志平台检索：
+这正是本模块的默认行为。建议将控制台格式设为 `json`，便于采集器解析与日志平台检索：
 
 ```yaml
 XLog:
   Level: "info"
-  ConsoleFormatIsRaw: true
+  Console:
+    Format: "json"
 ```
 
 #### 日志落盘
 
-需要写入文件时显式开启 `EnableFile`。日志按 `RotateTime` 周期轮转，文件名形如
+需要写入文件时显式开启 `File.Enable`。日志按 `RotateTime` 周期轮转，文件名形如
 `xxx.log.20260912`，并维护一个指向当前文件的符号链接 `xxx.log` 便于 tail 跟随；
 超过 `MaxAge` 的历史文件会在轮转时自动清理。
 
-按如下配置日志保存到 `/a/b/c/` 目录下：
-
 ```yaml
 XLog:
-  EnableFile: true
-  Path: "/a/b/c"
-  Name: "xxx"
-  MaxAge: "10d"
-  RotateTime: "2d"
-  EnableConsole: false        # 可选：关闭控制台输出，仅写文件
+  File:
+    Enable: true
+    Path: "/a/b/c"            # 日志保存到 /a/b/c/ 目录下
+    Name: "xxx"
+    MaxAge: "10d"
+    RotateTime: "2d"
+  Console:
+    Enable: false             # 可选：关闭控制台输出，仅写文件
 ```
 
 `RotateTime` 支持小于一天的周期（如 `"6h"`、`"30m"`），文件名后缀会自动使用更细的
-时间粒度：`20260912` → `2026091206` → `202609120630`。
+时间粒度：`20260912` → `2026091206` → `202609120630`。由于最细只到分钟，
+**小于 `1m` 的周期无法兑现，会回退到默认值**——注意无单位的数字会被解析为纳秒（`"5"` 即 5ns）。
 
 ### 3. API 接口
 
@@ -220,5 +228,5 @@ func main() {
 
 ### 6. 控制台输出格式
 
-- `ConsoleFormatIsRaw: false`（默认）：`[INFO][2024-10-15 19:45:05.136] main.go:44 trace-id some info`
-- `ConsoleFormatIsRaw: true`：原始 JSON 格式，字段同上，容器环境推荐
+- `Console.Format: "text"`（默认）：`[INFO][2024-10-15 19:45:05.136] main.go:44 trace-id some info`
+- `Console.Format: "json"`：结构化 JSON 格式，字段同上，容器环境推荐

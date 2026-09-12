@@ -76,3 +76,11 @@ func (l Level) toLogrus() logrus.Level {
 	}
 	return logrus.Level(l)
 }
+
+// fromLogrusLevel 由底层日志库级别转换而来，供旁路扩展点使用
+func fromLogrusLevel(l logrus.Level) Level {
+	if int(l) >= len(levelNames) {
+		return InfoLevel
+	}
+	return Level(l)
+}

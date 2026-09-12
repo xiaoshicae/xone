@@ -1,0 +1,223 @@
+package xlog
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/bytedance/mockey"
+	c "github.com/smartystreets/goconvey/convey"
+)
+
+// newTestWriter 创建写入器并注入可控时间源
+func newTestWriter(t *testing.T, maxAge, rotate time.Duration, now *time.Time) (*rotateWriter, string) {
+	t.Helper()
+	dir := t.TempDir()
+	base := filepath.Join(dir, "app.log")
+
+	w, err := newRotateWriter(base, maxAge, rotate)
+	if err != nil {
+		t.Fatalf("newRotateWriter failed: %v", err)
+	}
+	if now != nil {
+		w.clock = func() time.Time { return *now }
+		// 时间源注入后按当前时刻重新定位文件
+		if name := w.filenameFor(*now); name != w.currentName {
+			if err := w.rotateTo(name); err != nil {
+				t.Fatalf("rotateTo failed: %v", err)
+			}
+		}
+	}
+	t.Cleanup(func() { _ = w.Close() })
+	return w, dir
+}
+
+func TestRotateWriter(t *testing.T) {
+	mockey.PatchConvey("TestRotateWriter-WriteAndSymlink", t, func() {
+		now := time.Date(2026, 9, 12, 10, 0, 0, 0, time.Local)
+		w, dir := newTestWriter(t, 7*24*time.Hour, 24*time.Hour, &now)
+
+		n, err := w.Write([]byte("hello\n"))
+		c.So(err, c.ShouldBeNil)
+		c.So(n, c.ShouldEqual, 6)
+
+		// 文件名带日期后缀
+		content, err := os.ReadFile(filepath.Join(dir, "app.log.20260912"))
+		c.So(err, c.ShouldBeNil)
+		c.So(string(content), c.ShouldEqual, "hello\n")
+
+		// 符号链接指向当前文件
+		target, err := os.Readlink(filepath.Join(dir, "app.log"))
+		c.So(err, c.ShouldBeNil)
+		c.So(target, c.ShouldEqual, "app.log.20260912")
+	})
+
+	mockey.PatchConvey("TestRotateWriter-RotatesOnPeriodChange", t, func() {
+		now := time.Date(2026, 9, 12, 23, 59, 0, 0, time.Local)
+		w, dir := newTestWriter(t, 7*24*time.Hour, 24*time.Hour, &now)
+
+		_, err := w.Write([]byte("day1\n"))
+		c.So(err, c.ShouldBeNil)
+
+		// 跨到次日，应写入新文件
+		now = now.Add(2 * time.Minute)
+		_, err = w.Write([]byte("day2\n"))
+		c.So(err, c.ShouldBeNil)
+
+		day1, err := os.ReadFile(filepath.Join(dir, "app.log.20260912"))
+		c.So(err, c.ShouldBeNil)
+		c.So(string(day1), c.ShouldEqual, "day1\n")
+
+		day2, err := os.ReadFile(filepath.Join(dir, "app.log.20260913"))
+		c.So(err, c.ShouldBeNil)
+		c.So(string(day2), c.ShouldEqual, "day2\n")
+
+		// 符号链接跟随到最新文件
+		target, _ := os.Readlink(filepath.Join(dir, "app.log"))
+		c.So(target, c.ShouldEqual, "app.log.20260913")
+	})
+
+	mockey.PatchConvey("TestRotateWriter-SubDayRotation", t, func() {
+		// 轮转周期小于一天时使用更细的时间后缀，否则会生成同名文件而无法真正轮转
+		now := time.Date(2026, 9, 12, 10, 30, 0, 0, time.Local)
+		w, dir := newTestWriter(t, 7*24*time.Hour, time.Hour, &now)
+
+		_, err := w.Write([]byte("h10\n"))
+		c.So(err, c.ShouldBeNil)
+
+		now = now.Add(time.Hour)
+		_, err = w.Write([]byte("h11\n"))
+		c.So(err, c.ShouldBeNil)
+
+		_, err = os.Stat(filepath.Join(dir, "app.log.2026091210"))
+		c.So(err, c.ShouldBeNil)
+		_, err = os.Stat(filepath.Join(dir, "app.log.2026091211"))
+		c.So(err, c.ShouldBeNil)
+	})
+
+	mockey.PatchConvey("TestRotateWriter-AppendsToExistingFile", t, func() {
+		// 同一周期内重启不应截断已有日志
+		now := time.Date(2026, 9, 12, 10, 0, 0, 0, time.Local)
+		w, dir := newTestWriter(t, 7*24*time.Hour, 24*time.Hour, &now)
+		_, _ = w.Write([]byte("first\n"))
+		c.So(w.Close(), c.ShouldBeNil)
+
+		w2, err := newRotateWriter(filepath.Join(dir, "app.log"), 7*24*time.Hour, 24*time.Hour)
+		c.So(err, c.ShouldBeNil)
+		defer func() { _ = w2.Close() }()
+		_, _ = w2.Write([]byte("second\n"))
+
+		content, _ := os.ReadFile(w2.currentName)
+		c.So(string(content), c.ShouldContainSubstring, "first")
+		c.So(string(content), c.ShouldContainSubstring, "second")
+	})
+
+	mockey.PatchConvey("TestRotateWriter-CloseIsIdempotent", t, func() {
+		now := time.Date(2026, 9, 12, 10, 0, 0, 0, time.Local)
+		w, _ := newTestWriter(t, 0, 24*time.Hour, &now)
+		c.So(w.Close(), c.ShouldBeNil)
+		c.So(w.Close(), c.ShouldBeNil)
+
+		_, err := w.Write([]byte("after close\n"))
+		c.So(err, c.ShouldEqual, os.ErrClosed)
+	})
+
+	mockey.PatchConvey("TestRotateWriter-OpenFail", t, func() {
+		// 目录不存在时应在构造阶段就报错，而非首次写日志才失败
+		_, err := newRotateWriter(filepath.Join(t.TempDir(), "no-such-dir", "app.log"), time.Hour, time.Hour)
+		c.So(err, c.ShouldNotBeNil)
+		c.So(err.Error(), c.ShouldContainSubstring, "open log file failed")
+	})
+}
+
+func TestRotateWriterPurge(t *testing.T) {
+	mockey.PatchConvey("TestRotateWriterPurge-RemovesExpired", t, func() {
+		now := time.Date(2026, 9, 12, 10, 0, 0, 0, time.Local)
+		w, dir := newTestWriter(t, 48*time.Hour, 24*time.Hour, &now)
+
+		// 造一个 10 天前的历史文件
+		old := filepath.Join(dir, "app.log.20260902")
+		c.So(os.WriteFile(old, []byte("old\n"), logFilePerm), c.ShouldBeNil)
+		oldTime := now.Add(-10 * 24 * time.Hour)
+		c.So(os.Chtimes(old, oldTime, oldTime), c.ShouldBeNil)
+
+		w.purge(w.currentName)
+
+		_, err := os.Stat(old)
+		c.So(os.IsNotExist(err), c.ShouldBeTrue)
+	})
+
+	mockey.PatchConvey("TestRotateWriterPurge-KeepsRecentAndCurrent", t, func() {
+		now := time.Date(2026, 9, 12, 10, 0, 0, 0, time.Local)
+		w, dir := newTestWriter(t, 48*time.Hour, 24*time.Hour, &now)
+
+		recent := filepath.Join(dir, "app.log.20260911")
+		c.So(os.WriteFile(recent, []byte("recent\n"), logFilePerm), c.ShouldBeNil)
+		recentTime := now.Add(-1 * time.Hour)
+		c.So(os.Chtimes(recent, recentTime, recentTime), c.ShouldBeNil)
+
+		w.purge(w.currentName)
+
+		_, err := os.Stat(recent)
+		c.So(err, c.ShouldBeNil)
+		// 当前文件与符号链接都不应被删除
+		_, err = os.Stat(w.currentName)
+		c.So(err, c.ShouldBeNil)
+		_, err = os.Lstat(filepath.Join(dir, "app.log"))
+		c.So(err, c.ShouldBeNil)
+	})
+
+	mockey.PatchConvey("TestRotateWriterPurge-DisabledWhenMaxAgeZero", t, func() {
+		now := time.Date(2026, 9, 12, 10, 0, 0, 0, time.Local)
+		w, dir := newTestWriter(t, 0, 24*time.Hour, &now)
+
+		old := filepath.Join(dir, "app.log.20250101")
+		c.So(os.WriteFile(old, []byte("old\n"), logFilePerm), c.ShouldBeNil)
+		oldTime := now.Add(-365 * 24 * time.Hour)
+		c.So(os.Chtimes(old, oldTime, oldTime), c.ShouldBeNil)
+
+		w.purge(w.currentName)
+
+		_, err := os.Stat(old)
+		c.So(err, c.ShouldBeNil)
+	})
+}
+
+func TestTruncateInLocation(t *testing.T) {
+	mockey.PatchConvey("TestTruncateInLocation", t, func() {
+		mockey.PatchConvey("按天轮转对齐本地零点", func() {
+			// 直接使用 time.Truncate 会以 UTC 零点为基准，落在本地时间的非零点时刻
+			loc := time.FixedZone("UTC+8", 8*3600)
+			ts := time.Date(2026, 9, 12, 3, 18, 0, 0, loc)
+			got := truncateInLocation(ts, 24*time.Hour)
+			c.So(got.Year(), c.ShouldEqual, 2026)
+			c.So(got.Month(), c.ShouldEqual, time.September)
+			c.So(got.Day(), c.ShouldEqual, 12)
+			c.So(got.Hour(), c.ShouldEqual, 0)
+			c.So(got.Location(), c.ShouldEqual, loc)
+		})
+
+		mockey.PatchConvey("UTC 时区走原生截断", func() {
+			ts := time.Date(2026, 9, 12, 3, 18, 0, 0, time.UTC)
+			got := truncateInLocation(ts, time.Hour)
+			c.So(got.Hour(), c.ShouldEqual, 3)
+			c.So(got.Minute(), c.ShouldEqual, 0)
+		})
+
+		mockey.PatchConvey("周期非正时原样返回", func() {
+			ts := time.Date(2026, 9, 12, 3, 18, 0, 0, time.UTC)
+			c.So(truncateInLocation(ts, 0), c.ShouldEqual, ts)
+		})
+	})
+}
+
+func TestRotateLayoutFor(t *testing.T) {
+	mockey.PatchConvey("TestRotateLayoutFor", t, func() {
+		c.So(rotateLayoutFor(24*time.Hour), c.ShouldEqual, rotateLayoutDay)
+		c.So(rotateLayoutFor(7*24*time.Hour), c.ShouldEqual, rotateLayoutDay)
+		c.So(rotateLayoutFor(time.Hour), c.ShouldEqual, rotateLayoutHour)
+		c.So(rotateLayoutFor(6*time.Hour), c.ShouldEqual, rotateLayoutHour)
+		c.So(rotateLayoutFor(30*time.Minute), c.ShouldEqual, rotateLayoutMinute)
+	})
+}

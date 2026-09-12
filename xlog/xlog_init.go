@@ -14,7 +14,6 @@ import (
 	"github.com/xiaoshicae/xone/v2/xhook"
 	"github.com/xiaoshicae/xone/v2/xutil"
 
-	rotatelogs "github.com/lestrrat-go/file-rotatelogs"
 	"github.com/sirupsen/logrus"
 )
 
@@ -152,14 +151,9 @@ func newFileWriter(c *Config) (*asyncWriter, error) {
 	}
 
 	logFilePath := path.Join(c.Path, c.Name+".log")
-	w, err := rotatelogs.New(
-		logFilePath+".%Y%m%d",
-		rotatelogs.WithLinkName(logFilePath),
-		rotatelogs.WithMaxAge(xutil.ToDuration(c.MaxAge)),
-		rotatelogs.WithRotationTime(xutil.ToDuration(c.RotateTime)),
-	)
+	w, err := newRotateWriter(logFilePath, xutil.ToDuration(c.MaxAge), xutil.ToDuration(c.RotateTime))
 	if err != nil {
-		return nil, xerror.Newf("xlog", "init", "rotatelogs.New failed, err=[%v]", err)
+		return nil, err
 	}
 
 	// 异步写入，避免日志 I/O 阻塞调用方

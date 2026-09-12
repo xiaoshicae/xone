@@ -3,6 +3,7 @@ package xmetric
 import (
 	"context"
 	"errors"
+	"github.com/xiaoshicae/xone/v2/xlog"
 	"sync"
 	"testing"
 	"time"
@@ -10,10 +11,8 @@ import (
 	. "github.com/bytedance/mockey"
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
-	"github.com/sirupsen/logrus"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/xiaoshicae/xone/v2/xconfig"
-	"github.com/xiaoshicae/xone/v2/xutil"
 )
 
 var errTest = errors.New("test error")
@@ -184,132 +183,99 @@ func TestCounterInc_WithNamespace(t *testing.T) {
 	})
 }
 
-func TestMetricLogHook_Fire(t *testing.T) {
-	PatchConvey("TestMetricLogHook-Error级别上报带caller", t, func() {
-		resetState()
-
-		hook := newMetricLogHook("")
-		entry := logrus.NewEntry(logrus.StandardLogger())
-		entry.Level = logrus.ErrorLevel
-		entry.Context = context.Background()
-		entry.Data["filename"] = "order_handler.go"
-		entry.Data["lineid"] = "42"
-
-		fireErr := hook.Fire(entry)
-		So(fireErr, ShouldBeNil)
-
-		metrics, gatherErr := defaultRegistry.Gather()
-		So(gatherErr, ShouldBeNil)
-
-		var found *dto.MetricFamily
-		for _, m := range metrics {
-			if *m.Name == "log_errors_total" {
-				found = m
-				break
-			}
+// gatherLogErrors 取出 log_errors_total 指标族
+func gatherLogErrors(t *testing.T) *dto.MetricFamily {
+	t.Helper()
+	metrics, err := defaultRegistry.Gather()
+	So(err, ShouldBeNil)
+	for _, m := range metrics {
+		if *m.Name == "log_errors_total" {
+			return m
 		}
-		So(found, ShouldNotBeNil)
-		So(*found.Metric[0].Counter.Value, ShouldEqual, 1)
-
-		// 验证 caller label
-		var callerLabel string
-		for _, l := range found.Metric[0].Label {
-			if *l.Name == "caller" {
-				callerLabel = *l.Value
-			}
-		}
-		So(callerLabel, ShouldEqual, "order_handler.go:42")
-	})
-
-	PatchConvey("TestMetricLogHook-无caller时fallback为unknown", t, func() {
-		resetState()
-
-		hook := newMetricLogHook("")
-		entry := logrus.NewEntry(logrus.StandardLogger())
-		entry.Level = logrus.ErrorLevel
-		entry.Context = context.Background()
-
-		fireErr := hook.Fire(entry)
-		So(fireErr, ShouldBeNil)
-
-		metrics, gatherErr := defaultRegistry.Gather()
-		So(gatherErr, ShouldBeNil)
-
-		var found *dto.MetricFamily
-		for _, m := range metrics {
-			if *m.Name == "log_errors_total" {
-				found = m
-				break
-			}
-		}
-		So(found, ShouldNotBeNil)
-
-		var callerLabel string
-		for _, l := range found.Metric[0].Label {
-			if *l.Name == "caller" {
-				callerLabel = *l.Value
-			}
-		}
-		So(callerLabel, ShouldEqual, "unknown")
-	})
-
-	PatchConvey("TestMetricLogHook-带TraceID和SpanID的Exemplar", t, func() {
-		resetState()
-
-		hook := newMetricLogHook("")
-		entry := logrus.NewEntry(logrus.StandardLogger())
-		entry.Level = logrus.ErrorLevel
-		entry.Context = context.Background()
-		entry.Data["filename"] = "pay_service.go"
-		entry.Data["lineid"] = "88"
-		entry.Data["traceid"] = "abc123"
-		entry.Data["spanid"] = "def456"
-
-		fireErr := hook.Fire(entry)
-		So(fireErr, ShouldBeNil)
-
-		metrics, gatherErr := defaultRegistry.Gather()
-		So(gatherErr, ShouldBeNil)
-
-		var found *dto.MetricFamily
-		for _, m := range metrics {
-			if *m.Name == "log_errors_total" {
-				found = m
-				break
-			}
-		}
-		So(found, ShouldNotBeNil)
-		So(*found.Metric[0].Counter.Value, ShouldEqual, 1)
-	})
-
-	PatchConvey("TestMetricLogHook-从ctx兜底获取traceID", t, func() {
-		resetState()
-		Mock(xutil.GetTraceIDFromCtx).Return("ctx_trace_id").Build()
-		Mock(xutil.GetSpanIDFromCtx).Return("ctx_span_id").Build()
-
-		hook := newMetricLogHook("")
-		entry := logrus.NewEntry(logrus.StandardLogger())
-		entry.Level = logrus.ErrorLevel
-		entry.Context = context.Background()
-
-		fireErr := hook.Fire(entry)
-		So(fireErr, ShouldBeNil)
-
-		metrics, gatherErr := defaultRegistry.Gather()
-		So(gatherErr, ShouldBeNil)
-
-		var found *dto.MetricFamily
-		for _, m := range metrics {
-			if *m.Name == "log_errors_total" {
-				found = m
-				break
-			}
-		}
-		So(found, ShouldNotBeNil)
-		So(*found.Metric[0].Counter.Value, ShouldEqual, 1)
-	})
+	}
+	return nil
 }
 
+// labelValue 取指定 label 的值
+func labelValue(m *dto.Metric, name string) string {
+	for _, l := range m.Label {
+		if *l.Name == name {
+			return *l.Value
+		}
+	}
+	return ""
+}
+
+func TestMetricLogObserver_Observe(t *testing.T) {
+	PatchConvey("TestMetricLogObserver-Error级别上报带caller", t, func() {
+		resetState()
+
+		obs := newMetricLogObserver("")
+		obs.observe(context.Background(), xlog.Record{
+			Level: xlog.ErrorLevel,
+			File:  "order_handler.go",
+			Line:  42,
+		})
+
+		found := gatherLogErrors(t)
+		So(found, ShouldNotBeNil)
+		So(*found.Metric[0].Counter.Value, ShouldEqual, 1)
+		So(labelValue(found.Metric[0], "caller"), ShouldEqual, "order_handler.go:42")
+		So(labelValue(found.Metric[0], "level"), ShouldEqual, "error")
+	})
+
+	PatchConvey("TestMetricLogObserver-无caller时fallback为unknown", t, func() {
+		resetState()
+
+		obs := newMetricLogObserver("")
+		obs.observe(context.Background(), xlog.Record{Level: xlog.ErrorLevel})
+
+		found := gatherLogErrors(t)
+		So(found, ShouldNotBeNil)
+		So(labelValue(found.Metric[0], "caller"), ShouldEqual, "unknown")
+	})
+
+	PatchConvey("TestMetricLogObserver-带TraceID和SpanID的Exemplar", t, func() {
+		resetState()
+
+		obs := newMetricLogObserver("")
+		obs.observe(context.Background(), xlog.Record{
+			Level:   xlog.ErrorLevel,
+			File:    "pay_service.go",
+			Line:    88,
+			TraceID: "abc123",
+			SpanID:  "def456",
+		})
+
+		found := gatherLogErrors(t)
+		So(found, ShouldNotBeNil)
+		So(*found.Metric[0].Counter.Value, ShouldEqual, 1)
+	})
+
+	PatchConvey("TestMetricLogObserver-Fatal与Panic同样上报", t, func() {
+		// Level 数值越小级别越高，Fatal/Panic 需一并纳入
+		resetState()
+
+		obs := newMetricLogObserver("")
+		obs.observe(context.Background(), xlog.Record{Level: xlog.FatalLevel, File: "a.go", Line: 1})
+		obs.observe(context.Background(), xlog.Record{Level: xlog.PanicLevel, File: "a.go", Line: 1})
+
+		found := gatherLogErrors(t)
+		So(found, ShouldNotBeNil)
+		So(len(found.Metric), ShouldEqual, 2)
+	})
+
+	PatchConvey("TestMetricLogObserver-低于Error的级别不上报", t, func() {
+		resetState()
+
+		obs := newMetricLogObserver("")
+		obs.observe(context.Background(), xlog.Record{Level: xlog.WarnLevel, File: "a.go", Line: 1})
+		obs.observe(context.Background(), xlog.Record{Level: xlog.InfoLevel, File: "a.go", Line: 1})
+		obs.observe(context.Background(), xlog.Record{Level: xlog.DebugLevel, File: "a.go", Line: 1})
+
+		So(gatherLogErrors(t), ShouldBeNil)
+	})
+}
 func TestInitMetric(t *testing.T) {
 	PatchConvey("TestInitMetric-正常初始化", t, func() {
 		resetState()
@@ -588,36 +554,34 @@ func TestGetOrCreateHistogram_DoubleCheckLocking(t *testing.T) {
 
 // ==================== 补充覆盖率：log_hook.go ====================
 
-func TestBuildCaller_FilenameOnly(t *testing.T) {
-	PatchConvey("TestBuildCaller-仅filename无lineid", t, func() {
-		data := logrus.Fields{"filename": "handler.go"}
-		result := buildCaller(data)
-		So(result, ShouldEqual, "handler.go")
+func TestBuildCaller(t *testing.T) {
+	PatchConvey("TestBuildCaller-仅filename无行号", t, func() {
+		So(buildCaller(xlog.Record{File: "handler.go"}), ShouldEqual, "handler.go")
+	})
+
+	PatchConvey("TestBuildCaller-完整位置", t, func() {
+		So(buildCaller(xlog.Record{File: "handler.go", Line: 7}), ShouldEqual, "handler.go:7")
+	})
+
+	PatchConvey("TestBuildCaller-无位置信息", t, func() {
+		So(buildCaller(xlog.Record{}), ShouldEqual, "unknown")
 	})
 }
-
-func TestGetStringField_NonString(t *testing.T) {
-	PatchConvey("TestGetStringField-非字符串值转string", t, func() {
-		data := logrus.Fields{"count": 42}
-		result := getStringField(data, "count")
-		So(result, ShouldEqual, "42")
+func TestBuildExemplar(t *testing.T) {
+	PatchConvey("TestBuildExemplar-无trace信息返回nil", t, func() {
+		So(buildExemplar(xlog.Record{}), ShouldBeNil)
 	})
 
-	PatchConvey("TestGetStringField-nil值返回空", t, func() {
-		data := logrus.Fields{"key": nil}
-		result := getStringField(data, "key")
-		So(result, ShouldEqual, "")
+	PatchConvey("TestBuildExemplar-仅TraceID", t, func() {
+		labels := buildExemplar(xlog.Record{TraceID: "t1"})
+		So(labels, ShouldResemble, prometheus.Labels{"trace_id": "t1"})
 	})
 
-	PatchConvey("TestGetStringField-不存在的key返回空", t, func() {
-		data := logrus.Fields{}
-		result := getStringField(data, "missing")
-		So(result, ShouldEqual, "")
+	PatchConvey("TestBuildExemplar-TraceID与SpanID", t, func() {
+		labels := buildExemplar(xlog.Record{TraceID: "t1", SpanID: "s1"})
+		So(labels, ShouldResemble, prometheus.Labels{"trace_id": "t1", "span_id": "s1"})
 	})
 }
-
-// ==================== 补充覆盖率：xmetric_init.go ====================
-
 func TestConfigMergeDefault_BoolDefaults(t *testing.T) {
 	PatchConvey("TestConfigMergeDefault-未配置bool字段默认true", t, func() {
 		c := configMergeDefault(&Config{})

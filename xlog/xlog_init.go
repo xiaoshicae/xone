@@ -59,7 +59,7 @@ var localIP = sync.OnceValue(func() string {
 
 func init() {
 	// 初始化前即可使用日志，避免 BeforeStart 执行前的日志丢失
-	handler.Store(newHandler(configMergeDefault(nil), time.Local, os.Stdout, nil))
+	handler.Store(newHandler(configMergeDefault(nil), time.Local, os.Stdout, nil, slog.LevelInfo))
 	currentLevel.Store(uint32(InfoLevel))
 
 	xhook.BeforeStart(initXLog)
@@ -87,16 +87,13 @@ func initXLogByConfig(c *Config) error {
 	}
 
 	// 按需创建文件写入器，EnableFile 为 false 时不触碰文件系统
-	var fw io.Writer
+	// 此处只创建不替换：需等新 handler 生效后再关闭旧写入器
+	var aw *asyncWriter
 	if c.EnableFile {
-		aw, err := newFileWriter(c)
-		if err != nil {
+		var err error
+		if aw, err = newFileWriter(c); err != nil {
 			return err
 		}
-		setFileWriter(aw)
-		fw = aw
-	} else {
-		setFileWriter(nil)
 	}
 
 	var cw io.Writer
@@ -110,16 +107,18 @@ func initXLogByConfig(c *Config) error {
 	}
 
 	// 整体替换 handler，保证重复初始化不会叠加输出
-	h := newHandler(c, loc, cw, fw)
-	h.level = level.toSlog()
-	handler.Store(h)
+	handler.Store(newHandler(c, loc, cw, fileWriterOf(aw), level.toSlog()))
 	currentLevel.Store(uint32(level))
+
+	// 新 handler 已生效，此时再关闭旧写入器
+	// 反过来会让切换窗口内的日志写入已关闭的写入器而丢失
+	swapFileWriter(aw)
 
 	return nil
 }
 
 // newHandler 构造日志处理器，consoleWriter / fileWriter 为 nil 表示对应输出关闭
-func newHandler(c *Config, loc *time.Location, consoleWriter, fileWriter io.Writer) *xHandler {
+func newHandler(c *Config, loc *time.Location, consoleWriter, fileWriter io.Writer, level slog.Level) *xHandler {
 	return &xHandler{
 		serverName:     xconfig.GetServerName(),
 		ip:             localIP(),
@@ -129,8 +128,17 @@ func newHandler(c *Config, loc *time.Location, consoleWriter, fileWriter io.Writ
 		consoleWriter:  newLockedWriter(consoleWriter),
 		consoleRaw:     c.ConsoleFormatIsRaw,
 		fileWriter:     fileWriter,
-		level:          slog.LevelInfo,
+		level:          level,
 	}
+}
+
+// fileWriterOf 将可能为 nil 的 *asyncWriter 转成 io.Writer
+// 直接赋值会得到「非 nil 接口包裹 nil 指针」，使 handler 误判文件输出已开启
+func fileWriterOf(aw *asyncWriter) io.Writer {
+	if aw == nil {
+		return nil
+	}
+	return aw
 }
 
 // newFileWriter 创建轮转日志文件并包装为异步写入器
@@ -151,8 +159,8 @@ func newFileWriter(c *Config) (*asyncWriter, error) {
 	return newAsyncWriter(w, defaultAsyncBufferSize), nil
 }
 
-// setFileWriter 替换当前文件写入器并关闭旧实例，避免重复初始化泄漏 goroutine
-func setFileWriter(aw *asyncWriter) {
+// swapFileWriter 替换当前文件写入器并关闭旧实例，避免重复初始化泄漏 goroutine
+func swapFileWriter(aw *asyncWriter) {
 	fileWriterMu.Lock()
 	old := fileWriter
 	fileWriter = aw
@@ -160,7 +168,7 @@ func setFileWriter(aw *asyncWriter) {
 
 	if old != nil {
 		if err := old.Close(); err != nil {
-			xutil.WarnIfEnableDebug("XOne setFileWriter close previous writer failed, err=[%v]", err)
+			xutil.WarnIfEnableDebug("XOne swapFileWriter close previous writer failed, err=[%v]", err)
 		}
 	}
 

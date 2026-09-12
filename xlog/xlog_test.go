@@ -82,6 +82,29 @@ func TestXLogConfig(t *testing.T) {
 		c.So(*config.EnableConsole, c.ShouldBeTrue)
 	})
 
+	mockey.PatchConvey("TestXLogConfig-configMergeDefault-InvalidRotateTime", t, func() {
+		// 回归：无法解析的轮转周期会让 ToDuration 返回 0，
+		// 进而退化为按分钟切割（一天上千个文件），必须回退到默认值
+		for _, bad := range []string{"abc", "-1d", "0"} {
+			config := configMergeDefault(&Config{RotateTime: bad})
+			c.So(config.RotateTime, c.ShouldEqual, defaultRotateTime)
+			c.So(xutil.ToDuration(config.RotateTime), c.ShouldBeGreaterThan, 0)
+		}
+	})
+
+	mockey.PatchConvey("TestXLogConfig-configMergeDefault-ValidRotateTimeKept", t, func() {
+		for _, ok := range []string{"1d", "6h", "30m", "2d12h"} {
+			c.So(configMergeDefault(&Config{RotateTime: ok}).RotateTime, c.ShouldEqual, ok)
+		}
+	})
+
+	mockey.PatchConvey("TestXLogConfig-configMergeDefault-NegativeMaxAge", t, func() {
+		// 负数保留时长会让历史文件立即过期
+		c.So(configMergeDefault(&Config{MaxAge: "-1d"}).MaxAge, c.ShouldEqual, defaultMaxAge)
+		// 0 表示不清理，是合法配置，应保留
+		c.So(configMergeDefault(&Config{MaxAge: "0"}).MaxAge, c.ShouldEqual, "0")
+	})
+
 	mockey.PatchConvey("TestXLogConfig-configMergeDefault-Idempotent", t, func() {
 		// 重复合并结果一致，initXLogByConfig 的兜底调用依赖该性质
 		once := configMergeDefault(&Config{Level: "debug", EnableFile: true, EnableConsole: xutil.ToPtr(false)})
@@ -632,18 +655,18 @@ func TestFileWriterLifecycle(t *testing.T) {
 
 		mockey.PatchConvey("TestCloseFileWriter-ClosesUnderlying", func() {
 			mw := &mockWriteCloser{}
-			setFileWriter(newAsyncWriter(mw, 8))
+			swapFileWriter(newAsyncWriter(mw, 8))
 			c.So(closeFileWriter(), c.ShouldBeNil)
 			c.So(mw.closed, c.ShouldBeTrue)
 			// 重复关闭安全
 			c.So(closeFileWriter(), c.ShouldBeNil)
 		})
 
-		mockey.PatchConvey("TestSetFileWriter-ReplacesAndClosesPrevious", func() {
+		mockey.PatchConvey("TestSwapFileWriter-ReplacesAndClosesPrevious", func() {
 			// 重复初始化不应泄漏上一个写入器的 goroutine
 			first, second := &mockWriteCloser{}, &mockWriteCloser{}
-			setFileWriter(newAsyncWriter(first, 8))
-			setFileWriter(newAsyncWriter(second, 8))
+			swapFileWriter(newAsyncWriter(first, 8))
+			swapFileWriter(newAsyncWriter(second, 8))
 			c.So(first.closed, c.ShouldBeTrue)
 			c.So(second.closed, c.ShouldBeFalse)
 
@@ -806,4 +829,30 @@ func (w *chunkedWriter) Write(p []byte) (int, error) {
 		_, _ = w.dst.Write(p[i:end])
 	}
 	return len(p), nil
+}
+
+// TestReinitKeepsWritesAlive 回归防护：
+// 重复初始化时若先关闭旧写入器再切换 handler，切换窗口内的日志会写入已关闭的
+// 写入器而丢失。此处断言新 handler 生效后旧写入器才被关闭。
+func TestReinitKeepsWritesAlive(t *testing.T) {
+	mockey.PatchConvey("TestReinitKeepsWritesAlive", t, func() {
+		dir := t.TempDir()
+		cfg := &Config{EnableFile: true, Path: dir, Name: "app", EnableConsole: xutil.ToPtr(false)}
+
+		c.So(initXLogByConfig(cfg), c.ShouldBeNil)
+		firstHandler := handler.Load()
+		c.So(firstHandler.fileWriter, c.ShouldNotBeNil)
+
+		// 再次初始化
+		c.So(initXLogByConfig(cfg), c.ShouldBeNil)
+		secondHandler := handler.Load()
+
+		// handler 已替换，且新 handler 的写入器可用
+		c.So(secondHandler, c.ShouldNotEqual, firstHandler)
+		n, err := secondHandler.fileWriter.Write([]byte("{}\n"))
+		c.So(err, c.ShouldBeNil)
+		c.So(n, c.ShouldBeGreaterThan, 0)
+
+		c.So(closeFileWriter(), c.ShouldBeNil)
+	})
 }

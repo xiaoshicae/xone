@@ -48,9 +48,12 @@ func AddObserver(o Observer) {
 	defer observerMu.Unlock()
 
 	old := observers.Load()
-	next := make([]Observer, 0, lenOf(old)+1)
+	var next []Observer
 	if old != nil {
+		next = make([]Observer, 0, len(*old)+1)
 		next = append(next, *old...)
+	} else {
+		next = make([]Observer, 0, 1)
 	}
 	next = append(next, o)
 	observers.Store(&next)
@@ -78,11 +81,4 @@ func invokeObserver(ctx context.Context, o Observer, r Record) {
 		}
 	}()
 	o(ctx, r)
-}
-
-func lenOf(p *[]Observer) int {
-	if p == nil {
-		return 0
-	}
-	return len(*p)
 }

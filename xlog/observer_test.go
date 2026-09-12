@@ -54,7 +54,7 @@ func TestAddObserver(t *testing.T) {
 					}()
 				}
 				wg.Wait()
-				c.So(lenOf(observers.Load()), c.ShouldEqual, 20)
+				c.So(len(*observers.Load()), c.ShouldEqual, 20)
 			})
 		})
 	})

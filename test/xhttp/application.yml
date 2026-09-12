@@ -1,6 +1,7 @@
 
 XLog:
-  EnableConsole: true
+  Console:
+    Enable: true
 
 XHttp:
   Timeout: "6s"

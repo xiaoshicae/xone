@@ -47,10 +47,12 @@ const (
 // 每条日志最多序列化一次：仅当需要写文件或控制台使用原始 JSON 格式时才序列化，
 // 两个输出目标共用同一份结果。
 type xHandler struct {
-	serverName     string
-	ip             string
-	pidStr         string // 缓存 Pid 字符串，避免每条日志重复转换
-	suffixToIgnore []string
+	serverName string
+	ip         string
+	pidStr     string // 缓存 Pid 字符串，避免每条日志重复转换
+
+	// callerResolver 调用方解析器，按 PC 缓存解析结果
+	callerResolver *xutil.CallerResolver
 
 	// location 日志时间所用时区，控制台与 JSON 共用，保证两者时间一致
 	location *time.Location
@@ -94,7 +96,7 @@ func (h *xHandler) Handle(ctx context.Context, r slog.Record) error {
 		r.Time = r.Time.In(h.location)
 	}
 
-	caller := h.resolveCaller(r.PC)
+	caller := h.resolveCaller()
 	var fileName string
 	var lineNo int
 	if caller != nil {
@@ -120,12 +122,15 @@ func (h *xHandler) Handle(ctx context.Context, r slog.Record) error {
 	// slog 的 attrs 是列表而非 map，同名字段会在 JSON 中重复出现；
 	// 这里显式去重，保持与既有输出一致的「框架字段覆盖同名自定义字段」语义。
 	serverName := h.serverName
-	r.Attrs(func(a slog.Attr) bool {
-		if a.Key == fieldServerName {
-			serverName = a.Value.String() // 调用方显式指定的服务名优先
-		}
-		return true
-	})
+	if r.NumAttrs() > 0 {
+		r.Attrs(func(a slog.Attr) bool {
+			if a.Key == fieldServerName {
+				serverName = a.Value.String() // 调用方显式指定的服务名优先
+				return false
+			}
+			return true
+		})
+	}
 
 	out := slog.NewRecord(r.Time, r.Level, r.Message, r.PC)
 	out.AddAttrs(
@@ -150,7 +155,12 @@ func (h *xHandler) Handle(ctx context.Context, r slog.Record) error {
 			out.AddAttrs(slog.Any(k, v))
 		}
 	}
+	// 顺带取出 panic 栈，避免控制台输出时再遍历一次
+	var panicStack string
 	r.Attrs(func(a slog.Attr) bool {
+		if a.Key == fieldPanicStack {
+			panicStack = a.Value.String()
+		}
 		if !isReservedField(a.Key) {
 			out.AddAttrs(a)
 		}
@@ -160,26 +170,29 @@ func (h *xHandler) Handle(ctx context.Context, r slog.Record) error {
 
 	// 仅在确有 JSON 输出目标时才序列化
 	var jsonLine []byte
+	var jsonErr error
 	var enc *jsonEncoder
 	if h.fileWriter != nil || (h.consoleWriter != nil && h.consoleRaw) {
 		enc = acquireEncoder()
 		defer releaseEncoder(enc)
 
+		// 序列化失败只影响 JSON 输出，控制台的可读格式仍应照常写出
 		if err := enc.handler.Handle(ctx, r); err != nil {
-			return err
+			jsonErr = err
+		} else {
+			jsonLine = enc.buf.Bytes()
 		}
-		jsonLine = enc.buf.Bytes()
 	}
 
-	var firstErr error
-	if h.fileWriter != nil {
-		if _, err := h.fileWriter.Write(jsonLine); err != nil {
+	firstErr := jsonErr
+	if h.fileWriter != nil && jsonLine != nil {
+		if _, err := h.fileWriter.Write(jsonLine); err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}
 	if h.consoleWriter != nil {
 		// 控制台写入失败不应掩盖文件写入的错误，保留先发生的错误
-		if err := h.writeConsole(r, caller, jsonLine); err != nil && firstErr == nil {
+		if err := h.writeConsole(r, caller, jsonLine, traceID, panicStack); err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}
@@ -187,22 +200,11 @@ func (h *xHandler) Handle(ctx context.Context, r slog.Record) error {
 }
 
 // writeConsole 输出到控制台，raw 模式直接复用已序列化的 JSON
-func (h *xHandler) writeConsole(r slog.Record, caller *runtime.Frame, jsonLine []byte) error {
+func (h *xHandler) writeConsole(r slog.Record, caller *runtime.Frame, jsonLine []byte, traceID, panicStack string) error {
 	if h.consoleRaw {
 		_, err := h.consoleWriter.Write(jsonLine)
 		return err
 	}
-
-	var traceID, panicStack string
-	r.Attrs(func(a slog.Attr) bool {
-		switch a.Key {
-		case fieldTraceID:
-			traceID = a.Value.String()
-		case fieldPanicStack:
-			panicStack = a.Value.String()
-		}
-		return true
-	})
 
 	msg := make([]byte, 0, len(r.Message)+consoleLineExtra)
 	msg = fmt.Appendf(msg, "\x1b[%dm%s\x1b[0m[%s] \x1b[34m%s\x1b[0m %s %s\n",
@@ -222,9 +224,37 @@ func (h *xHandler) writeConsole(r slog.Record, caller *runtime.Frame, jsonLine [
 }
 
 // resolveCaller 解析日志调用方
-// slog.Record 自带的 PC 指向 xlog 内部，需按忽略规则回溯到业务代码
-func (h *xHandler) resolveCaller(uintptr) *runtime.Frame {
-	return xutil.GetLogCaller(0, h.suffixToIgnore)
+//
+// 不使用 slog.Record 自带的 PC：它指向 xlog 内部的调用点，
+// 需按忽略规则回溯才能定位到业务代码
+func (h *xHandler) resolveCaller() *runtime.Frame {
+	if h.callerResolver == nil {
+		return nil
+	}
+	return h.callerResolver.Caller(0)
+}
+
+// lockedWriter 串行化写入
+//
+// 控制台多路输出共用一个 fd，单次 write 仅在小于管道缓冲区时才保证原子；
+// panic 栈这类长内容会被拆成多次写入，并发下相互穿插。文件侧由 asyncWriter
+// 的单消费协程天然串行，只有控制台需要显式加锁。
+type lockedWriter struct {
+	mu sync.Mutex
+	w  io.Writer
+}
+
+func newLockedWriter(w io.Writer) io.Writer {
+	if w == nil {
+		return nil
+	}
+	return &lockedWriter{w: w}
+}
+
+func (l *lockedWriter) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.w.Write(p)
 }
 
 // isReservedField 判断字段名是否为框架固定字段
@@ -271,7 +301,10 @@ func releaseEncoder(enc *jsonEncoder) {
 }
 
 // replaceAttr 将 slog 默认的时间与级别表示改为本模块的既有格式
-func replaceAttr(_ []string, a slog.Attr) slog.Attr {
+func replaceAttr(groups []string, a slog.Attr) slog.Attr {
+	if len(groups) > 0 {
+		return a // 仅改写顶层的 time/level，分组内的同名字段保持原样
+	}
 	switch a.Key {
 	case slog.TimeKey:
 		return slog.String(slog.TimeKey, a.Value.Time().Format(consoleTimeLayout))

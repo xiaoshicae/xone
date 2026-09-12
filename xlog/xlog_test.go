@@ -8,6 +8,7 @@ import (
 	"os"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -247,20 +248,20 @@ func TestRawLog(t *testing.T) {
 func TestOptions(t *testing.T) {
 	mockey.PatchConvey("TestOptions", t, func() {
 		mockey.PatchConvey("TestKV", func() {
-			opt := defaultOptions()
+			opt := &options{KV: make(map[string]any)}
 			KV("key", "value")(opt)
 			c.So(opt.KV["key"], c.ShouldEqual, "value")
 		})
 
 		mockey.PatchConvey("TestKVMap", func() {
-			opt := defaultOptions()
+			opt := &options{KV: make(map[string]any)}
 			KVMap(map[string]any{"k1": "v1", "k2": "v2"})(opt)
 			c.So(opt.KV["k1"], c.ShouldEqual, "v1")
 			c.So(opt.KV["k2"], c.ShouldEqual, "v2")
 		})
 
 		mockey.PatchConvey("TestDefaultOptions", func() {
-			opt := defaultOptions()
+			opt := &options{KV: make(map[string]any)}
 			c.So(opt, c.ShouldNotBeNil)
 			c.So(opt.KV, c.ShouldNotBeNil)
 			c.So(len(opt.KV), c.ShouldEqual, 0)
@@ -510,7 +511,7 @@ func TestHandler(t *testing.T) {
 			fileW := &mockWriter{}
 			h := &xHandler{
 				fileWriter:     fileW,
-				suffixToIgnore: findFrameIgnoreFileNames,
+				callerResolver: defaultCallerResolver,
 				level:          slogLevelTrace,
 			}
 			c.So(h.Handle(context.Background(), newTestRecord(slog.LevelInfo, "m")), c.ShouldBeNil)
@@ -762,4 +763,47 @@ func TestGetConfig(t *testing.T) {
 		c.So(config.Level, c.ShouldEqual, "info")
 		c.So(config.Name, c.ShouldEqual, "app")
 	})
+}
+
+func TestLockedWriter(t *testing.T) {
+	mockey.PatchConvey("TestLockedWriter", t, func() {
+		mockey.PatchConvey("nil 写入器返回 nil", func() {
+			c.So(newLockedWriter(nil), c.ShouldBeNil)
+		})
+
+		mockey.PatchConvey("并发长行不被穿插", func() {
+			// 超过管道缓冲区的日志行（如 panic 栈）会被拆成多次写入，
+			// 不加锁时并发下会相互穿插
+			buf := &mockWriter{}
+			w := newLockedWriter(&chunkedWriter{dst: buf})
+
+			var wg sync.WaitGroup
+			for i := 0; i < 20; i++ {
+				wg.Add(1)
+				go func(n int) {
+					defer wg.Done()
+					_, _ = w.Write([]byte(strings.Repeat(string(rune('A'+n)), 4096) + "\n"))
+				}(i)
+			}
+			wg.Wait()
+
+			for _, line := range strings.Split(strings.TrimSpace(string(buf.written)), "\n") {
+				c.So(len(line), c.ShouldEqual, 4096)
+				c.So(strings.Trim(line, string(line[0])), c.ShouldBeEmpty)
+			}
+		})
+	})
+}
+
+// chunkedWriter 分多次写入，放大并发穿插的概率
+type chunkedWriter struct {
+	dst *mockWriter
+}
+
+func (w *chunkedWriter) Write(p []byte) (int, error) {
+	for i := 0; i < len(p); i += 512 {
+		end := min(i+512, len(p))
+		_, _ = w.dst.Write(p[i:end])
+	}
+	return len(p), nil
 }

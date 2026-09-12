@@ -6,6 +6,7 @@ import (
 	"path"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -47,6 +48,9 @@ const debugTimeLayout = "2006-01-02 15:04:05.999"
 // debugOut 调试日志输出目标，便于测试替换
 var debugOut = os.Stdout
 
+// debugCallerResolver 调试日志的调用方解析器，忽略规则固定故可复用缓存
+var debugCallerResolver = NewCallerResolver([]string{currentFilePath})
+
 // logIfEnableDebug 当开启 debug 模式时按指定级别输出日志
 //
 // 框架调试日志量极小且只输出到屏幕，无需引入日志库，直接格式化写出即可
@@ -55,7 +59,7 @@ func logIfEnableDebug(level debugLevel, msg string, args ...any) {
 		return
 	}
 
-	caller := GetLogCaller(0, []string{currentFilePath})
+	caller := debugCallerResolver.Caller(0)
 	location := unknownCaller
 	if caller != nil {
 		location = fmt.Sprintf("%s:%d", path.Base(caller.File), caller.Line)
@@ -67,8 +71,90 @@ func logIfEnableDebug(level debugLevel, msg string, args ...any) {
 	_, _ = debugOut.WriteString(line)
 }
 
+// CallerResolver 日志调用方解析器
+//
+// 解析结果按程序计数器（PC）缓存：调用点数量有限且每个 PC 对应的源码位置固定，
+// 缓存后可跳过 runtime.CallersFrames 的符号解析——那是栈回溯中最昂贵的部分。
+//
+// 忽略规则在构造时固定，因此缓存无需区分规则集合。
+type CallerResolver struct {
+	suffixToIgnore []string
+
+	// cache 映射 uintptr -> callerCacheEntry
+	// 读多写少（进程稳定后不再新增调用点），用 sync.Map 避免读路径加锁
+	cache sync.Map
+}
+
+// callerCacheEntry 单个 PC 的解析结果
+// 一个 PC 经内联可能展开为多个栈帧，此处记录该 PC 的最终结论
+type callerCacheEntry struct {
+	file string
+	line int
+	// ignored 为 true 表示该 PC 展开出的所有帧都命中忽略规则，
+	// 此时 file/line 保留最后一帧，供全部被忽略时兜底
+	ignored bool
+}
+
+// NewCallerResolver 创建调用方解析器，suffixToIgnore 为需跳过的文件路径后缀
+func NewCallerResolver(suffixToIgnore []string) *CallerResolver {
+	return &CallerResolver{suffixToIgnore: suffixToIgnore}
+}
+
+// Caller 获取日志调用方的栈帧，callDepth 为额外跳过的帧数
+// 全部栈帧都被忽略时返回最后一帧兜底，避免调用方拿到 nil
+func (r *CallerResolver) Caller(callDepth int) *runtime.Frame {
+	var pcs [maximumCallerDepth]uintptr
+	depth := runtime.Callers(minimumCallerDepth+callDepth, pcs[:])
+	if depth == 0 {
+		return nil
+	}
+
+	var last *callerCacheEntry
+	for i := 0; i < depth; i++ {
+		entry := r.entryFor(pcs[i])
+		if !entry.ignored {
+			return &runtime.Frame{File: entry.file, Line: entry.line}
+		}
+		last = entry
+	}
+
+	if last == nil {
+		return nil
+	}
+	return &runtime.Frame{File: last.file, Line: last.line}
+}
+
+// entryFor 取出单个 PC 的解析结果，未命中缓存时解析并写入
+func (r *CallerResolver) entryFor(pc uintptr) *callerCacheEntry {
+	if v, ok := r.cache.Load(pc); ok {
+		return v.(*callerCacheEntry)
+	}
+
+	entry := resolvePC(pc, r.suffixToIgnore)
+	r.cache.Store(pc, entry)
+	return entry
+}
+
+// resolvePC 解析单个 PC
+// 一个 PC 可能因内联展开为多个栈帧，取其中第一个未被忽略的帧
+func resolvePC(pc uintptr, suffixToIgnore []string) *callerCacheEntry {
+	frames := runtime.CallersFrames([]uintptr{pc})
+	entry := &callerCacheEntry{ignored: true}
+	for {
+		f, hasMore := frames.Next()
+		if !shouldIgnoreCallerFile(f.File, suffixToIgnore) {
+			return &callerCacheEntry{file: f.File, line: f.Line}
+		}
+		entry.file, entry.line = f.File, f.Line
+		if !hasMore {
+			return entry
+		}
+	}
+}
+
 // GetLogCaller 获取日志调用方的栈帧，跳过 suffixToIgnore 和内置忽略列表中匹配的文件
-// 该函数位于日志热路径，匹配逻辑使用字符串比较而非正则，避免每帧回溯开销
+//
+// 不带缓存的一次性版本；固定忽略规则且高频调用的场景应使用 CallerResolver
 func GetLogCaller(callDepth int, suffixToIgnore []string) *runtime.Frame {
 	var pcs [maximumCallerDepth]uintptr
 	depth := runtime.Callers(minimumCallerDepth+callDepth, pcs[:])

@@ -124,7 +124,7 @@ func main() {
 | 模块                             | 底层库                                                                 | 说明                               | Log | Trace |
 |--------------------------------|---------------------------------------------------------------------|----------------------------------|-----|-------|
 | [xconfig](./xconfig/README.md) | [viper](https://github.com/spf13/viper)                             | 配置管理（YAML + 环境变量 + Profile）      | -   | -     |
-| [xlog](./xlog/README.md)       | [logrus](https://github.com/sirupsen/logrus)                        | 结构化日志（标准输出 + 可选文件轮转 + KV 注入）   | -   | -     |
+| [xlog](./xlog/README.md)       | [log/slog](https://pkg.go.dev/log/slog)（标准库）                    | 结构化日志（标准输出 + 可选文件轮转 + KV 注入）   | -   | -     |
 | [xtrace](./xtrace/README.md)   | [opentelemetry](https://github.com/open-telemetry/opentelemetry-go) | 链路追踪（W3C + B3 传播格式）              | -   | -     |
 | [xmetric](./xmetric/README.md) | [prometheus](https://github.com/prometheus/client_golang)            | Prometheus 指标采集（打点 + /metrics 端点） | -   | -     |
 | [xhttp](./xhttp/README.md)     | [go-resty](https://github.com/go-resty/resty)                       | HTTP 客户端（重试 + 连接池 + 出站指标）        | -   | ✅     |
@@ -483,6 +483,7 @@ XGorm:
 
 ## 更新日志
 
+- **v2.14.0** (2026-09-12) - refactor(xlog)!: move the logging backend to the standard library's log/slog and drop logrus, leaving the module with no third-party logging dependency (~2.1x throughput, 46% fewer allocations on top of v2.13.0); expose xlog.Handler/xlog.Logger so third-party libraries can share the same output configuration (BREAKING: xutil.LogIfEnableDebug is now unexported, use Error/Warn/InfoIfEnableDebug)
 - **v2.13.0** (2026-09-12) - perf(xlog): serialize each log line at most once and drop regex matching from caller lookup (~2.7x throughput, 65% fewer allocations); fix panic-level logs never reaching the log file and console/file timestamps disagreeing on timezone; use a private logrus instance instead of mutating the global one, with xlog.AddObserver as the extension point xmetric and xgin now use in place of global logrus hooks; replace the unmaintained file-rotatelogs dependency with a built-in time-based rotating writer, dropping 3 modules from go.mod (BREAKING: `RawLog` takes `xlog.Level` instead of `logrus.Level`, `XLogCtxKVContainerKey` removed)
 - **v2.12.0** (2026-09-12) - feat(xlog): console-only logging by default for container environments, file output opt-in via EnableFile; tighten XLog config schema validation (BREAKING: set `XLog.EnableFile: true` to keep writing log files, `XLog.Console` renamed to `XLog.EnableConsole`)
 - **v2.11.0** (2026-04-17) - feat(xgorm): inject PostgreSQL timeouts into DSN and refactor Config with nested MySQL/Postgres sub-blocks (BREAKING: ReadTimeout/WriteTimeout moved under MySQL.*)

@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/bytedance/mockey"
-	"github.com/sirupsen/logrus"
 	c "github.com/smartystreets/goconvey/convey"
 )
 
@@ -71,8 +70,11 @@ func TestObserverReceivesLogRecord(t *testing.T) {
 			AddObserver(func(_ context.Context, r Record) { got = append(got, r) })
 
 			c.So(initXLogByConfig(&Config{Level: "debug"}), c.ShouldBeNil)
-			logger.ReplaceHooks(logrus.LevelHooks{})
-			logger.AddHook(&xLogHook{SuffixToIgnore: findFrameIgnoreFileNames})
+			// 关闭实际输出，只观察旁路通知
+			handler.Store(&xHandler{
+				suffixToIgnore: findFrameIgnoreFileNames,
+				level:          slogLevelTrace,
+			})
 
 			Error(context.Background(), "业务错误")
 			Info(context.Background(), "普通信息")

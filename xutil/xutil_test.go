@@ -1,11 +1,11 @@
 package xutil
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"net"
 	"os"
-	"path"
 	"runtime"
 	"strings"
 	"sync"
@@ -357,28 +357,52 @@ func TestGetLogCaller(t *testing.T) {
 	})
 }
 
-func TestCallerPretty(t *testing.T) {
-	mockey.PatchConvey("TestCallerPretty", t, func() {
-		mockey.PatchConvey("TestCallerPretty-Normal", func() {
-			funcName, fileName := callerPretty(nil)
-			c.So(funcName, c.ShouldEqual, "")
-			c.So(fileName, c.ShouldNotBeEmpty)
+func TestLogIfEnableDebug(t *testing.T) {
+	mockey.PatchConvey("TestLogIfEnableDebug", t, func() {
+		mockey.PatchConvey("关闭 debug 时不输出", func() {
+			mockey.Mock(EnableXOneDebug).Return(false).Build()
+			out := captureDebugOut(func() {
+				InfoIfEnableDebug("不应输出 %s", "内容")
+			})
+			c.So(out, c.ShouldBeEmpty)
 		})
 
-		mockey.PatchConvey("TestCallerPretty-NilFrame", func() {
-			mockey.Mock(GetLogCaller).Return((*runtime.Frame)(nil)).Build()
-			funcName, fileName := callerPretty(nil)
-			c.So(funcName, c.ShouldEqual, unknownCaller)
-			c.So(fileName, c.ShouldEqual, unknownCaller)
+		mockey.PatchConvey("开启 debug 时输出级别、位置与内容", func() {
+			mockey.Mock(EnableXOneDebug).Return(true).Build()
+			out := captureDebugOut(func() {
+				InfoIfEnableDebug("订单创建 orderId=[%s]", "123")
+			})
+			c.So(out, c.ShouldContainSubstring, "INFO")
+			c.So(out, c.ShouldContainSubstring, "[XOne-Debug]")
+			c.So(out, c.ShouldContainSubstring, "订单创建 orderId=[123]")
+			// 调用位置应指向调用方而非 xutil/log.go
+			c.So(out, c.ShouldContainSubstring, "xutil_test.go:")
 		})
 
-		mockey.PatchConvey("TestCallerPretty-EmptyBaseName", func() {
-			mockey.Mock(GetLogCaller).Return(&runtime.Frame{File: "test.go", Line: 10}).Build()
-			mockey.Mock(path.Base).Return("").Build()
-			_, fileName := callerPretty(nil)
-			c.So(fileName, c.ShouldContainSubstring, unknownCaller)
+		mockey.PatchConvey("各级别名称正确", func() {
+			mockey.Mock(EnableXOneDebug).Return(true).Build()
+			c.So(captureDebugOut(func() { ErrorIfEnableDebug("x") }), c.ShouldContainSubstring, "ERROR")
+			c.So(captureDebugOut(func() { WarnIfEnableDebug("x") }), c.ShouldContainSubstring, "WARN")
 		})
 	})
+}
+
+// captureDebugOut 捕获调试日志输出
+func captureDebugOut(f func()) string {
+	r, w, err := os.Pipe()
+	if err != nil {
+		return ""
+	}
+	saved := debugOut
+	debugOut = w
+	defer func() { debugOut = saved }()
+
+	f()
+	_ = w.Close()
+
+	var buf bytes.Buffer
+	_, _ = buf.ReadFrom(r)
+	return buf.String()
 }
 
 // ==================== env.go ====================

@@ -2,6 +2,7 @@ package xlog
 
 import (
 	"io"
+	"log/slog"
 	"os"
 	"path"
 	"strconv"
@@ -13,8 +14,6 @@ import (
 	"github.com/xiaoshicae/xone/v2/xerror"
 	"github.com/xiaoshicae/xone/v2/xhook"
 	"github.com/xiaoshicae/xone/v2/xutil"
-
-	"github.com/sirupsen/logrus"
 )
 
 const (
@@ -29,14 +28,12 @@ const (
 // findFrameIgnoreFileNames 定位调用方时需跳过的本模块文件
 var findFrameIgnoreFileNames = []string{
 	"/xlog/util.go",
-	"/xlog/xlog_hook.go",
+	"/xlog/handler.go",
 }
 
 var (
-	// logger xlog 私有的 logrus 实例
-	// 不使用 logrus.StandardLogger()，避免本模块的 formatter/hook 影响
-	// 使用者及其第三方依赖对全局 logrus 的使用
-	logger *logrus.Logger
+	// handler 当前生效的日志处理器，热路径以原子读取获取
+	handler atomic.Pointer[xHandler]
 
 	// currentLevel 初始化后生效的日志级别，供运行时查询
 	// 配置值在初始化时即已确定，运行时不再回查 xconfig
@@ -58,11 +55,7 @@ var localIP = sync.OnceValue(func() string {
 
 func init() {
 	// 初始化前即可使用日志，避免 BeforeStart 执行前的日志丢失
-	logger = logrus.New()
-	logger.SetOutput(io.Discard)
-	logger.SetFormatter(nopFormatter{})
-	logger.SetLevel(logrus.InfoLevel)
-	logger.AddHook(newHook(configMergeDefault(nil), time.Local, os.Stdout, nil))
+	handler.Store(newHandler(configMergeDefault(nil), time.Local, os.Stdout, nil))
 	currentLevel.Store(uint32(InfoLevel))
 
 	xhook.BeforeStart(initXLog)
@@ -112,33 +105,27 @@ func initXLogByConfig(c *Config) error {
 		xutil.WarnIfEnableDebug("XOne initXLogByConfig unknown level [%s], fallback to info", c.Level)
 	}
 
-	// logrus 每条日志都会调用一次 Formatter 并写入 Out，
-	// 这里置为空实现 + io.Discard，实际序列化与输出全部由 hook 按需完成
-	logger.SetOutput(io.Discard)
-	logger.SetFormatter(nopFormatter{})
-	// ReplaceHooks 而非 AddHook，保证重复初始化不会叠加 hook 导致日志重复输出
-	logger.ReplaceHooks(logrus.LevelHooks{})
-	logger.AddHook(newHook(c, loc, cw, fw))
-	logger.SetLevel(level.toLogrus())
+	// 整体替换 handler，保证重复初始化不会叠加输出
+	h := newHandler(c, loc, cw, fw)
+	h.level = level.toSlog()
+	handler.Store(h)
 	currentLevel.Store(uint32(level))
 
 	return nil
 }
 
-// newHook 构造日志 hook，consoleWriter / fileWriter 为 nil 表示对应输出关闭
-func newHook(c *Config, loc *time.Location, consoleWriter, fileWriter io.Writer) *xLogHook {
-	return &xLogHook{
-		ServerName:     xconfig.GetServerName(),
-		IP:             localIP(),
-		PidStr:         strconv.Itoa(os.Getpid()), // 初始化时转换，避免每条日志重复转换
-		SuffixToIgnore: findFrameIgnoreFileNames,
-		jsonFormatter: &logrus.JSONFormatter{
-			TimestampFormat: consoleTimeLayout,
-		},
-		location:      loc,
-		consoleWriter: consoleWriter,
-		consoleRaw:    c.ConsoleFormatIsRaw,
-		fileWriter:    fileWriter,
+// newHandler 构造日志处理器，consoleWriter / fileWriter 为 nil 表示对应输出关闭
+func newHandler(c *Config, loc *time.Location, consoleWriter, fileWriter io.Writer) *xHandler {
+	return &xHandler{
+		serverName:     xconfig.GetServerName(),
+		ip:             localIP(),
+		pidStr:         strconv.Itoa(os.Getpid()), // 初始化时转换，避免每条日志重复转换
+		suffixToIgnore: findFrameIgnoreFileNames,
+		location:       loc,
+		consoleWriter:  consoleWriter,
+		consoleRaw:     c.ConsoleFormatIsRaw,
+		fileWriter:     fileWriter,
+		level:          slog.LevelInfo,
 	}
 }
 
@@ -173,7 +160,6 @@ func setFileWriter(aw *asyncWriter) {
 		}
 	}
 
-	// 使用高 Order 值确保日志系统在其他模块关闭之后再关闭，避免关闭阶段日志丢失
 	stopHookOnce.Do(func() {
 		xhook.BeforeStop(closeFileWriter, xhook.Order(closeHookOrder))
 	})

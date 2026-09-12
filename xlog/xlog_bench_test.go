@@ -3,10 +3,9 @@ package xlog
 import (
 	"context"
 	"io"
+	"log/slog"
 	"testing"
 	"time"
-
-	"github.com/sirupsen/logrus"
 )
 
 // setupBenchLogger 将日志输出重定向到 io.Discard，排除终端 I/O 对测量的干扰
@@ -15,20 +14,16 @@ func setupBenchLogger(consoleRaw bool, withFile bool) {
 	if withFile {
 		fw = io.Discard
 	}
-	logger.ReplaceHooks(logrus.LevelHooks{})
-	logger.SetOutput(io.Discard)
-	logger.SetFormatter(nopFormatter{})
-	logger.SetLevel(logrus.InfoLevel)
-	logger.AddHook(&xLogHook{
-		ServerName:     "bench",
-		IP:             "10.0.0.1",
-		PidStr:         "1",
-		SuffixToIgnore: findFrameIgnoreFileNames,
-		jsonFormatter:  &logrus.JSONFormatter{TimestampFormat: consoleTimeLayout},
+	handler.Store(&xHandler{
+		serverName:     "bench",
+		ip:             "10.0.0.1",
+		pidStr:         "1",
+		suffixToIgnore: findFrameIgnoreFileNames,
 		location:       time.UTC,
 		consoleWriter:  io.Discard,
 		consoleRaw:     consoleRaw,
 		fileWriter:     fw,
+		level:          slog.LevelInfo,
 	})
 }
 

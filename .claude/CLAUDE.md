@@ -17,7 +17,7 @@ xone/
 ├── xhook/       # 生命周期钩子（基础层）
 ├── xconfig/     # 配置管理（核心层，基于 Viper）
 ├── xtrace/      # 链路追踪（核心层，基于 OpenTelemetry）
-├── xlog/        # 日志（核心层，基于 Logrus）
+├── xlog/        # 日志（核心层，基于标准库 log/slog）
 ├── xhttp/       # HTTP 客户端（服务层，基于 Resty）
 ├── xgorm/       # 数据库（服务层，基于 GORM，MySQL/PostgreSQL）
 ├── xserver/     # 服务运行和生命周期管理（生命周期层）
@@ -87,7 +87,7 @@ go vet ./...                                 # 静态检查
 - **HTTP**: go-resty
 - **数据库**: gorm, pgx, mysql-driver
 - **链路追踪**: opentelemetry, otelhttp
-- **日志**: logrus, file-rotatelogs
+- **日志**: log/slog（标准库，无第三方依赖）
 - **配置**: viper, godotenv
 - **验证**: go-playground/validator
 - **测试**: bytedance/mockey, goconvey

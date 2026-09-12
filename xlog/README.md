@@ -2,13 +2,14 @@
 
 ### 1. 模块简介
 
-基于 [logrus](https://github.com/sirupsen/logrus) 封装的日志模块，提供：
+基于标准库 [log/slog](https://pkg.go.dev/log/slog) 的日志模块，**不引入任何第三方日志依赖**，提供：
 
 - 结构化 JSON 日志输出
 - 默认仅打印到标准输出，开箱适配 K8s 等容器环境
 - 可选的文件落盘与按时间自动轮转（模块内实现，无第三方依赖）
 - 文件写入异步化，日志 I/O 不阻塞业务调用
 - 每条日志最多只做一次 JSON 序列化，控制台使用可读格式时不做序列化
+- 可作为 `slog.Handler` / `*slog.Logger` 交给第三方库复用同一套输出配置
 - OpenTelemetry TraceID / SpanID 自动关联
 - 彩色控制台输出
 - 自定义 KV 字段与 Context 透传
@@ -147,6 +148,19 @@ func AddObserver(o Observer)
 - 不得在其中调用 xlog 的日志函数，否则会无限递归
 
 `xmetric` 的错误指标自动上报即基于该扩展点实现。
+
+#### 与 slog 生态互操作
+
+底层为标准库 `log/slog`，可把本模块的处理器交给任何接受 slog 的第三方库，
+使其日志与业务日志共用同一套格式、输出目标与 traceid 注入：
+
+```go
+func Handler() slog.Handler   // 当前生效的处理器
+func Logger() *slog.Logger    // 基于当前配置的 logger
+
+// 例：让第三方库的日志并入本模块
+thirdparty.SetLogger(xlog.Logger())
+```
 
 ### 4. 使用示例
 

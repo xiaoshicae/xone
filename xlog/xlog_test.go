@@ -2,9 +2,12 @@ package xlog
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"log/slog"
 	"os"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -12,7 +15,6 @@ import (
 	"github.com/xiaoshicae/xone/v2/xutil"
 
 	"github.com/bytedance/mockey"
-	"github.com/sirupsen/logrus"
 	c "github.com/smartystreets/goconvey/convey"
 )
 
@@ -127,23 +129,29 @@ func TestLevel(t *testing.T) {
 		c.So(Level(99).IsValid(), c.ShouldBeFalse)
 	})
 
-	mockey.PatchConvey("TestLevel-ToLogrus", t, func() {
-		// 取值需与 logrus 一一对应，否则过滤行为会错位
-		c.So(PanicLevel.toLogrus(), c.ShouldEqual, logrus.PanicLevel)
-		c.So(FatalLevel.toLogrus(), c.ShouldEqual, logrus.FatalLevel)
-		c.So(ErrorLevel.toLogrus(), c.ShouldEqual, logrus.ErrorLevel)
-		c.So(WarnLevel.toLogrus(), c.ShouldEqual, logrus.WarnLevel)
-		c.So(InfoLevel.toLogrus(), c.ShouldEqual, logrus.InfoLevel)
-		c.So(DebugLevel.toLogrus(), c.ShouldEqual, logrus.DebugLevel)
-		c.So(TraceLevel.toLogrus(), c.ShouldEqual, logrus.TraceLevel)
-		c.So(Level(99).toLogrus(), c.ShouldEqual, logrus.InfoLevel)
+	mockey.PatchConvey("TestLevel-ToSlog", t, func() {
+		// 本模块级别数值越小级别越高，slog 相反，映射必须正确否则过滤行为会反转
+		c.So(PanicLevel.toSlog(), c.ShouldEqual, slogLevelPanic)
+		c.So(FatalLevel.toSlog(), c.ShouldEqual, slogLevelFatal)
+		c.So(ErrorLevel.toSlog(), c.ShouldEqual, slog.LevelError)
+		c.So(WarnLevel.toSlog(), c.ShouldEqual, slog.LevelWarn)
+		c.So(InfoLevel.toSlog(), c.ShouldEqual, slog.LevelInfo)
+		c.So(DebugLevel.toSlog(), c.ShouldEqual, slog.LevelDebug)
+		c.So(TraceLevel.toSlog(), c.ShouldEqual, slogLevelTrace)
+		c.So(Level(99).toSlog(), c.ShouldEqual, slog.LevelInfo)
+
+		// 往返转换保持一致
+		for _, lv := range []Level{PanicLevel, FatalLevel, ErrorLevel, WarnLevel, InfoLevel, DebugLevel, TraceLevel} {
+			c.So(fromSlogLevel(lv.toSlog()), c.ShouldEqual, lv)
+		}
 	})
 
-	mockey.PatchConvey("TestLevel-HookCoversAllLevels", t, func() {
-		// 回归：此前 file hook 使用独立的级别集合，导致 panic 级别日志从不落盘
-		hook := &xLogHook{}
-		c.So(hook.Levels(), c.ShouldResemble, logrus.AllLevels)
-		c.So(hook.Levels(), c.ShouldContain, logrus.PanicLevel)
+	mockey.PatchConvey("TestLevel-HandlerCoversAllLevels", t, func() {
+		// 回归：此前文件输出使用独立的级别集合，导致 panic 级别日志从不落盘
+		h := &xHandler{level: slogLevelTrace}
+		for _, lv := range []Level{PanicLevel, FatalLevel, ErrorLevel, WarnLevel, InfoLevel, DebugLevel, TraceLevel} {
+			c.So(h.Enabled(context.Background(), lv.toSlog()), c.ShouldBeTrue)
+		}
 	})
 }
 func TestCtxWithKV(t *testing.T) {
@@ -260,197 +268,40 @@ func TestOptions(t *testing.T) {
 	})
 }
 
-func TestGetLogConsoleLogColor(t *testing.T) {
-	mockey.PatchConvey("TestGetLogConsoleLogColor", t, func() {
-		mockey.PatchConvey("TestDebugLevel", func() {
-			color := getLogConsoleLogColor(logrus.DebugLevel)
-			c.So(color, c.ShouldEqual, colorGray)
-		})
-
-		mockey.PatchConvey("TestTraceLevel", func() {
-			color := getLogConsoleLogColor(logrus.TraceLevel)
-			c.So(color, c.ShouldEqual, colorGray)
-		})
-
-		mockey.PatchConvey("TestWarnLevel", func() {
-			color := getLogConsoleLogColor(logrus.WarnLevel)
-			c.So(color, c.ShouldEqual, colorYellow)
-		})
-
-		mockey.PatchConvey("TestErrorLevel", func() {
-			color := getLogConsoleLogColor(logrus.ErrorLevel)
-			c.So(color, c.ShouldEqual, colorRed)
-		})
-
-		mockey.PatchConvey("TestFatalLevel", func() {
-			color := getLogConsoleLogColor(logrus.FatalLevel)
-			c.So(color, c.ShouldEqual, colorRed)
-		})
-
-		mockey.PatchConvey("TestPanicLevel", func() {
-			color := getLogConsoleLogColor(logrus.PanicLevel)
-			c.So(color, c.ShouldEqual, colorRed)
-		})
-
-		mockey.PatchConvey("TestInfoLevel", func() {
-			color := getLogConsoleLogColor(logrus.InfoLevel)
-			c.So(color, c.ShouldEqual, colorBlue)
-		})
+func TestLevelColor(t *testing.T) {
+	mockey.PatchConvey("TestLevelColor", t, func() {
+		c.So(levelColor(slogLevelTrace), c.ShouldEqual, colorGray)
+		c.So(levelColor(slog.LevelDebug), c.ShouldEqual, colorGray)
+		c.So(levelColor(slog.LevelInfo), c.ShouldEqual, colorBlue)
+		c.So(levelColor(slog.LevelWarn), c.ShouldEqual, colorYellow)
+		c.So(levelColor(slog.LevelError), c.ShouldEqual, colorRed)
+		c.So(levelColor(slogLevelFatal), c.ShouldEqual, colorRed)
+		c.So(levelColor(slogLevelPanic), c.ShouldEqual, colorRed)
 	})
 }
 
 func TestCallerPretty(t *testing.T) {
 	mockey.PatchConvey("TestCallerPretty", t, func() {
-		mockey.PatchConvey("TestCallerPretty-Nil", func() {
-			fileVal := callerPretty(nil)
-			c.So(fileVal, c.ShouldEqual, "???")
-		})
+		c.So(callerPretty(nil), c.ShouldEqual, "???")
+		c.So(callerPretty(&runtime.Frame{File: "/a/b/main.go", Line: 42}), c.ShouldEqual, "main.go:42")
 	})
 }
 
 func TestGetXLogContainerFromCtx(t *testing.T) {
 	mockey.PatchConvey("TestGetXLogContainerFromCtx", t, func() {
 		mockey.PatchConvey("TestGetXLogContainerFromCtx-Empty", func() {
-			ctx := context.Background()
-			result := getXLogContainerFromCtx(ctx)
-			c.So(result, c.ShouldBeNil)
+			c.So(getXLogContainerFromCtx(context.Background()), c.ShouldBeNil)
+		})
+
+		mockey.PatchConvey("TestGetXLogContainerFromCtx-NilCtx", func() {
+			c.So(getXLogContainerFromCtx(nil), c.ShouldBeNil)
 		})
 
 		mockey.PatchConvey("TestGetXLogContainerFromCtx-WithKV", func() {
-			ctx := context.Background()
-			ctx = CtxWithKV(ctx, map[string]any{"key": "value"})
+			ctx := CtxWithKV(context.Background(), map[string]any{"key": "value"})
 			result := getXLogContainerFromCtx(ctx)
 			c.So(result, c.ShouldNotBeNil)
 			c.So(result["key"], c.ShouldEqual, "value")
-		})
-	})
-}
-
-func TestXLogHook(t *testing.T) {
-	newEntry := func(ctx context.Context, data logrus.Fields) *logrus.Entry {
-		return &logrus.Entry{
-			Logger:  logrus.New(),
-			Data:    data,
-			Context: ctx,
-			Time:    time.Now(),
-			Level:   logrus.InfoLevel,
-			Message: "test",
-		}
-	}
-
-	mockey.PatchConvey("TestXLogHook", t, func() {
-		mockey.PatchConvey("TestXLogHook-Levels", func() {
-			c.So((&xLogHook{}).Levels(), c.ShouldResemble, logrus.AllLevels)
-		})
-
-		mockey.PatchConvey("TestXLogHook-Fire", func() {
-			hook := &xLogHook{IP: "127.0.0.1", ServerName: "test-server", PidStr: "12345"}
-			entry := newEntry(context.Background(), logrus.Fields{})
-			c.So(hook.Fire(entry), c.ShouldBeNil)
-			c.So(entry.Data["ip"], c.ShouldEqual, "127.0.0.1")
-			c.So(entry.Data["pid"], c.ShouldEqual, "12345")
-			c.So(entry.Data["servername"], c.ShouldEqual, "test-server")
-		})
-
-		mockey.PatchConvey("TestXLogHook-Fire-WithExistingServername", func() {
-			hook := &xLogHook{IP: "127.0.0.1", ServerName: "test-server", PidStr: "12345"}
-			entry := newEntry(context.Background(), logrus.Fields{"servername": "existing-server"})
-			c.So(hook.Fire(entry), c.ShouldBeNil)
-			c.So(entry.Data["servername"], c.ShouldEqual, "existing-server")
-		})
-
-		mockey.PatchConvey("TestXLogHook-Fire-WithCtxKV", func() {
-			hook := &xLogHook{IP: "127.0.0.1", ServerName: "test-server", PidStr: "12345"}
-			ctx := CtxWithKV(context.Background(), map[string]any{"custom": "value"})
-			entry := newEntry(ctx, logrus.Fields{})
-			c.So(hook.Fire(entry), c.ShouldBeNil)
-			c.So(entry.Data["custom"], c.ShouldEqual, "value")
-		})
-
-		mockey.PatchConvey("TestXLogHook-Fire-WithConsole", func() {
-			writer := &mockWriter{}
-			hook := &xLogHook{IP: "127.0.0.1", ServerName: "test-server", PidStr: "12345", consoleWriter: writer}
-			c.So(hook.Fire(newEntry(context.Background(), logrus.Fields{})), c.ShouldBeNil)
-			c.So(len(writer.written), c.ShouldBeGreaterThan, 0)
-		})
-
-		mockey.PatchConvey("TestXLogHook-Fire-WithFileAndConsole", func() {
-			// 文件与控制台同时开启时，两路都应收到内容
-			fileW, consoleW := &mockWriter{}, &mockWriter{}
-			hook := &xLogHook{
-				ServerName:    "test-server",
-				jsonFormatter: &logrus.JSONFormatter{},
-				consoleWriter: consoleW,
-				fileWriter:    fileW,
-			}
-			c.So(hook.Fire(newEntry(context.Background(), logrus.Fields{})), c.ShouldBeNil)
-			c.So(len(fileW.written), c.ShouldBeGreaterThan, 0)
-			c.So(len(consoleW.written), c.ShouldBeGreaterThan, 0)
-			c.So(string(fileW.written), c.ShouldContainSubstring, "test-server")
-		})
-
-		mockey.PatchConvey("TestXLogHook-Fire-NoSinkSkipsSerialization", func() {
-			// 两路输出都关闭时不应调用 JSON 序列化
-			formatter := &countingFormatter{}
-			hook := &xLogHook{jsonFormatter: formatter}
-			c.So(hook.Fire(newEntry(context.Background(), logrus.Fields{})), c.ShouldBeNil)
-			c.So(formatter.calls, c.ShouldEqual, 0)
-		})
-
-		mockey.PatchConvey("TestXLogHook-Fire-ConsolePrettySkipsSerialization", func() {
-			// 控制台使用可读格式时无需 JSON，不应产生被丢弃的序列化
-			formatter := &countingFormatter{}
-			hook := &xLogHook{jsonFormatter: formatter, consoleWriter: &mockWriter{}}
-			c.So(hook.Fire(newEntry(context.Background(), logrus.Fields{})), c.ShouldBeNil)
-			c.So(formatter.calls, c.ShouldEqual, 0)
-		})
-
-		mockey.PatchConvey("TestXLogHook-Fire-SerializesOnceForBothSinks", func() {
-			// raw 控制台 + 文件：共用同一次序列化结果
-			formatter := &countingFormatter{}
-			hook := &xLogHook{
-				jsonFormatter: formatter,
-				consoleWriter: &mockWriter{},
-				consoleRaw:    true,
-				fileWriter:    &mockWriter{},
-			}
-			c.So(hook.Fire(newEntry(context.Background(), logrus.Fields{})), c.ShouldBeNil)
-			c.So(formatter.calls, c.ShouldEqual, 1)
-		})
-
-		mockey.PatchConvey("TestXLogHook-Fire-AppliesTimezone", func() {
-			// 时区在 Fire 中统一应用，保证控制台与 JSON 时间一致
-			loc, err := time.LoadLocation("UTC")
-			c.So(err, c.ShouldBeNil)
-			consoleW := &mockWriter{}
-			hook := &xLogHook{location: loc, consoleWriter: consoleW}
-			entry := newEntry(context.Background(), logrus.Fields{})
-			entry.Time = time.Date(2026, 1, 2, 3, 4, 5, 0, time.FixedZone("X", 8*3600))
-			c.So(hook.Fire(entry), c.ShouldBeNil)
-			c.So(entry.Time.Location(), c.ShouldEqual, loc)
-			// 08:00 时区的 03:04:05 对应 UTC 的前一日 19:04:05
-			c.So(string(consoleW.written), c.ShouldContainSubstring, "2026-01-01 19:04:05")
-		})
-
-		mockey.PatchConvey("TestXLogHook-Fire-FileWriteError", func() {
-			hook := &xLogHook{
-				jsonFormatter: &logrus.JSONFormatter{},
-				fileWriter:    &errWriter{err: errors.New("disk full")},
-			}
-			c.So(hook.Fire(newEntry(context.Background(), logrus.Fields{})), c.ShouldNotBeNil)
-		})
-
-		mockey.PatchConvey("TestXLogHook-EnsureCaller-WithCaller", func() {
-			hook := &xLogHook{}
-			frame := &runtime.Frame{Function: "test.TestFunc", File: "/test/file.go", Line: 100}
-			result := hook.ensureCaller(&logrus.Entry{Logger: logrus.New(), Caller: frame})
-			c.So(result, c.ShouldEqual, frame)
-		})
-
-		mockey.PatchConvey("TestXLogHook-EnsureCaller-WithoutCaller", func() {
-			hook := &xLogHook{SuffixToIgnore: findFrameIgnoreFileNames}
-			result := hook.ensureCaller(&logrus.Entry{Logger: logrus.New()})
-			c.So(result, c.ShouldNotBeNil)
 		})
 	})
 }
@@ -460,14 +311,9 @@ type mockWriter struct {
 	written []byte
 }
 
-// countingFormatter 统计序列化次数，用于验证不产生多余的序列化
-type countingFormatter struct {
-	calls int
-}
-
-func (f *countingFormatter) Format(*logrus.Entry) ([]byte, error) {
-	f.calls++
-	return []byte("{}\n"), nil
+func (m *mockWriter) Write(p []byte) (int, error) {
+	m.written = append(m.written, p...)
+	return len(p), nil
 }
 
 // errWriter 总是写入失败
@@ -477,66 +323,204 @@ type errWriter struct {
 
 func (w *errWriter) Write([]byte) (int, error) { return 0, w.err }
 
-func (m *mockWriter) Write(p []byte) (n int, err error) {
-	m.written = append(m.written, p...)
-	return len(p), nil
+// newTestRecord 构造一条测试日志记录
+func newTestRecord(level slog.Level, msg string) slog.Record {
+	return slog.NewRecord(time.Now(), level, msg, 0)
 }
 
-func TestXLogHookWriteConsole(t *testing.T) {
-	testCaller := &runtime.Frame{Function: "test.TestFunc", File: "/test/file.go", Line: 100}
-	newEntry := func(data logrus.Fields) *logrus.Entry {
-		return &logrus.Entry{
-			Logger:  logrus.New(),
-			Data:    data,
-			Context: context.Background(),
-			Time:    time.Now(),
-			Level:   logrus.InfoLevel,
-			Message: "test message",
-		}
+// decodeJSON 解析 handler 写出的 JSON 日志行
+func decodeJSON(t *testing.T, b []byte) map[string]any {
+	t.Helper()
+	var m map[string]any
+	if err := json.Unmarshal(b, &m); err != nil {
+		t.Fatalf("日志不是合法 JSON: %v, 内容=%s", err, b)
 	}
+	return m
+}
 
-	mockey.PatchConvey("TestXLogHookWriteConsole", t, func() {
-		mockey.PatchConvey("TestWriteConsole-Raw", func() {
-			writer := &mockWriter{}
-			hook := &xLogHook{consoleWriter: writer, consoleRaw: true}
-			jsonLine := []byte(`{"msg":"test message"}` + "\n")
-			c.So(hook.writeConsole(newEntry(logrus.Fields{"traceid": "trace-123"}), testCaller, jsonLine), c.ShouldBeNil)
-			// raw 模式直接复用已序列化结果，不做二次加工
-			c.So(string(writer.written), c.ShouldEqual, string(jsonLine))
+func TestHandler(t *testing.T) {
+	mockey.PatchConvey("TestHandler", t, func() {
+		mockey.PatchConvey("TestHandler-Enabled按级别过滤", func() {
+			h := &xHandler{level: slog.LevelInfo}
+			c.So(h.Enabled(context.Background(), slog.LevelInfo), c.ShouldBeTrue)
+			c.So(h.Enabled(context.Background(), slog.LevelError), c.ShouldBeTrue)
+			c.So(h.Enabled(context.Background(), slog.LevelDebug), c.ShouldBeFalse)
 		})
 
-		mockey.PatchConvey("TestWriteConsole-Formatted", func() {
-			writer := &mockWriter{}
-			hook := &xLogHook{consoleWriter: writer}
-			c.So(hook.writeConsole(newEntry(logrus.Fields{"traceid": "trace-123"}), testCaller, nil), c.ShouldBeNil)
-			out := string(writer.written)
+		mockey.PatchConvey("TestHandler-JSON字段与迁移前一致", func() {
+			fileW := &mockWriter{}
+			h := &xHandler{
+				serverName: "test-server",
+				ip:         "127.0.0.1",
+				pidStr:     "12345",
+				fileWriter: fileW,
+				level:      slogLevelTrace,
+			}
+			c.So(h.Handle(context.Background(), newTestRecord(slog.LevelInfo, "hello")), c.ShouldBeNil)
+
+			m := decodeJSON(t, fileW.written)
+			c.So(m["msg"], c.ShouldEqual, "hello")
+			c.So(m["level"], c.ShouldEqual, "info")
+			c.So(m["servername"], c.ShouldEqual, "test-server")
+			c.So(m["ip"], c.ShouldEqual, "127.0.0.1")
+			c.So(m["pid"], c.ShouldEqual, "12345")
+			// time 为 "2006-01-02 15:04:05.999" 而非 slog 默认的 RFC3339
+			ts, ok := m["time"].(string)
+			c.So(ok, c.ShouldBeTrue)
+			_, err := time.Parse(consoleTimeLayout, ts)
+			c.So(err, c.ShouldBeNil)
+		})
+
+		mockey.PatchConvey("TestHandler-自定义级别名称", func() {
+			for _, tc := range []struct {
+				lv   slog.Level
+				want string
+			}{
+				{slogLevelTrace, "trace"},
+				{slog.LevelDebug, "debug"},
+				{slog.LevelWarn, "warn"},
+				{slog.LevelError, "error"},
+				{slogLevelFatal, "fatal"},
+				{slogLevelPanic, "panic"},
+			} {
+				fileW := &mockWriter{}
+				h := &xHandler{fileWriter: fileW, level: slogLevelTrace}
+				c.So(h.Handle(context.Background(), newTestRecord(tc.lv, "m")), c.ShouldBeNil)
+				c.So(decodeJSON(t, fileW.written)["level"], c.ShouldEqual, tc.want)
+			}
+		})
+
+		mockey.PatchConvey("TestHandler-注入ctx中的KV", func() {
+			fileW := &mockWriter{}
+			h := &xHandler{fileWriter: fileW, level: slogLevelTrace}
+			ctx := CtxWithKV(context.Background(), map[string]any{"custom": "value"})
+			c.So(h.Handle(ctx, newTestRecord(slog.LevelInfo, "m")), c.ShouldBeNil)
+			c.So(decodeJSON(t, fileW.written)["custom"], c.ShouldEqual, "value")
+		})
+
+		mockey.PatchConvey("TestHandler-文件与控制台同时输出", func() {
+			fileW, consoleW := &mockWriter{}, &mockWriter{}
+			h := &xHandler{
+				serverName:    "test-server",
+				fileWriter:    fileW,
+				consoleWriter: consoleW,
+				level:         slogLevelTrace,
+			}
+			c.So(h.Handle(context.Background(), newTestRecord(slog.LevelInfo, "m")), c.ShouldBeNil)
+			c.So(len(fileW.written), c.ShouldBeGreaterThan, 0)
+			c.So(len(consoleW.written), c.ShouldBeGreaterThan, 0)
+			c.So(string(fileW.written), c.ShouldContainSubstring, "test-server")
+		})
+
+		mockey.PatchConvey("TestHandler-无输出目标时不序列化", func() {
+			// 两路输出都关闭，不应产生任何写入
+			h := &xHandler{level: slogLevelTrace}
+			c.So(h.Handle(context.Background(), newTestRecord(slog.LevelInfo, "m")), c.ShouldBeNil)
+		})
+
+		mockey.PatchConvey("TestHandler-控制台可读格式", func() {
+			mockey.Mock(xutil.GetTraceIDFromCtx).Return("trace-123").Build()
+			consoleW := &mockWriter{}
+			h := &xHandler{consoleWriter: consoleW, level: slogLevelTrace}
+			c.So(h.Handle(context.Background(), newTestRecord(slog.LevelInfo, "test message")), c.ShouldBeNil)
+
+			out := string(consoleW.written)
 			c.So(out, c.ShouldContainSubstring, "INFO")
-			c.So(out, c.ShouldContainSubstring, "file.go:100")
 			c.So(out, c.ShouldContainSubstring, "trace-123")
 			c.So(out, c.ShouldContainSubstring, "test message")
 		})
 
-		mockey.PatchConvey("TestWriteConsole-WithPanicStack", func() {
-			writer := &mockWriter{}
-			hook := &xLogHook{consoleWriter: writer}
-			entry := newEntry(logrus.Fields{"panic_stack": "goroutine 1 [running]"})
-			c.So(hook.writeConsole(entry, testCaller, nil), c.ShouldBeNil)
-			c.So(string(writer.written), c.ShouldContainSubstring, "goroutine 1 [running]")
+		mockey.PatchConvey("TestHandler-自定义字段与框架字段同名时不产生重复key", func() {
+			// slog 的 attrs 是列表而非 map，若不去重会在 JSON 中出现两个同名字段
+			mockey.Mock(xutil.GetTraceIDFromCtx).Return("from-ctx").Build()
+			fileW := &mockWriter{}
+			h := &xHandler{fileWriter: fileW, level: slogLevelTrace}
+			r := newTestRecord(slog.LevelInfo, "m")
+			r.AddAttrs(slog.String(fieldTraceID, "from-user"))
+			c.So(h.Handle(context.Background(), r), c.ShouldBeNil)
+
+			line := string(fileW.written)
+			c.So(strings.Count(line, `"traceid"`), c.ShouldEqual, 1)
+			c.So(decodeJSON(t, fileW.written)["traceid"], c.ShouldEqual, "from-ctx")
 		})
 
-		mockey.PatchConvey("TestWriteConsole-NilCaller", func() {
-			writer := &mockWriter{}
-			hook := &xLogHook{consoleWriter: writer}
-			c.So(hook.writeConsole(newEntry(logrus.Fields{}), nil, nil), c.ShouldBeNil)
-			c.So(string(writer.written), c.ShouldContainSubstring, "???")
+		mockey.PatchConvey("TestHandler-调用方可覆盖servername", func() {
+			fileW := &mockWriter{}
+			h := &xHandler{serverName: "default-server", fileWriter: fileW, level: slogLevelTrace}
+			r := newTestRecord(slog.LevelInfo, "m")
+			r.AddAttrs(slog.String(fieldServerName, "custom-server"))
+			c.So(h.Handle(context.Background(), r), c.ShouldBeNil)
+
+			line := string(fileW.written)
+			c.So(strings.Count(line, `"servername"`), c.ShouldEqual, 1)
+			c.So(decodeJSON(t, fileW.written)["servername"], c.ShouldEqual, "custom-server")
 		})
 
-		mockey.PatchConvey("TestWriteConsole-WriteError", func() {
-			hook := &xLogHook{consoleWriter: &errWriter{err: errors.New("broken pipe")}}
-			c.So(hook.writeConsole(newEntry(logrus.Fields{}), testCaller, nil), c.ShouldNotBeNil)
+		mockey.PatchConvey("TestHandler-控制台raw模式复用JSON", func() {
+			consoleW := &mockWriter{}
+			h := &xHandler{consoleWriter: consoleW, consoleRaw: true, level: slogLevelTrace}
+			c.So(h.Handle(context.Background(), newTestRecord(slog.LevelInfo, "m")), c.ShouldBeNil)
+			c.So(decodeJSON(t, consoleW.written)["msg"], c.ShouldEqual, "m")
+		})
+
+		mockey.PatchConvey("TestHandler-panic栈附加到控制台", func() {
+			consoleW := &mockWriter{}
+			h := &xHandler{consoleWriter: consoleW, level: slogLevelTrace}
+			r := newTestRecord(slog.LevelError, "panic recover")
+			r.AddAttrs(slog.String(fieldPanicStack, "goroutine 1 [running]"))
+			c.So(h.Handle(context.Background(), r), c.ShouldBeNil)
+			c.So(string(consoleW.written), c.ShouldContainSubstring, "goroutine 1 [running]")
+		})
+
+		mockey.PatchConvey("TestHandler-应用时区", func() {
+			loc, err := time.LoadLocation("UTC")
+			c.So(err, c.ShouldBeNil)
+			consoleW := &mockWriter{}
+			h := &xHandler{location: loc, consoleWriter: consoleW, level: slogLevelTrace}
+			r := slog.NewRecord(
+				time.Date(2026, 1, 2, 3, 4, 5, 0, time.FixedZone("X", 8*3600)),
+				slog.LevelInfo, "m", 0)
+			c.So(h.Handle(context.Background(), r), c.ShouldBeNil)
+			// 08:00 时区的 03:04:05 对应 UTC 的前一日 19:04:05
+			c.So(string(consoleW.written), c.ShouldContainSubstring, "2026-01-01 19:04:05")
+		})
+
+		mockey.PatchConvey("TestHandler-文件写入失败返回错误", func() {
+			h := &xHandler{
+				fileWriter: &errWriter{err: errors.New("disk full")},
+				level:      slogLevelTrace,
+			}
+			c.So(h.Handle(context.Background(), newTestRecord(slog.LevelInfo, "m")), c.ShouldNotBeNil)
+		})
+
+		mockey.PatchConvey("TestHandler-WithAttrs附加字段", func() {
+			fileW := &mockWriter{}
+			base := &xHandler{fileWriter: fileW, level: slogLevelTrace}
+			h := base.WithAttrs([]slog.Attr{slog.String("app", "demo")})
+			c.So(h.Handle(context.Background(), newTestRecord(slog.LevelInfo, "m")), c.ShouldBeNil)
+			c.So(decodeJSON(t, fileW.written)["app"], c.ShouldEqual, "demo")
+
+			// 空 attrs 返回自身，避免无谓复制
+			c.So(base.WithAttrs(nil), c.ShouldEqual, base)
+			// 日志为扁平结构，不支持分组
+			c.So(base.WithGroup("g"), c.ShouldEqual, base)
+		})
+
+		mockey.PatchConvey("TestHandler-解析到业务调用位置", func() {
+			fileW := &mockWriter{}
+			h := &xHandler{
+				fileWriter:     fileW,
+				suffixToIgnore: findFrameIgnoreFileNames,
+				level:          slogLevelTrace,
+			}
+			c.So(h.Handle(context.Background(), newTestRecord(slog.LevelInfo, "m")), c.ShouldBeNil)
+			m := decodeJSON(t, fileW.written)
+			c.So(m["filename"], c.ShouldEqual, "xlog_test.go")
+			c.So(m["lineid"], c.ShouldNotBeEmpty)
 		})
 	})
 }
+
 func TestInitXLogByConfig(t *testing.T) {
 	mockey.PatchConvey("TestInitXLogByConfig-DirNotExist-MkdirFail", t, func() {
 		mockey.Mock(xutil.DirExist).Return(false).Build()

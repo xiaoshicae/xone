@@ -2,17 +2,18 @@ package xlog
 
 import (
 	"context"
-
-	"github.com/sirupsen/logrus"
+	"fmt"
+	"log/slog"
+	"time"
 )
 
-// logf 通过函数变量间接调用底层格式化输出
+// sprintf 通过函数变量间接调用格式化
 //
-// 不直接写 entry.Logf(lv, msg, args...) 是有意为之：那样会被 go vet 推断为
+// 不直接写 fmt.Sprintf(msg, args...) 是有意为之：那样会被 go vet 推断为
 // printf 包装函数，而本模块的 args 允许混入 Option（非格式化参数），
 // 推断成立后会在所有使用方项目产生大量误报，例如
 // xlog.Info(ctx, "order created", xlog.KV("orderId", "1"))
-var logf = (*logrus.Entry).Logf
+var sprintf = fmt.Sprintf
 
 // ctxKVContainerKey xlog 注入 context 的 KV 容器 key 类型
 // 使用私有类型而非字符串常量，避免与其他包的 context key 发生冲突
@@ -44,15 +45,16 @@ func RawLog(ctx context.Context, level Level, msg string, args ...any) {
 		return
 	}
 
-	lv := level.toLogrus()
-	// 级别未开启时尽早返回，省去 Entry 分配与参数处理
-	if !logger.IsLevelEnabled(lv) {
+	h := handler.Load()
+	lv := level.toSlog()
+	// 级别未开启时尽早返回，省去参数处理与 Record 构造
+	if h == nil || !h.Enabled(ctx, lv) {
 		return
 	}
 
-	// Fast path：无参数调用，跳过参数分离
+	// Fast path：无参数调用，跳过参数分离与格式化
 	if len(args) == 0 {
-		logger.WithContext(ctx).Log(lv, msg)
+		_ = h.Handle(ctx, slog.NewRecord(time.Now(), lv, msg, 0))
 		return
 	}
 
@@ -64,12 +66,10 @@ func RawLog(ctx context.Context, level Level, msg string, args ...any) {
 		}
 	}
 	if optCount == 0 {
-		logf(logger.WithContext(ctx), lv, msg, args...)
+		_ = h.Handle(ctx, slog.NewRecord(time.Now(), lv, sprintf(msg, args...), 0))
 		return
 	}
 
-	// options.KV 与 logrus.Fields 底层同为 map[string]any，
-	// 直接复用同一个 map，避免先收集再拷贝一次
 	dos := &options{KV: make(map[string]any, optCount)}
 	logArgs := make([]any, 0, len(args)-optCount)
 	for _, arg := range args {
@@ -80,7 +80,11 @@ func RawLog(ctx context.Context, level Level, msg string, args ...any) {
 		logArgs = append(logArgs, arg)
 	}
 
-	logf(logger.WithContext(ctx).WithFields(logrus.Fields(dos.KV)), lv, msg, logArgs...)
+	r := slog.NewRecord(time.Now(), lv, sprintf(msg, logArgs...), 0)
+	for k, v := range dos.KV {
+		r.AddAttrs(slog.Any(k, v))
+	}
+	_ = h.Handle(ctx, r)
 }
 
 // CtxWithKV 向ctx注入kv，在记录日志时会以json格式同时记录下来
@@ -119,6 +123,18 @@ func KVFromCtx(ctx context.Context) map[string]any {
 		out[k] = v
 	}
 	return out
+}
+
+// Handler 返回当前生效的 slog.Handler
+// 可交给任何接受 slog.Handler 的第三方库，使其日志与本模块共用同一套输出配置
+func Handler() slog.Handler {
+	return handler.Load()
+}
+
+// Logger 返回基于当前配置的 slog.Logger
+// 可交给任何接受 *slog.Logger 的第三方库
+func Logger() *slog.Logger {
+	return slog.New(handler.Load())
 }
 
 // CurrentLevel 返回当前生效的日志级别

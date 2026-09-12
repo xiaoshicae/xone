@@ -6,41 +6,65 @@ import (
 	"path"
 	"runtime"
 	"strings"
-
-	"github.com/sirupsen/logrus"
+	"time"
 )
 
 // 日志相关的方法，注意这里的日志主要用来做XOne debug用，因此只会打印在屏幕上
 
-var logger *logrus.Logger
-
-func init() {
-	initLogger()
+// debugLevel XOne 框架调试日志的级别
+type debugLevel struct {
+	name  string
+	color int
 }
+
+var (
+	debugLevelError = debugLevel{name: "ERROR", color: 31}
+	debugLevelWarn  = debugLevel{name: "WARN", color: 33}
+	debugLevelInfo  = debugLevel{name: "INFO", color: 36}
+)
 
 // ErrorIfEnableDebug 当开启 debug 模式时输出 Error 级别日志
 func ErrorIfEnableDebug(msg string, args ...any) {
-	LogIfEnableDebug(logrus.ErrorLevel, msg, args...)
+	logIfEnableDebug(debugLevelError, msg, args...)
 }
 
 // InfoIfEnableDebug 当开启 debug 模式时输出 Info 级别日志
 func InfoIfEnableDebug(msg string, args ...any) {
-	LogIfEnableDebug(logrus.InfoLevel, msg, args...)
+	logIfEnableDebug(debugLevelInfo, msg, args...)
 }
 
 // WarnIfEnableDebug 当开启 debug 模式时输出 Warn 级别日志
 func WarnIfEnableDebug(msg string, args ...any) {
-	LogIfEnableDebug(logrus.WarnLevel, msg, args...)
+	logIfEnableDebug(debugLevelWarn, msg, args...)
 }
 
 // xoneDebugPrefix XOne 框架调试日志的醒目前缀（紫色高亮）
 const xoneDebugPrefix = "\x1b[35m[XOne-Debug]\x1b[0m "
 
-// LogIfEnableDebug 当开启 debug 模式时按指定级别输出日志
-func LogIfEnableDebug(level logrus.Level, msg string, args ...any) {
-	if EnableXOneDebug() {
-		logger.Logf(level, xoneDebugPrefix+msg, args...)
+// debugTimeLayout 调试日志的时间格式
+const debugTimeLayout = "2006-01-02 15:04:05.999"
+
+// debugOut 调试日志输出目标，便于测试替换
+var debugOut = os.Stdout
+
+// logIfEnableDebug 当开启 debug 模式时按指定级别输出日志
+//
+// 框架调试日志量极小且只输出到屏幕，无需引入日志库，直接格式化写出即可
+func logIfEnableDebug(level debugLevel, msg string, args ...any) {
+	if !EnableXOneDebug() {
+		return
 	}
+
+	caller := GetLogCaller(0, []string{currentFilePath})
+	location := unknownCaller
+	if caller != nil {
+		location = fmt.Sprintf("%s:%d", path.Base(caller.File), caller.Line)
+	}
+
+	line := fmt.Sprintf("\x1b[%dm%s\x1b[0m[%s] \x1b[34m%s\x1b[0m %s%s\n",
+		level.color, level.name, time.Now().Format(debugTimeLayout),
+		location, xoneDebugPrefix, fmt.Sprintf(msg, args...))
+	_, _ = debugOut.WriteString(line)
 }
 
 // GetLogCaller 获取日志调用方的栈帧，跳过 suffixToIgnore 和内置忽略列表中匹配的文件
@@ -90,20 +114,12 @@ const (
 	currentFilePath        = "/xutil/log.go"
 	unknownCaller          = "???"
 	maximumCallerDepth int = 25
-	minimumCallerDepth int = 5 // logrus.entry.go:237
-)
 
-func callerPretty(_ *runtime.Frame) (string, string) {
-	frame := GetLogCaller(0, []string{currentFilePath})
-	if frame == nil {
-		return unknownCaller, unknownCaller
-	}
-	fName := path.Base(frame.File)
-	if fName == "" {
-		fName = unknownCaller
-	}
-	return "", fmt.Sprintf(" \x1b[34m%s:%d\x1b[0m", fName, frame.Line)
-}
+	// minimumCallerDepth 起始跳过的帧数：runtime.Callers 自身与 GetLogCaller
+	// 只跳过这两帧、其余交给忽略规则处理，避免写死调用链深度——
+	// 该值曾按日志库的栈深度硬编码，调用链或内联一变就会跳过业务帧
+	minimumCallerDepth int = 2
+)
 
 // callerIgnoreRule 调用栈忽略规则
 // pkg 为空表示不限定路径，仅按文件名前缀匹配
@@ -118,22 +134,7 @@ var callerIgnoreRules = []callerIgnoreRule{
 	{pkg: "go-redis/", filePrefixes: []string{"string_commands.go", "redis.go"}},
 	{pkg: "xmysql", filePrefixes: []string{"logger.go"}},
 	{pkg: "xredis", filePrefixes: []string{"logger.go"}},
-	{pkg: "logrus", filePrefixes: []string{"hooks.go", "entry.go", "logger.go", "exported.go"}},
 	{pkg: "gorm", filePrefixes: []string{"callbacks.go", "finisher_api.go"}},
 	{pkg: "mongo-driver", filePrefixes: []string{"operation", "database", "client", "collection", "cursor"}},
 	{pkg: "", filePrefixes: []string{"asm_"}},
-}
-
-func initLogger() {
-	l := logrus.New()
-	l.Formatter = &logrus.TextFormatter{
-		ForceColors:      true,
-		FullTimestamp:    true,
-		TimestampFormat:  "2006-01-02 15:04:05.999",
-		CallerPrettyfier: callerPretty,
-	}
-	l.SetReportCaller(true)
-	l.SetLevel(logrus.InfoLevel)
-	l.SetOutput(os.Stdout)
-	logger = l
 }

@@ -1,16 +1,15 @@
 package xlog
 
 import (
+	"log/slog"
 	"strings"
-
-	"github.com/sirupsen/logrus"
 )
 
 // Level 日志级别
-// 该类型与底层日志库解耦，使公开 API 不暴露具体实现，便于后续替换日志后端
+// 该类型与底层日志库解耦，使公开 API 不暴露具体实现，便于替换日志后端
 type Level uint32
 
-// 日志级别，数值越小级别越高，与常见日志库保持一致的排列顺序
+// 日志级别，数值越小级别越高
 const (
 	PanicLevel Level = iota
 	FatalLevel
@@ -19,6 +18,13 @@ const (
 	InfoLevel
 	DebugLevel
 	TraceLevel
+)
+
+// slog 未定义 Trace/Fatal/Panic，按其 4 级步长向两端扩展
+const (
+	slogLevelTrace = slog.LevelDebug - 4
+	slogLevelFatal = slog.LevelError + 4
+	slogLevelPanic = slog.LevelError + 8
 )
 
 // levelNames 级别到名称的映射，索引即级别值
@@ -32,9 +38,21 @@ var levelNames = [...]string{
 	TraceLevel: "trace",
 }
 
+// levelToSlog 本模块级别到 slog 级别的映射
+// 两者方向相反（本模块数值越小级别越高，slog 相反），故用表而非算术转换
+var levelToSlog = [...]slog.Level{
+	PanicLevel: slogLevelPanic,
+	FatalLevel: slogLevelFatal,
+	ErrorLevel: slog.LevelError,
+	WarnLevel:  slog.LevelWarn,
+	InfoLevel:  slog.LevelInfo,
+	DebugLevel: slog.LevelDebug,
+	TraceLevel: slogLevelTrace,
+}
+
 // String 返回级别名称，未知级别返回 "unknown"
 func (l Level) String() string {
-	if int(l) >= len(levelNames) {
+	if !l.IsValid() {
 		return "unknown"
 	}
 	return levelNames[l]
@@ -68,19 +86,31 @@ func ParseLevel(s string) (Level, bool) {
 	}
 }
 
-// toLogrus 转换为底层日志库的级别
-// Level 的取值顺序与 logrus 一致，可直接转换
-func (l Level) toLogrus() logrus.Level {
+// toSlog 转换为 slog 级别
+func (l Level) toSlog() slog.Level {
 	if !l.IsValid() {
-		return logrus.InfoLevel
+		return slog.LevelInfo
 	}
-	return logrus.Level(l)
+	return levelToSlog[l]
 }
 
-// fromLogrusLevel 由底层日志库级别转换而来，供旁路扩展点使用
-func fromLogrusLevel(l logrus.Level) Level {
-	if int(l) >= len(levelNames) {
+// fromSlogLevel 由 slog 级别转换而来，供旁路扩展点使用
+// 取最接近且不高于入参的已知级别，使自定义级别也能归类
+func fromSlogLevel(l slog.Level) Level {
+	switch {
+	case l >= slogLevelPanic:
+		return PanicLevel
+	case l >= slogLevelFatal:
+		return FatalLevel
+	case l >= slog.LevelError:
+		return ErrorLevel
+	case l >= slog.LevelWarn:
+		return WarnLevel
+	case l >= slog.LevelInfo:
 		return InfoLevel
+	case l >= slog.LevelDebug:
+		return DebugLevel
+	default:
+		return TraceLevel
 	}
-	return Level(l)
 }

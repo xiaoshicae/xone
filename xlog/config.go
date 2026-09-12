@@ -6,6 +6,12 @@ import (
 
 const (
 	XLogConfigKey = "XLog"
+
+	// defaultMaxAge 日志默认保留时长
+	defaultMaxAge = "7d"
+
+	// defaultRotateTime 日志默认轮转周期
+	defaultRotateTime = "1d"
 )
 
 type Config struct {
@@ -72,10 +78,21 @@ func configMergeDefault(c *Config) *Config {
 		c.Path = "./log"
 	}
 	if c.MaxAge == "" {
-		c.MaxAge = "7d"
+		c.MaxAge = defaultMaxAge
 	}
 	if c.RotateTime == "" {
-		c.RotateTime = "1d"
+		c.RotateTime = defaultRotateTime
+	}
+	// 无法解析或非正数的轮转周期会退化为按分钟切割（一天上千个文件），
+	// 这类笔误不应静默生效，回退到默认值
+	if xutil.ToDuration(c.RotateTime) <= 0 {
+		xutil.WarnIfEnableDebug("XOne xlog invalid RotateTime [%s], fallback to [%s]", c.RotateTime, defaultRotateTime)
+		c.RotateTime = defaultRotateTime
+	}
+	// 负数保留时长会让所有历史文件立即过期，同样视为配置错误
+	if xutil.ToDuration(c.MaxAge) < 0 {
+		xutil.WarnIfEnableDebug("XOne xlog invalid MaxAge [%s], fallback to [%s]", c.MaxAge, defaultMaxAge)
+		c.MaxAge = defaultMaxAge
 	}
 	if c.Timezone == "" {
 		c.Timezone = "Asia/Shanghai"

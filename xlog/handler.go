@@ -96,7 +96,7 @@ func (h *xHandler) Handle(ctx context.Context, r slog.Record) error {
 		r.Time = r.Time.In(h.location)
 	}
 
-	caller := h.resolveCaller()
+	caller := h.caller()
 	var fileName string
 	var lineNo int
 	if caller != nil {
@@ -166,7 +166,6 @@ func (h *xHandler) Handle(ctx context.Context, r slog.Record) error {
 		}
 		return true
 	})
-	r = out
 
 	// 仅在确有 JSON 输出目标时才序列化
 	var jsonLine []byte
@@ -177,7 +176,7 @@ func (h *xHandler) Handle(ctx context.Context, r slog.Record) error {
 		defer releaseEncoder(enc)
 
 		// 序列化失败只影响 JSON 输出，控制台的可读格式仍应照常写出
-		if err := enc.handler.Handle(ctx, r); err != nil {
+		if err := enc.handler.Handle(ctx, out); err != nil {
 			jsonErr = err
 		} else {
 			jsonLine = enc.buf.Bytes()
@@ -192,7 +191,7 @@ func (h *xHandler) Handle(ctx context.Context, r slog.Record) error {
 	}
 	if h.consoleWriter != nil {
 		// 控制台写入失败不应掩盖文件写入的错误，保留先发生的错误
-		if err := h.writeConsole(r, caller, jsonLine, traceID, panicStack); err != nil && firstErr == nil {
+		if err := h.writeConsole(out, caller, jsonLine, traceID, panicStack); err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}
@@ -223,11 +222,11 @@ func (h *xHandler) writeConsole(r slog.Record, caller *runtime.Frame, jsonLine [
 	return err
 }
 
-// resolveCaller 解析日志调用方
+// caller 解析日志调用方
 //
 // 不使用 slog.Record 自带的 PC：它指向 xlog 内部的调用点，
 // 需按忽略规则回溯才能定位到业务代码
-func (h *xHandler) resolveCaller() *runtime.Frame {
+func (h *xHandler) caller() *runtime.Frame {
 	if h.callerResolver == nil {
 		return nil
 	}

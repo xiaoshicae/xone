@@ -1,6 +1,7 @@
 package xlog
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -219,5 +220,132 @@ func TestRotateLayoutFor(t *testing.T) {
 		c.So(rotateLayoutFor(time.Hour), c.ShouldEqual, rotateLayoutHour)
 		c.So(rotateLayoutFor(6*time.Hour), c.ShouldEqual, rotateLayoutHour)
 		c.So(rotateLayoutFor(30*time.Minute), c.ShouldEqual, rotateLayoutMinute)
+	})
+}
+
+func TestRotateWriterErrorPaths(t *testing.T) {
+	mockey.PatchConvey("TestRotateWriterErrorPaths", t, func() {
+		mockey.PatchConvey("轮转时打开新文件失败", func() {
+			now := time.Date(2026, 9, 12, 10, 0, 0, 0, time.Local)
+			w, _ := newTestWriter(t, time.Hour, 24*time.Hour, &now)
+
+			mockey.Mock(os.OpenFile).Return(nil, errors.New("permission denied")).Build()
+			now = now.Add(48 * time.Hour) // 触发轮转
+
+			_, err := w.Write([]byte("x"))
+			c.So(err, c.ShouldNotBeNil)
+			c.So(err.Error(), c.ShouldContainSubstring, "open log file failed")
+		})
+
+		mockey.PatchConvey("旧文件关闭失败不影响继续写入", func() {
+			now := time.Date(2026, 9, 12, 10, 0, 0, 0, time.Local)
+			w, dir := newTestWriter(t, time.Hour, 24*time.Hour, &now)
+
+			mockey.Mock((*os.File).Close).Return(errors.New("close failed")).Build()
+			now = now.Add(24 * time.Hour)
+
+			n, err := w.Write([]byte("next day\n"))
+			c.So(err, c.ShouldBeNil)
+			c.So(n, c.ShouldEqual, 9)
+			_, statErr := os.Stat(filepath.Join(dir, "app.log.20260913"))
+			c.So(statErr, c.ShouldBeNil)
+		})
+
+		mockey.PatchConvey("零值写入器关闭安全", func() {
+			// file 为 nil 的写入器不应 panic
+			c.So((&rotateWriter{}).Close(), c.ShouldBeNil)
+		})
+
+		mockey.PatchConvey("未配置符号链接时跳过创建", func() {
+			dir := t.TempDir()
+			w := &rotateWriter{
+				base:   filepath.Join(dir, "app.log"),
+				layout: rotateLayoutDay,
+				rotate: 24 * time.Hour,
+				clock:  time.Now,
+			}
+			c.So(w.rotateTo(w.filenameFor(time.Now())), c.ShouldBeNil)
+			defer func() { _ = w.Close() }()
+
+			// linkName 为空，不应生成任何符号链接
+			entries, err := os.ReadDir(dir)
+			c.So(err, c.ShouldBeNil)
+			for _, e := range entries {
+				c.So(e.Name(), c.ShouldNotEqual, "app.log")
+			}
+		})
+
+		mockey.PatchConvey("创建符号链接失败不影响日志写入", func() {
+			mockey.Mock(os.Symlink).Return(errors.New("symlink unsupported")).Build()
+			now := time.Date(2026, 9, 12, 10, 0, 0, 0, time.Local)
+			w, dir := newTestWriter(t, time.Hour, 24*time.Hour, &now)
+
+			_, err := w.Write([]byte("hello\n"))
+			c.So(err, c.ShouldBeNil)
+			content, readErr := os.ReadFile(filepath.Join(dir, "app.log.20260912"))
+			c.So(readErr, c.ShouldBeNil)
+			c.So(string(content), c.ShouldEqual, "hello\n")
+		})
+
+		mockey.PatchConvey("替换符号链接失败不影响日志写入", func() {
+			mockey.Mock(os.Rename).Return(errors.New("rename failed")).Build()
+			now := time.Date(2026, 9, 12, 10, 0, 0, 0, time.Local)
+			w, dir := newTestWriter(t, time.Hour, 24*time.Hour, &now)
+
+			_, err := w.Write([]byte("hello\n"))
+			c.So(err, c.ShouldBeNil)
+			content, readErr := os.ReadFile(filepath.Join(dir, "app.log.20260912"))
+			c.So(readErr, c.ShouldBeNil)
+			c.So(string(content), c.ShouldEqual, "hello\n")
+		})
+	})
+}
+
+func TestRotateWriterPurgeErrorPaths(t *testing.T) {
+	mockey.PatchConvey("TestRotateWriterPurgeErrorPaths", t, func() {
+		now := time.Date(2026, 9, 12, 10, 0, 0, 0, time.Local)
+
+		mockey.PatchConvey("匹配文件列表失败时直接返回", func() {
+			w, _ := newTestWriter(t, 48*time.Hour, 24*time.Hour, &now)
+			mockey.Mock(filepath.Glob).Return(nil, errors.New("glob failed")).Build()
+			w.purge(w.currentName) // 不应 panic
+		})
+
+		mockey.PatchConvey("跳过无法 stat 的文件", func() {
+			w, dir := newTestWriter(t, 48*time.Hour, 24*time.Hour, &now)
+			stale := filepath.Join(dir, "app.log.20260901")
+			c.So(os.WriteFile(stale, []byte("x"), logFilePerm), c.ShouldBeNil)
+
+			mockey.Mock(os.Lstat).Return(nil, errors.New("stat failed")).Build()
+			w.purge(w.currentName)
+
+			// stat 失败的文件应被跳过而非误删
+			_, err := os.Stat(stale)
+			c.So(err, c.ShouldBeNil)
+		})
+
+		mockey.PatchConvey("跳过符号链接", func() {
+			w, dir := newTestWriter(t, 48*time.Hour, 24*time.Hour, &now)
+			link := filepath.Join(dir, "app.log.link")
+			c.So(os.Symlink(w.currentName, link), c.ShouldBeNil)
+			old := now.Add(-10 * 24 * time.Hour)
+			_ = os.Chtimes(link, old, old)
+
+			w.purge(w.currentName)
+
+			_, err := os.Lstat(link)
+			c.So(err, c.ShouldBeNil)
+		})
+
+		mockey.PatchConvey("删除失败仅记录不中断", func() {
+			w, dir := newTestWriter(t, 48*time.Hour, 24*time.Hour, &now)
+			stale := filepath.Join(dir, "app.log.20260901")
+			c.So(os.WriteFile(stale, []byte("x"), logFilePerm), c.ShouldBeNil)
+			old := now.Add(-10 * 24 * time.Hour)
+			c.So(os.Chtimes(stale, old, old), c.ShouldBeNil)
+
+			mockey.Mock(os.Remove).Return(errors.New("remove failed")).Build()
+			w.purge(w.currentName) // 不应 panic
+		})
 	})
 }

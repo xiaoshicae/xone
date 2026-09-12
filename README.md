@@ -40,7 +40,6 @@ XGin:
 
 XLog:
   Level: "info"
-  Console: true
 
 XGorm:
   Driver: "mysql"
@@ -125,7 +124,7 @@ func main() {
 | 模块                             | 底层库                                                                 | 说明                               | Log | Trace |
 |--------------------------------|---------------------------------------------------------------------|----------------------------------|-----|-------|
 | [xconfig](./xconfig/README.md) | [viper](https://github.com/spf13/viper)                             | 配置管理（YAML + 环境变量 + Profile）      | -   | -     |
-| [xlog](./xlog/README.md)       | [logrus](https://github.com/sirupsen/logrus)                        | 结构化日志（文件轮转 + KV 注入）              | -   | -     |
+| [xlog](./xlog/README.md)       | [logrus](https://github.com/sirupsen/logrus)                        | 结构化日志（标准输出 + 可选文件轮转 + KV 注入）   | -   | -     |
 | [xtrace](./xtrace/README.md)   | [opentelemetry](https://github.com/open-telemetry/opentelemetry-go) | 链路追踪（W3C + B3 传播格式）              | -   | -     |
 | [xmetric](./xmetric/README.md) | [prometheus](https://github.com/prometheus/client_golang)            | Prometheus 指标采集（打点 + /metrics 端点） | -   | -     |
 | [xhttp](./xhttp/README.md)     | [go-resty](https://github.com/go-resty/resty)                       | HTTP 客户端（重试 + 连接池 + 出站指标）        | -   | ✅     |
@@ -416,10 +415,12 @@ XGin:
 
 XLog:
   Level: "info"                # 日志级别（默认 info）
-  Console: true                # 控制台打印（默认 false）
-  Path: "./log/"               # 日志文件夹（默认 ./log/）
-  MaxAge: "7d"                 # 日志保留时长（默认 7d）
-  RotateTime: "1d"             # 切割周期（默认 1d）
+  EnableFile: false            # 是否写日志文件（默认 false，仅输出到标准输出）
+  EnableConsole: true          # 控制台打印（默认 true）
+  ConsoleFormatIsRaw: false    # 控制台输出原始 JSON（默认 false）
+  Path: "./log/"               # 日志文件夹（默认 ./log/，仅 EnableFile 为 true 时生效）
+  MaxAge: "7d"                 # 日志保留时长（默认 7d，仅 EnableFile 为 true 时生效）
+  RotateTime: "1d"             # 切割周期（默认 1d，仅 EnableFile 为 true 时生效）
 
 XTrace:
   Enable: true                 # 启用链路追踪（默认 true）
@@ -482,6 +483,7 @@ XGorm:
 
 ## 更新日志
 
+- **v2.12.0** (2026-09-12) - feat(xlog): console-only logging by default for container environments, file output opt-in via EnableFile; tighten XLog config schema validation (BREAKING: set `XLog.EnableFile: true` to keep writing log files, `XLog.Console` renamed to `XLog.EnableConsole`)
 - **v2.11.0** (2026-04-17) - feat(xgorm): inject PostgreSQL timeouts into DSN and refactor Config with nested MySQL/Postgres sub-blocks (BREAKING: ReadTimeout/WriteTimeout moved under MySQL.*)
 - **v2.10.1** (2026-03-12) - fix: move HTTP outbound metrics from Transport to Resty layer to avoid retry inflation, add exemplar panic recovery
 - **v2.10.0** (2026-03-12) - feat: add Exemplar support to HTTP outbound metrics with path, trace_id, and span_id for request-level debugging

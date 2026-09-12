@@ -41,32 +41,8 @@ func initXLog() error {
 }
 
 func initXLogByConfig(c *Config) error {
-	if !xutil.DirExist(c.Path) { // 日志所在文件夹不存在则创建
-		if err := os.MkdirAll(c.Path, os.ModePerm); err != nil {
-			return xerror.Newf("xlog", "init", "os.MkdirAll failed, path=[%s], err=[%v]", c.Path, err)
-		}
-	}
-
-	// 创建 file writer
-	logFilePath := path.Join(c.Path, c.Name+".log")
-	fileWriter, err := rotatelogs.New(
-		logFilePath+".%Y%m%d",
-		rotatelogs.WithLinkName(logFilePath),
-		rotatelogs.WithMaxAge(xutil.ToDuration(c.MaxAge)),
-		rotatelogs.WithRotationTime(xutil.ToDuration(c.RotateTime)),
-	)
-	if err != nil {
-		return xerror.Newf("xlog", "init", "rotatelogs.New failed, err=[%v]", err)
-	}
-
-	// 使用异步写入器包装，避免日志 I/O 阻塞调用方
-	asyncFileWriter := newAsyncWriter(fileWriter, defaultAsyncBufferSize)
-
-	// 注册关闭钩子（Close 会等待缓冲区写完再关闭底层 writer）
-	// 使用高 Order 值确保日志系统在其他模块关闭之后再关闭，避免关闭阶段日志丢失
-	xhook.BeforeStop(func() error {
-		return asyncFileWriter.Close()
-	}, xhook.Order(9999))
+	// 兜底：configMergeDefault 幂等，这里再合并一次，避免直接传入 nil 或缺省字段的 Config 导致空指针
+	c = configMergeDefault(c)
 
 	// 加载时区
 	loc, err := time.LoadLocation(c.Timezone)
@@ -97,22 +73,60 @@ func initXLogByConfig(c *Config) error {
 		ServerName:         xconfig.GetServerName(),
 		IP:                 localIP,
 		PidStr:             strconv.Itoa(os.Getpid()), // 初始化时转换，避免每次日志都转换
-		Console:            c.Console,
+		EnableConsole:      *c.EnableConsole,
 		ConsoleFormatIsRaw: c.ConsoleFormatIsRaw,
 		Writer:             os.Stdout,
 	})
 
-	// file writer hook
-	logrus.AddHook(&logwriter.Hook{
-		Writer:    asyncFileWriter,
-		LogLevels: resolveLevels(c.Level),
-	})
+	// file writer hook（默认不开启，仅输出到控制台，适用于 K8s 等由采集器收集标准输出的环境）
+	if c.EnableFile {
+		if err := addFileWriterHook(c); err != nil {
+			return err
+		}
+	}
 
 	l, err := logrus.ParseLevel(c.Level)
 	if err != nil {
 		l = logrus.InfoLevel
 	}
 	logrus.SetLevel(l)
+
+	return nil
+}
+
+// addFileWriterHook 创建轮转日志文件并注册 file writer hook
+func addFileWriterHook(c *Config) error {
+	if !xutil.DirExist(c.Path) { // 日志所在文件夹不存在则创建
+		if err := os.MkdirAll(c.Path, os.ModePerm); err != nil {
+			return xerror.Newf("xlog", "init", "os.MkdirAll failed, path=[%s], err=[%v]", c.Path, err)
+		}
+	}
+
+	// 创建 file writer
+	logFilePath := path.Join(c.Path, c.Name+".log")
+	fileWriter, err := rotatelogs.New(
+		logFilePath+".%Y%m%d",
+		rotatelogs.WithLinkName(logFilePath),
+		rotatelogs.WithMaxAge(xutil.ToDuration(c.MaxAge)),
+		rotatelogs.WithRotationTime(xutil.ToDuration(c.RotateTime)),
+	)
+	if err != nil {
+		return xerror.Newf("xlog", "init", "rotatelogs.New failed, err=[%v]", err)
+	}
+
+	// 使用异步写入器包装，避免日志 I/O 阻塞调用方
+	asyncFileWriter := newAsyncWriter(fileWriter, defaultAsyncBufferSize)
+
+	// 注册关闭钩子（Close 会等待缓冲区写完再关闭底层 writer）
+	// 使用高 Order 值确保日志系统在其他模块关闭之后再关闭，避免关闭阶段日志丢失
+	xhook.BeforeStop(func() error {
+		return asyncFileWriter.Close()
+	}, xhook.Order(9999))
+
+	logrus.AddHook(&logwriter.Hook{
+		Writer:    asyncFileWriter,
+		LogLevels: resolveLevels(c.Level),
+	})
 
 	return nil
 }

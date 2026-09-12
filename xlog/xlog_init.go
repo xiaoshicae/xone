@@ -31,6 +31,10 @@ var findFrameIgnoreFileNames = []string{
 	"/xlog/handler.go",
 }
 
+// defaultCallerResolver 调用方解析器
+// 置于包级而非 handler 内，使 PC 缓存在重复初始化后依然保留
+var defaultCallerResolver = xutil.NewCallerResolver(findFrameIgnoreFileNames)
+
 var (
 	// handler 当前生效的日志处理器，热路径以原子读取获取
 	handler atomic.Pointer[xHandler]
@@ -120,9 +124,9 @@ func newHandler(c *Config, loc *time.Location, consoleWriter, fileWriter io.Writ
 		serverName:     xconfig.GetServerName(),
 		ip:             localIP(),
 		pidStr:         strconv.Itoa(os.Getpid()), // 初始化时转换，避免每条日志重复转换
-		suffixToIgnore: findFrameIgnoreFileNames,
+		callerResolver: defaultCallerResolver,
 		location:       loc,
-		consoleWriter:  consoleWriter,
+		consoleWriter:  newLockedWriter(consoleWriter),
 		consoleRaw:     c.ConsoleFormatIsRaw,
 		fileWriter:     fileWriter,
 		level:          slog.LevelInfo,

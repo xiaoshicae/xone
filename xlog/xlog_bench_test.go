@@ -18,7 +18,7 @@ func setupBenchLogger(consoleRaw bool, withFile bool) {
 		serverName:     "bench",
 		ip:             "10.0.0.1",
 		pidStr:         "1",
-		suffixToIgnore: findFrameIgnoreFileNames,
+		callerResolver: defaultCallerResolver,
 		location:       time.UTC,
 		consoleWriter:  io.Discard,
 		consoleRaw:     consoleRaw,

@@ -72,7 +72,7 @@ func TestObserverReceivesLogRecord(t *testing.T) {
 			c.So(initXLogByConfig(&Config{Level: "debug"}), c.ShouldBeNil)
 			// 关闭实际输出，只观察旁路通知
 			handler.Store(&xHandler{
-				suffixToIgnore: findFrameIgnoreFileNames,
+				callerResolver: defaultCallerResolver,
 				level:          slogLevelTrace,
 			})
 
@@ -86,6 +86,30 @@ func TestObserverReceivesLogRecord(t *testing.T) {
 			c.So(got[0].File, c.ShouldEqual, "observer_test.go")
 			c.So(got[0].Line, c.ShouldBeGreaterThan, 0)
 			c.So(got[1].Level, c.ShouldEqual, InfoLevel)
+		})
+	})
+}
+
+// TestObserverPanicIsolated 观察者 panic 不应影响日志本身与其他观察者
+func TestObserverPanicIsolated(t *testing.T) {
+	mockey.PatchConvey("TestObserverPanicIsolated", t, func() {
+		withCleanObservers(func() {
+			secondCalled := false
+			AddObserver(func(context.Context, Record) { panic("observer boom") })
+			AddObserver(func(context.Context, Record) { secondCalled = true })
+
+			fileW := &mockWriter{}
+			handler.Store(&xHandler{
+				callerResolver: defaultCallerResolver,
+				fileWriter:     fileW,
+				level:          slogLevelTrace,
+			})
+
+			// 不应 panic
+			Error(context.Background(), "业务错误")
+
+			c.So(secondCalled, c.ShouldBeTrue)
+			c.So(len(fileW.written), c.ShouldBeGreaterThan, 0)
 		})
 	})
 }

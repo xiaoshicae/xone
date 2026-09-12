@@ -2,6 +2,8 @@ package xlog
 
 import (
 	"context"
+
+	"github.com/xiaoshicae/xone/v2/xutil"
 	"sync"
 	"sync/atomic"
 )
@@ -61,8 +63,21 @@ func notifyObservers(ctx context.Context, r Record) {
 		return
 	}
 	for _, o := range *p {
-		o(ctx, r)
+		invokeObserver(ctx, o, r)
 	}
+}
+
+// invokeObserver 调用单个观察者并隔离其 panic
+//
+// 观察者由使用方提供，其 panic 不应顺着日志调用把业务协程带崩，
+// 也不应影响后续观察者与日志本身的输出
+func invokeObserver(ctx context.Context, o Observer, r Record) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			xutil.ErrorIfEnableDebug("XOne log observer panicked, recovered=[%v]", rec)
+		}
+	}()
+	o(ctx, r)
 }
 
 func lenOf(p *[]Observer) int {

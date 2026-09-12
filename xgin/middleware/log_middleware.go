@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"github.com/xiaoshicae/xone/v2/xlog"
 	"io"
 	"net"
 	"net/http"
@@ -13,7 +14,6 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/sirupsen/logrus"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -237,7 +237,8 @@ func LogMiddleware(opts ...LogOption) gin.HandlerFunc {
 		if handlerName := GetHandlerSimpleName(c.HandlerName()); handlerName != "" {
 			desc += " (" + handlerName + ")"
 		}
-		logrus.WithContext(c.Request.Context()).WithFields(requestInfo).Infof("[XGin-LogMiddleware] %s request processed.", desc)
+		// 走 xlog 而非全局 logrus，确保请求日志与业务日志使用同一套输出配置
+		xlog.Info(c.Request.Context(), "[XGin-LogMiddleware] %s request processed.", desc, xlog.KVMap(requestInfo))
 	}
 }
 

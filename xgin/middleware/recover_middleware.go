@@ -3,6 +3,7 @@ package middleware
 import (
 	"errors"
 	"fmt"
+	"github.com/xiaoshicae/xone/v2/xlog"
 	"net"
 	"net/http"
 	"os"
@@ -10,11 +11,10 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/sirupsen/logrus"
 )
 
 // GinXRecoverMiddleware panic recover 中间件
-// 使用logrus全局log，如果该log被其它框架初始化过，则可以直接复用设置好的格式，否则默认打印到控制台
+// panic 日志通过 xlog 输出，与业务日志共用同一套格式与输出目标
 func GinXRecoverMiddleware(recoveryFunc gin.RecoveryFunc) gin.HandlerFunc {
 	if recoveryFunc == nil {
 		recoveryFunc = defaultHandleRecovery
@@ -43,12 +43,13 @@ func customRecoveryWithWriter(handle gin.RecoveryFunc) gin.HandlerFunc {
 					}
 				}
 
-				panicInfo := logrus.Fields{
+				panicInfo := map[string]any{
 					"panic_brokenPipe": brokenPipe,
 					"panic_err":        fmt.Sprintf("%v", err),
 					"panic_stack":      string(stack(3)),
 				}
-				logrus.WithContext(c.Request.Context()).WithFields(panicInfo).Errorf("panic recover, err=[%v]", err)
+				// 走 xlog 而非全局 logrus，确保 panic 日志与业务日志使用同一套输出配置
+				xlog.Error(c.Request.Context(), "panic recover, err=[%v]", err, xlog.KVMap(panicInfo))
 
 				if brokenPipe {
 					// brokenPipe 仅在 err 为 *net.OpError 时为 true，*net.OpError 实现了 error 接口

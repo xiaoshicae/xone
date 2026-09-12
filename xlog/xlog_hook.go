@@ -73,17 +73,33 @@ func (m *xLogHook) Fire(entry *logrus.Entry) error {
 	entry.Data["pid"] = m.PidStr
 
 	caller := m.ensureCaller(entry)
+	var fileName string
+	var lineNo int
 	if caller != nil {
-		entry.Data["filename"] = path.Base(caller.File)
-		entry.Data["lineid"] = strconv.Itoa(caller.Line)
+		fileName = path.Base(caller.File)
+		lineNo = caller.Line
+		entry.Data["filename"] = fileName
+		entry.Data["lineid"] = strconv.Itoa(lineNo)
 	}
 
-	entry.Data["traceid"] = xutil.GetTraceIDFromCtx(entry.Context)
-	entry.Data["spanid"] = xutil.GetSpanIDFromCtx(entry.Context)
+	traceID := xutil.GetTraceIDFromCtx(entry.Context)
+	spanID := xutil.GetSpanIDFromCtx(entry.Context)
+	entry.Data["traceid"] = traceID
+	entry.Data["spanid"] = spanID
 
 	for k, v := range getXLogContainerFromCtx(entry.Context) {
 		entry.Data[k] = v
 	}
+
+	// 先通知旁路观察者，确保输出失败时 metric 等旁路能力仍然生效
+	notifyObservers(entry.Context, Record{
+		Level:   fromLogrusLevel(entry.Level),
+		Message: entry.Message,
+		File:    fileName,
+		Line:    lineNo,
+		TraceID: traceID,
+		SpanID:  spanID,
+	})
 
 	// 仅在确有 JSON 输出目标时才序列化，控制台使用可读格式时无需 JSON
 	var jsonLine []byte

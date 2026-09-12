@@ -121,6 +121,33 @@ func XLogLevel() string
 
 日志级别未开启时（如线上配置 info 却调用 `Debug`），调用会立即返回，不产生格式化与内存分配开销。
 
+#### 日志观察者
+
+需要在日志写出时做旁路处理（指标上报、告警等）可注册观察者，它与具体日志库解耦：
+
+```go
+// Record 只包含元信息，不依赖任何日志库类型
+type Record struct {
+    Level   Level
+    Message string
+    File    string // 文件名（不含路径）
+    Line    int
+    TraceID string
+    SpanID  string
+}
+
+type Observer func(ctx context.Context, r Record)
+
+func AddObserver(o Observer)
+```
+
+观察者对所有级别的日志生效，需自行按 `Record.Level` 过滤。注意两点：
+
+- 必须快速返回，耗时操作自行异步化，否则会拖慢日志写入
+- 不得在其中调用 xlog 的日志函数，否则会无限递归
+
+`xmetric` 的错误指标自动上报即基于该扩展点实现。
+
 ### 4. 使用示例
 
 ```go

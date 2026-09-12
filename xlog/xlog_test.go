@@ -22,9 +22,10 @@ func TestXLogConfig(t *testing.T) {
 		config := configMergeDefault(nil)
 		c.So(config, c.ShouldResemble, &Config{
 			Level:              "info",
+			EnableFile:         false,
 			Name:               "app",
 			Path:               "./log",
-			Console:            false,
+			EnableConsole:      xutil.ToPtr(true),
 			ConsoleFormatIsRaw: false,
 			MaxAge:             "7d",
 			RotateTime:         "1d",
@@ -36,9 +37,10 @@ func TestXLogConfig(t *testing.T) {
 		mockey.Mock(xconfig.GetServerName).Return("a.b.c").Build()
 		config := &Config{
 			Level:              "1",
+			EnableFile:         true,
 			Name:               "2",
 			Path:               "3",
-			Console:            true,
+			EnableConsole:      xutil.ToPtr(true),
 			ConsoleFormatIsRaw: true,
 			MaxAge:             "4",
 			RotateTime:         "5",
@@ -47,14 +49,49 @@ func TestXLogConfig(t *testing.T) {
 		config = configMergeDefault(config)
 		c.So(config, c.ShouldResemble, &Config{
 			Level:              "1",
+			EnableFile:         true,
 			Name:               "2",
 			Path:               "3",
-			Console:            true,
+			EnableConsole:      xutil.ToPtr(true),
 			ConsoleFormatIsRaw: true,
 			MaxAge:             "4",
 			RotateTime:         "5",
 			Timezone:           "UTC",
 		})
+	})
+
+	mockey.PatchConvey("TestXLogConfig-configMergeDefault-DefaultIsConsoleOnly", t, func() {
+		// 默认不写文件，仅打印到控制台
+		config := configMergeDefault(&Config{})
+		c.So(config.EnableFile, c.ShouldBeFalse)
+		c.So(*config.EnableConsole, c.ShouldBeTrue)
+	})
+
+	mockey.PatchConvey("TestXLogConfig-configMergeDefault-FileOnly", t, func() {
+		// 开启文件写入后，显式关闭的 EnableConsole 不会被强制打开
+		config := configMergeDefault(&Config{EnableFile: true, EnableConsole: xutil.ToPtr(false)})
+		c.So(config.EnableFile, c.ShouldBeTrue)
+		c.So(*config.EnableConsole, c.ShouldBeFalse)
+	})
+
+	mockey.PatchConvey("TestXLogConfig-configMergeDefault-BothDisabledForceConsole", t, func() {
+		// 文件和控制台都关闭时强制打开控制台，避免日志无处输出
+		config := configMergeDefault(&Config{EnableFile: false, EnableConsole: xutil.ToPtr(false)})
+		c.So(*config.EnableConsole, c.ShouldBeTrue)
+	})
+
+	mockey.PatchConvey("TestXLogConfig-configMergeDefault-Idempotent", t, func() {
+		// 重复合并结果一致，initXLogByConfig 的兜底调用依赖该性质
+		once := configMergeDefault(&Config{Level: "debug", EnableFile: true, EnableConsole: xutil.ToPtr(false)})
+		twice := configMergeDefault(once)
+		c.So(twice, c.ShouldResemble, once)
+	})
+
+	mockey.PatchConvey("TestXLogConfig-configMergeDefault-ForceConsoleKeepFormat", t, func() {
+		// 强制打开 EnableConsole 不影响用户配置的输出格式
+		config := configMergeDefault(&Config{EnableConsole: xutil.ToPtr(false), ConsoleFormatIsRaw: true})
+		c.So(*config.EnableConsole, c.ShouldBeTrue)
+		c.So(config.ConsoleFormatIsRaw, c.ShouldBeTrue)
 	})
 }
 
@@ -346,11 +383,11 @@ func TestXLogHook(t *testing.T) {
 		mockey.PatchConvey("TestXLogHook-Fire-WithConsole", func() {
 			writer := &mockWriter{}
 			hook := &xLogHook{
-				IP:         "127.0.0.1",
-				ServerName: "test-server",
-				PidStr:     "12345",
-				Console:    true,
-				Writer:     writer,
+				IP:            "127.0.0.1",
+				ServerName:    "test-server",
+				PidStr:        "12345",
+				EnableConsole: true,
+				Writer:        writer,
 			}
 			logger := logrus.New()
 			logger.SetFormatter(&logrus.JSONFormatter{})
@@ -407,7 +444,7 @@ func TestXLogHookConsolePrint(t *testing.T) {
 				IP:                 "127.0.0.1",
 				ServerName:         "test-server",
 				PidStr:             "12345",
-				Console:            true,
+				EnableConsole:      true,
 				ConsoleFormatIsRaw: true,
 				Writer:             writer,
 			}
@@ -432,7 +469,7 @@ func TestXLogHookConsolePrint(t *testing.T) {
 				IP:                 "127.0.0.1",
 				ServerName:         "test-server",
 				PidStr:             "12345",
-				Console:            true,
+				EnableConsole:      true,
 				ConsoleFormatIsRaw: false,
 				Writer:             writer,
 			}
@@ -457,7 +494,7 @@ func TestXLogHookConsolePrint(t *testing.T) {
 				IP:                 "127.0.0.1",
 				ServerName:         "test-server",
 				PidStr:             "12345",
-				Console:            true,
+				EnableConsole:      true,
 				ConsoleFormatIsRaw: false,
 				Writer:             writer,
 			}
@@ -547,7 +584,9 @@ func TestInitXLogByConfig(t *testing.T) {
 		mockey.Mock(os.MkdirAll).Return(errors.New("mkdir failed")).Build()
 
 		config := &Config{
-			Path: "/test/path",
+			Path:          "/test/path",
+			EnableFile:    true,
+			EnableConsole: xutil.ToPtr(false),
 		}
 		err := initXLogByConfig(config)
 		c.So(err, c.ShouldNotBeNil)
@@ -559,14 +598,56 @@ func TestInitXLogByConfig(t *testing.T) {
 		mockey.Mock(rotatelogs.New).Return(nil, errors.New("rotatelogs failed")).Build()
 
 		config := &Config{
-			Path:       "/test/path",
-			Name:       "test",
-			MaxAge:     "7d",
-			RotateTime: "1d",
+			Path:          "/test/path",
+			Name:          "test",
+			MaxAge:        "7d",
+			RotateTime:    "1d",
+			EnableFile:    true,
+			EnableConsole: xutil.ToPtr(false),
 		}
 		err := initXLogByConfig(config)
 		c.So(err, c.ShouldNotBeNil)
 		c.So(err.Error(), c.ShouldContainSubstring, "rotatelogs.New failed")
+	})
+
+	mockey.PatchConvey("TestInitXLogByConfig-DefaultConsoleOnly", t, func() {
+		// 默认配置不应创建日志目录、不应创建轮转文件
+		mkdirMock := mockey.Mock(os.MkdirAll).Return(nil).Build()
+		rotateMock := mockey.Mock(rotatelogs.New).Return(nil, errors.New("should not be called")).Build()
+
+		config := configMergeDefault(nil)
+		err := initXLogByConfig(config)
+		c.So(err, c.ShouldBeNil)
+		c.So(mkdirMock.Times(), c.ShouldEqual, 0)
+		c.So(rotateMock.Times(), c.ShouldEqual, 0)
+	})
+
+	mockey.PatchConvey("TestInitXLogByConfig-NilConfig", t, func() {
+		// 传入 nil 时走默认配置，不应 panic
+		rotateMock := mockey.Mock(rotatelogs.New).Return(nil, errors.New("should not be called")).Build()
+
+		err := initXLogByConfig(nil)
+		c.So(err, c.ShouldBeNil)
+		c.So(rotateMock.Times(), c.ShouldEqual, 0)
+	})
+
+	mockey.PatchConvey("TestInitXLogByConfig-NilEnableConsole", t, func() {
+		// 未经 configMergeDefault 的 Config（EnableConsole 为 nil）不应 panic
+		rotateMock := mockey.Mock(rotatelogs.New).Return(nil, errors.New("should not be called")).Build()
+
+		err := initXLogByConfig(&Config{Level: "debug"})
+		c.So(err, c.ShouldBeNil)
+		c.So(rotateMock.Times(), c.ShouldEqual, 0)
+	})
+
+	mockey.PatchConvey("TestInitXLogByConfig-ConsoleOnly-InvalidTimezone", t, func() {
+		// 仅控制台模式下时区加载失败也能正常初始化
+		rotateMock := mockey.Mock(rotatelogs.New).Return(nil, errors.New("should not be called")).Build()
+
+		config := configMergeDefault(&Config{Timezone: "Invalid/Zone"})
+		err := initXLogByConfig(config)
+		c.So(err, c.ShouldBeNil)
+		c.So(rotateMock.Times(), c.ShouldEqual, 0)
 	})
 }
 

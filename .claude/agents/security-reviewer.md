@@ -98,8 +98,8 @@ upgrader := websocket.Upgrader{
 upgrader := websocket.Upgrader{
     CheckOrigin: func(r *http.Request) bool {
         origin := r.Header.Get("Origin")
-        return origin == "https://data.eigenai.com" ||
-               strings.HasSuffix(origin, ".eigenai.com")
+        return origin == "https://app.example.com" ||
+               strings.HasSuffix(origin, ".example.com")
     },
 }
 ```

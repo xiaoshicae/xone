@@ -2,7 +2,7 @@ Server:
   Name: "xredis-single-test"
 
 XLog:
-  Console: true
+  EnableConsole: true
 
 XRedis:
   Addr: "localhost:6379"

@@ -28,7 +28,7 @@ type xLogHook struct {
 	ServerName         string
 	PidStr             string // 缓存 Pid 字符串，避免重复转换
 	SuffixToIgnore     []string
-	Console            bool
+	EnableConsole      bool
 	ConsoleFormatIsRaw bool
 	Writer             io.Writer
 }
@@ -60,7 +60,7 @@ func (m *xLogHook) Fire(entry *logrus.Entry) error {
 	}
 
 	// 打印到控制台
-	if m.Console {
+	if m.EnableConsole {
 		return m.consolePrint(entry, caller)
 	}
 

@@ -85,39 +85,56 @@
     },
     "XLog": {
       "type": "object",
-      "description": "日志配置",
+      "description": "日志配置。默认仅打印到标准输出，需要落盘时显式开启EnableFile",
+      "additionalProperties": false,
       "properties": {
         "Level": {
-          "type": "string",
-          "description": "日志级别，默认info"
+          "description": "日志级别，默认info，大小写不敏感",
+          "default": "info",
+          "allOf": [{ "$ref": "#/definitions/LogLevel" }]
+        },
+        "EnableFile": {
+          "description": "是否将日志写入文件，默认false（仅打印到标准输出，适配K8s等容器环境）；需要落盘时设为true",
+          "default": false,
+          "allOf": [{ "$ref": "#/definitions/BoolOrPlaceholder" }]
+        },
+        "EnableConsole": {
+          "description": "日志内容是否需要在控制台(标准输出)打印，默认true；与EnableFile同时为false时会被强制置为true，避免日志无处输出",
+          "default": true,
+          "allOf": [{ "$ref": "#/definitions/BoolOrPlaceholder" }]
+        },
+        "ConsoleFormatIsRaw": {
+          "description": "在控制台打印的日志是否为原始格式(即底层的json格式)，为false时，打印level+time+filename+func+traceid+内容，默认false；容器环境建议设为true，便于采集器解析",
+          "default": false,
+          "allOf": [{ "$ref": "#/definitions/BoolOrPlaceholder" }]
         },
         "Name": {
           "type": "string",
-          "description": "日志文件名称，默认app"
+          "minLength": 1,
+          "description": "日志文件名称，默认app（仅EnableFile为true时生效）",
+          "default": "app"
         },
         "Path": {
           "type": "string",
-          "description": "日志文件夹路径，默认./log"
-        },
-        "Console": {
-          "type": ["boolean", "string"],
-          "description": "日志内容是否需要在控制台打印，默认false"
-        },
-        "ConsoleFormatIsRaw": {
-          "type": ["boolean", "string"],
-          "description": "在控制台打印的日志是否为原始格式(即底层的json格式)，为false时，打印level+time+filename+func+traceid+内容，默认false"
+          "minLength": 1,
+          "description": "日志文件夹路径，默认./log（仅EnableFile为true时生效）",
+          "default": "./log"
         },
         "MaxAge": {
-          "type": "string",
-          "description": "日志保存最大时间，默认7d"
+          "description": "日志保存最大时间，默认7d（仅EnableFile为true时生效）",
+          "default": "7d",
+          "allOf": [{ "$ref": "#/definitions/Duration" }]
         },
         "RotateTime": {
-          "type": "string",
-          "description": "日志切割时长，默认1d"
+          "description": "日志切割时长，默认1d（仅EnableFile为true时生效）",
+          "default": "1d",
+          "allOf": [{ "$ref": "#/definitions/Duration" }]
         },
         "Timezone": {
           "type": "string",
-          "description": "日志时间的时区，默认Asia/Shanghai"
+          "minLength": 1,
+          "description": "日志时间的时区(IANA时区名)，默认Asia/Shanghai，加载失败时回退到系统本地时区",
+          "default": "Asia/Shanghai"
         }
       }
     },
@@ -309,6 +326,45 @@
   },
   "required": [],
   "definitions": {
+    "BoolOrPlaceholder": {
+      "description": "布尔值，也可写成字符串形式的布尔值，或${ENV}/${ENV:-default}环境变量占位符",
+      "anyOf": [
+        { "type": "boolean" },
+        {
+          "type": "string",
+          "pattern": "^(true|True|TRUE|false|False|FALSE|t|T|f|F|1|0|\\$\\{[^}]*\\})$"
+        }
+      ]
+    },
+    "Duration": {
+      "type": "string",
+      "description": "时间长度，支持d(天)前缀与Go duration单位(ns/us/ms/s/m/h)，如7d、1d12h、500ms；也支持${ENV}/${ENV:-default}环境变量占位符",
+      "pattern": "^(\\d+d(\\d+(\\.\\d+)?(ns|us|µs|ms|s|m|h))*|(\\d+(\\.\\d+)?(ns|us|µs|ms|s|m|h))+|\\$\\{[^}]*\\})$"
+    },
+    "LogLevel": {
+      "description": "日志级别，也支持${ENV}/${ENV:-default}环境变量占位符",
+      "anyOf": [
+        {
+          "type": "string",
+          "enum": [
+            "debug",
+            "info",
+            "warn",
+            "error",
+            "fatal",
+            "DEBUG",
+            "INFO",
+            "WARN",
+            "ERROR",
+            "FATAL"
+          ]
+        },
+        {
+          "type": "string",
+          "pattern": "^\\$\\{[^}]*\\}$"
+        }
+      ]
+    },
     "GormConfig": {
       "type": "object",
       "properties": {

@@ -8,6 +8,7 @@
 - 默认仅打印到标准输出，开箱适配 K8s 等容器环境
 - 可选的文件落盘与自动轮转（基于 [file-rotatelogs](https://github.com/lestrrat-go/file-rotatelogs)）
 - 文件写入异步化，日志 I/O 不阻塞业务调用
+- 每条日志最多只做一次 JSON 序列化，控制台使用可读格式时不做序列化
 - OpenTelemetry TraceID / SpanID 自动关联
 - 彩色控制台输出
 - 自定义 KV 字段与 Context 透传
@@ -78,20 +79,40 @@ func Warn(ctx context.Context, msg string, args ...any)
 func Error(ctx context.Context, msg string, args ...any)
 
 // 指定级别输出
-func RawLog(ctx context.Context, level logrus.Level, msg string, args ...any)
+func RawLog(ctx context.Context, level Level, msg string, args ...any)
+
+// 日志级别，不暴露底层日志库类型
+type Level uint32
+
+const (
+    PanicLevel Level = iota
+    FatalLevel
+    ErrorLevel
+    WarnLevel
+    InfoLevel
+    DebugLevel
+    TraceLevel
+)
+
+// 解析级别名称，大小写不敏感，兼容 "warning" 别名
+func ParseLevel(s string) (Level, bool)
 
 // 添加自定义 KV，作为 args 传入上述日志函数
 func KV(k string, v any) Option
 func KVMap(m map[string]any) Option
 
-// 在 Context 中注入 KV（后续日志自动携带）
+// 在 Context 中注入 KV（后续日志自动携带），以及读取已注入的 KV
 func CtxWithKV(ctx context.Context, kvs map[string]any) context.Context
+func KVFromCtx(ctx context.Context) map[string]any
 
-// 获取当前日志级别
+// 获取当前生效的日志级别
+func CurrentLevel() Level
 func XLogLevel() string
 ```
 
 `args` 中的 `Option` 会被提取为 JSON 字段，其余参数用于 `msg` 的格式化占位符。
+
+日志级别未开启时（如线上配置 info 却调用 `Debug`），调用会立即返回，不产生格式化与内存分配开销。
 
 ### 4. 使用示例
 

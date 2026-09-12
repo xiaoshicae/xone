@@ -35,63 +35,32 @@ func TestGinXSessionMiddleware(t *testing.T) {
 	}
 }
 
-func TestCtxWithKVNewContext(t *testing.T) {
-	ctx := context.Background()
-	kvs := map[string]interface{}{"key1": "value1"}
+func TestGinXSessionMiddlewareInjectsKVContainer(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(GinXSessionMiddleware())
 
-	newCtx := ctxWithKV(ctx, kvs)
+	var injected bool
+	var downstream map[string]any
+	r.GET("/test", func(c *gin.Context) {
+		ctx := c.Request.Context()
+		// 中间件应提前注入空的 KV 容器
+		injected = xlog.KVFromCtx(ctx) != nil
+		// 后续 handler 注入的 KV 应能累积并被读取
+		ctx = xlog.CtxWithKV(ctx, map[string]any{"userId": "u-1"})
+		downstream = xlog.KVFromCtx(ctx)
+		c.String(http.StatusOK, "ok")
+	})
 
-	if newCtx == ctx {
-		t.Error("should return a new context")
+	req := httptest.NewRequest("GET", "/test", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if !injected {
+		t.Error("session 中间件应在请求开始时注入 KV 容器")
 	}
-
-	// 验证值被存储
-	stored := newCtx.Value(xlog.XLogCtxKVContainerKey)
-	if stored == nil {
-		t.Error("should store the kvs in context")
-	}
-
-	storedMap, ok := stored.(map[string]interface{})
-	if !ok {
-		t.Error("stored value should be a map")
-	}
-
-	if storedMap["key1"] != "value1" {
-		t.Error("stored value should contain the key1")
-	}
-}
-
-func TestCtxWithKVNilKvs(t *testing.T) {
-	ctx := context.Background()
-
-	newCtx := ctxWithKV(ctx, nil)
-
-	if newCtx == ctx {
-		t.Error("should return a new context")
-	}
-
-	stored := newCtx.Value(xlog.XLogCtxKVContainerKey)
-	if stored == nil {
-		t.Error("should store empty map in context")
-	}
-}
-
-func TestCtxWithKVExistingContainer(t *testing.T) {
-	ctx := context.Background()
-	existingKvs := map[string]interface{}{"existing": "value"}
-	ctx = context.WithValue(ctx, xlog.XLogCtxKVContainerKey, existingKvs)
-
-	newKvs := map[string]interface{}{"new": "value2"}
-	newCtx := ctxWithKV(ctx, newKvs)
-
-	// 应该返回原 context，但更新了 map
-	stored := newCtx.Value(xlog.XLogCtxKVContainerKey).(map[string]interface{})
-
-	if stored["existing"] != "value" {
-		t.Error("existing value should be preserved")
-	}
-	if stored["new"] != "value2" {
-		t.Error("new value should be added")
+	if downstream["userId"] != "u-1" {
+		t.Errorf("后续注入的 KV 应可读取，实际为 %v", downstream)
 	}
 }
 

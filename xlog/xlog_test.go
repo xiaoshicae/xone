@@ -95,57 +95,65 @@ func TestXLogConfig(t *testing.T) {
 	})
 }
 
-func TestResolveLevels(t *testing.T) {
-	mockey.PatchConvey("TestResolveLevels", t, func() {
-		mockey.PatchConvey("TestResolveLevels-Debug", func() {
-			levels := resolveLevels("debug")
-			c.So(levels, c.ShouldContain, logrus.DebugLevel)
-			c.So(levels, c.ShouldContain, logrus.InfoLevel)
-		})
+func TestLevel(t *testing.T) {
+	mockey.PatchConvey("TestLevel-ParseLevel", t, func() {
+		cases := []struct {
+			in    string
+			want  Level
+			valid bool
+		}{
+			{"debug", DebugLevel, true},
+			{"INFO", InfoLevel, true},
+			{" warn ", WarnLevel, true},
+			{"warning", WarnLevel, true}, // 兼容 logrus 的别名
+			{"error", ErrorLevel, true},
+			{"fatal", FatalLevel, true},
+			{"panic", PanicLevel, true},
+			{"trace", TraceLevel, true},
+			{"unknown", InfoLevel, false},
+			{"", InfoLevel, false},
+		}
+		for _, tc := range cases {
+			got, ok := ParseLevel(tc.in)
+			c.So(got, c.ShouldEqual, tc.want)
+			c.So(ok, c.ShouldEqual, tc.valid)
+		}
+	})
 
-		mockey.PatchConvey("TestResolveLevels-Info", func() {
-			levels := resolveLevels("info")
-			c.So(levels, c.ShouldContain, logrus.InfoLevel)
-			c.So(levels, c.ShouldNotContain, logrus.DebugLevel)
-		})
+	mockey.PatchConvey("TestLevel-String", t, func() {
+		c.So(InfoLevel.String(), c.ShouldEqual, "info")
+		c.So(PanicLevel.String(), c.ShouldEqual, "panic")
+		c.So(TraceLevel.String(), c.ShouldEqual, "trace")
+		c.So(Level(99).String(), c.ShouldEqual, "unknown")
+		c.So(Level(99).IsValid(), c.ShouldBeFalse)
+	})
 
-		mockey.PatchConvey("TestResolveLevels-Warn", func() {
-			levels := resolveLevels("warn")
-			c.So(levels, c.ShouldContain, logrus.WarnLevel)
-			c.So(levels, c.ShouldNotContain, logrus.InfoLevel)
-		})
+	mockey.PatchConvey("TestLevel-ToLogrus", t, func() {
+		// 取值需与 logrus 一一对应，否则过滤行为会错位
+		c.So(PanicLevel.toLogrus(), c.ShouldEqual, logrus.PanicLevel)
+		c.So(FatalLevel.toLogrus(), c.ShouldEqual, logrus.FatalLevel)
+		c.So(ErrorLevel.toLogrus(), c.ShouldEqual, logrus.ErrorLevel)
+		c.So(WarnLevel.toLogrus(), c.ShouldEqual, logrus.WarnLevel)
+		c.So(InfoLevel.toLogrus(), c.ShouldEqual, logrus.InfoLevel)
+		c.So(DebugLevel.toLogrus(), c.ShouldEqual, logrus.DebugLevel)
+		c.So(TraceLevel.toLogrus(), c.ShouldEqual, logrus.TraceLevel)
+		c.So(Level(99).toLogrus(), c.ShouldEqual, logrus.InfoLevel)
+	})
 
-		mockey.PatchConvey("TestResolveLevels-Error", func() {
-			levels := resolveLevels("error")
-			c.So(levels, c.ShouldContain, logrus.ErrorLevel)
-			c.So(levels, c.ShouldNotContain, logrus.WarnLevel)
-		})
-
-		mockey.PatchConvey("TestResolveLevels-Fatal", func() {
-			levels := resolveLevels("fatal")
-			c.So(levels, c.ShouldContain, logrus.FatalLevel)
-			c.So(len(levels), c.ShouldEqual, 1)
-		})
-
-		mockey.PatchConvey("TestResolveLevels-Unknown", func() {
-			levels := resolveLevels("unknown")
-			c.So(levels, c.ShouldContain, logrus.InfoLevel) // default to info
-		})
-
-		mockey.PatchConvey("TestResolveLevels-UpperCase", func() {
-			levels := resolveLevels("DEBUG")
-			c.So(levels, c.ShouldContain, logrus.DebugLevel)
-		})
+	mockey.PatchConvey("TestLevel-HookCoversAllLevels", t, func() {
+		// 回归：此前 file hook 使用独立的级别集合，导致 panic 级别日志从不落盘
+		hook := &xLogHook{}
+		c.So(hook.Levels(), c.ShouldResemble, logrus.AllLevels)
+		c.So(hook.Levels(), c.ShouldContain, logrus.PanicLevel)
 	})
 }
-
 func TestCtxWithKV(t *testing.T) {
 	mockey.PatchConvey("TestCtxWithKV", t, func() {
 		mockey.PatchConvey("TestCtxWithKV-NewCtx", func() {
 			ctx := context.Background()
 			newCtx := CtxWithKV(ctx, map[string]any{"key": "value"})
 			c.So(newCtx, c.ShouldNotBeNil)
-			kv := newCtx.Value(XLogCtxKVContainerKey).(map[string]any)
+			kv := getXLogContainerFromCtx(newCtx)
 			c.So(kv["key"], c.ShouldEqual, "value")
 		})
 
@@ -153,7 +161,7 @@ func TestCtxWithKV(t *testing.T) {
 			ctx := context.Background()
 			ctx = CtxWithKV(ctx, map[string]any{"key1": "value1"})
 			ctx = CtxWithKV(ctx, map[string]any{"key2": "value2"})
-			kv := ctx.Value(XLogCtxKVContainerKey).(map[string]any)
+			kv := getXLogContainerFromCtx(ctx)
 			c.So(kv["key1"], c.ShouldEqual, "value1")
 			c.So(kv["key2"], c.ShouldEqual, "value2")
 		})
@@ -168,20 +176,27 @@ func TestCtxWithKV(t *testing.T) {
 
 func TestXLogLevel(t *testing.T) {
 	mockey.PatchConvey("TestXLogLevel", t, func() {
+		old := currentLevel.Load()
+		defer currentLevel.Store(old)
+
 		mockey.PatchConvey("TestXLogLevel-Default", func() {
-			mockey.Mock(xconfig.GetString).Return("").Build()
-			level := XLogLevel()
-			c.So(level, c.ShouldEqual, "Info")
+			currentLevel.Store(uint32(InfoLevel))
+			c.So(XLogLevel(), c.ShouldEqual, "info")
+			c.So(CurrentLevel(), c.ShouldEqual, InfoLevel)
 		})
 
-		mockey.PatchConvey("TestXLogLevel-Custom", func() {
-			mockey.Mock(xconfig.GetString).Return("debug").Build()
-			level := XLogLevel()
-			c.So(level, c.ShouldEqual, "debug")
+		mockey.PatchConvey("TestXLogLevel-FromConfig", func() {
+			// 级别来自初始化，而非运行时回查 xconfig
+			c.So(initXLogByConfig(&Config{Level: "debug"}), c.ShouldBeNil)
+			c.So(XLogLevel(), c.ShouldEqual, "debug")
+		})
+
+		mockey.PatchConvey("TestXLogLevel-UnknownFallbackInfo", func() {
+			c.So(initXLogByConfig(&Config{Level: "not-a-level"}), c.ShouldBeNil)
+			c.So(XLogLevel(), c.ShouldEqual, "info")
 		})
 	})
 }
-
 func TestLogFunctions(t *testing.T) {
 	mockey.PatchConvey("TestLogFunctions", t, func() {
 		mockey.PatchConvey("TestInfo", func() {
@@ -207,17 +222,17 @@ func TestRawLog(t *testing.T) {
 	mockey.PatchConvey("TestRawLog", t, func() {
 		mockey.PatchConvey("TestRawLog-WithOptions", func() {
 			ctx := context.Background()
-			RawLog(ctx, logrus.InfoLevel, "test message %s", "arg1", KVMap(map[string]any{"key": "value"}))
+			RawLog(ctx, InfoLevel, "test message %s", "arg1", KVMap(map[string]any{"key": "value"}))
 		})
 
 		mockey.PatchConvey("TestRawLog-NoArgs", func() {
 			ctx := context.Background()
-			RawLog(ctx, logrus.InfoLevel, "test message")
+			RawLog(ctx, InfoLevel, "test message")
 		})
 
 		mockey.PatchConvey("TestRawLog-WithKV", func() {
 			ctx := context.Background()
-			RawLog(ctx, logrus.InfoLevel, "test message", KV("single", "value"))
+			RawLog(ctx, InfoLevel, "test message", KV("single", "value"))
 		})
 	})
 }
@@ -313,271 +328,216 @@ func TestGetXLogContainerFromCtx(t *testing.T) {
 }
 
 func TestXLogHook(t *testing.T) {
+	newEntry := func(ctx context.Context, data logrus.Fields) *logrus.Entry {
+		return &logrus.Entry{
+			Logger:  logrus.New(),
+			Data:    data,
+			Context: ctx,
+			Time:    time.Now(),
+			Level:   logrus.InfoLevel,
+			Message: "test",
+		}
+	}
+
 	mockey.PatchConvey("TestXLogHook", t, func() {
 		mockey.PatchConvey("TestXLogHook-Levels", func() {
-			hook := &xLogHook{}
-			levels := hook.Levels()
-			c.So(levels, c.ShouldResemble, logrus.AllLevels)
+			c.So((&xLogHook{}).Levels(), c.ShouldResemble, logrus.AllLevels)
 		})
 
 		mockey.PatchConvey("TestXLogHook-Fire", func() {
-			hook := &xLogHook{
-				IP:         "127.0.0.1",
-				ServerName: "test-server",
-				PidStr:     "12345",
-			}
-			entry := &logrus.Entry{
-				Logger:  logrus.New(),
-				Data:    logrus.Fields{},
-				Context: context.Background(),
-				Time:    time.Now(),
-				Level:   logrus.InfoLevel,
-				Message: "test",
-			}
-			err := hook.Fire(entry)
-			c.So(err, c.ShouldBeNil)
+			hook := &xLogHook{IP: "127.0.0.1", ServerName: "test-server", PidStr: "12345"}
+			entry := newEntry(context.Background(), logrus.Fields{})
+			c.So(hook.Fire(entry), c.ShouldBeNil)
 			c.So(entry.Data["ip"], c.ShouldEqual, "127.0.0.1")
 			c.So(entry.Data["pid"], c.ShouldEqual, "12345")
 			c.So(entry.Data["servername"], c.ShouldEqual, "test-server")
 		})
 
 		mockey.PatchConvey("TestXLogHook-Fire-WithExistingServername", func() {
-			hook := &xLogHook{
-				IP:         "127.0.0.1",
-				ServerName: "test-server",
-				PidStr:     "12345",
-			}
-			entry := &logrus.Entry{
-				Logger:  logrus.New(),
-				Data:    logrus.Fields{"servername": "existing-server"},
-				Context: context.Background(),
-				Time:    time.Now(),
-				Level:   logrus.InfoLevel,
-				Message: "test",
-			}
-			err := hook.Fire(entry)
-			c.So(err, c.ShouldBeNil)
+			hook := &xLogHook{IP: "127.0.0.1", ServerName: "test-server", PidStr: "12345"}
+			entry := newEntry(context.Background(), logrus.Fields{"servername": "existing-server"})
+			c.So(hook.Fire(entry), c.ShouldBeNil)
 			c.So(entry.Data["servername"], c.ShouldEqual, "existing-server")
 		})
 
 		mockey.PatchConvey("TestXLogHook-Fire-WithCtxKV", func() {
-			hook := &xLogHook{
-				IP:         "127.0.0.1",
-				ServerName: "test-server",
-				PidStr:     "12345",
-			}
+			hook := &xLogHook{IP: "127.0.0.1", ServerName: "test-server", PidStr: "12345"}
 			ctx := CtxWithKV(context.Background(), map[string]any{"custom": "value"})
-			entry := &logrus.Entry{
-				Logger:  logrus.New(),
-				Data:    logrus.Fields{},
-				Context: ctx,
-				Time:    time.Now(),
-				Level:   logrus.InfoLevel,
-				Message: "test",
-			}
-			err := hook.Fire(entry)
-			c.So(err, c.ShouldBeNil)
+			entry := newEntry(ctx, logrus.Fields{})
+			c.So(hook.Fire(entry), c.ShouldBeNil)
 			c.So(entry.Data["custom"], c.ShouldEqual, "value")
 		})
 
 		mockey.PatchConvey("TestXLogHook-Fire-WithConsole", func() {
 			writer := &mockWriter{}
-			hook := &xLogHook{
-				IP:            "127.0.0.1",
-				ServerName:    "test-server",
-				PidStr:        "12345",
-				EnableConsole: true,
-				Writer:        writer,
-			}
-			logger := logrus.New()
-			logger.SetFormatter(&logrus.JSONFormatter{})
-			entry := &logrus.Entry{
-				Logger:  logger,
-				Data:    logrus.Fields{},
-				Context: context.Background(),
-				Time:    time.Now(),
-				Level:   logrus.InfoLevel,
-				Message: "test",
-			}
-			err := hook.Fire(entry)
-			c.So(err, c.ShouldBeNil)
+			hook := &xLogHook{IP: "127.0.0.1", ServerName: "test-server", PidStr: "12345", consoleWriter: writer}
+			c.So(hook.Fire(newEntry(context.Background(), logrus.Fields{})), c.ShouldBeNil)
 			c.So(len(writer.written), c.ShouldBeGreaterThan, 0)
+		})
+
+		mockey.PatchConvey("TestXLogHook-Fire-WithFileAndConsole", func() {
+			// 文件与控制台同时开启时，两路都应收到内容
+			fileW, consoleW := &mockWriter{}, &mockWriter{}
+			hook := &xLogHook{
+				ServerName:    "test-server",
+				jsonFormatter: &logrus.JSONFormatter{},
+				consoleWriter: consoleW,
+				fileWriter:    fileW,
+			}
+			c.So(hook.Fire(newEntry(context.Background(), logrus.Fields{})), c.ShouldBeNil)
+			c.So(len(fileW.written), c.ShouldBeGreaterThan, 0)
+			c.So(len(consoleW.written), c.ShouldBeGreaterThan, 0)
+			c.So(string(fileW.written), c.ShouldContainSubstring, "test-server")
+		})
+
+		mockey.PatchConvey("TestXLogHook-Fire-NoSinkSkipsSerialization", func() {
+			// 两路输出都关闭时不应调用 JSON 序列化
+			formatter := &countingFormatter{}
+			hook := &xLogHook{jsonFormatter: formatter}
+			c.So(hook.Fire(newEntry(context.Background(), logrus.Fields{})), c.ShouldBeNil)
+			c.So(formatter.calls, c.ShouldEqual, 0)
+		})
+
+		mockey.PatchConvey("TestXLogHook-Fire-ConsolePrettySkipsSerialization", func() {
+			// 控制台使用可读格式时无需 JSON，不应产生被丢弃的序列化
+			formatter := &countingFormatter{}
+			hook := &xLogHook{jsonFormatter: formatter, consoleWriter: &mockWriter{}}
+			c.So(hook.Fire(newEntry(context.Background(), logrus.Fields{})), c.ShouldBeNil)
+			c.So(formatter.calls, c.ShouldEqual, 0)
+		})
+
+		mockey.PatchConvey("TestXLogHook-Fire-SerializesOnceForBothSinks", func() {
+			// raw 控制台 + 文件：共用同一次序列化结果
+			formatter := &countingFormatter{}
+			hook := &xLogHook{
+				jsonFormatter: formatter,
+				consoleWriter: &mockWriter{},
+				consoleRaw:    true,
+				fileWriter:    &mockWriter{},
+			}
+			c.So(hook.Fire(newEntry(context.Background(), logrus.Fields{})), c.ShouldBeNil)
+			c.So(formatter.calls, c.ShouldEqual, 1)
+		})
+
+		mockey.PatchConvey("TestXLogHook-Fire-AppliesTimezone", func() {
+			// 时区在 Fire 中统一应用，保证控制台与 JSON 时间一致
+			loc, err := time.LoadLocation("UTC")
+			c.So(err, c.ShouldBeNil)
+			consoleW := &mockWriter{}
+			hook := &xLogHook{location: loc, consoleWriter: consoleW}
+			entry := newEntry(context.Background(), logrus.Fields{})
+			entry.Time = time.Date(2026, 1, 2, 3, 4, 5, 0, time.FixedZone("X", 8*3600))
+			c.So(hook.Fire(entry), c.ShouldBeNil)
+			c.So(entry.Time.Location(), c.ShouldEqual, loc)
+			// 08:00 时区的 03:04:05 对应 UTC 的前一日 19:04:05
+			c.So(string(consoleW.written), c.ShouldContainSubstring, "2026-01-01 19:04:05")
+		})
+
+		mockey.PatchConvey("TestXLogHook-Fire-FileWriteError", func() {
+			hook := &xLogHook{
+				jsonFormatter: &logrus.JSONFormatter{},
+				fileWriter:    &errWriter{err: errors.New("disk full")},
+			}
+			c.So(hook.Fire(newEntry(context.Background(), logrus.Fields{})), c.ShouldNotBeNil)
 		})
 
 		mockey.PatchConvey("TestXLogHook-EnsureCaller-WithCaller", func() {
 			hook := &xLogHook{}
-			frame := &runtime.Frame{
-				Function: "test.TestFunc",
-				File:     "/test/file.go",
-				Line:     100,
-			}
-			entry := &logrus.Entry{
-				Logger: logrus.New(),
-				Caller: frame,
-			}
-			result := hook.ensureCaller(entry)
+			frame := &runtime.Frame{Function: "test.TestFunc", File: "/test/file.go", Line: 100}
+			result := hook.ensureCaller(&logrus.Entry{Logger: logrus.New(), Caller: frame})
 			c.So(result, c.ShouldEqual, frame)
+		})
+
+		mockey.PatchConvey("TestXLogHook-EnsureCaller-WithoutCaller", func() {
+			hook := &xLogHook{SuffixToIgnore: findFrameIgnoreFileNames}
+			result := hook.ensureCaller(&logrus.Entry{Logger: logrus.New()})
+			c.So(result, c.ShouldNotBeNil)
 		})
 	})
 }
 
+// mockWriter 记录写入内容
 type mockWriter struct {
 	written []byte
 }
+
+// countingFormatter 统计序列化次数，用于验证不产生多余的序列化
+type countingFormatter struct {
+	calls int
+}
+
+func (f *countingFormatter) Format(*logrus.Entry) ([]byte, error) {
+	f.calls++
+	return []byte("{}\n"), nil
+}
+
+// errWriter 总是写入失败
+type errWriter struct {
+	err error
+}
+
+func (w *errWriter) Write([]byte) (int, error) { return 0, w.err }
 
 func (m *mockWriter) Write(p []byte) (n int, err error) {
 	m.written = append(m.written, p...)
 	return len(p), nil
 }
 
-func TestXLogHookConsolePrint(t *testing.T) {
-	mockey.PatchConvey("TestXLogHookConsolePrint", t, func() {
-		testCaller := &runtime.Frame{
-			Function: "test.TestFunc",
-			File:     "/test/file.go",
-			Line:     100,
+func TestXLogHookWriteConsole(t *testing.T) {
+	testCaller := &runtime.Frame{Function: "test.TestFunc", File: "/test/file.go", Line: 100}
+	newEntry := func(data logrus.Fields) *logrus.Entry {
+		return &logrus.Entry{
+			Logger:  logrus.New(),
+			Data:    data,
+			Context: context.Background(),
+			Time:    time.Now(),
+			Level:   logrus.InfoLevel,
+			Message: "test message",
 		}
+	}
 
-		mockey.PatchConvey("TestConsolePrint-Raw", func() {
+	mockey.PatchConvey("TestXLogHookWriteConsole", t, func() {
+		mockey.PatchConvey("TestWriteConsole-Raw", func() {
 			writer := &mockWriter{}
-			hook := &xLogHook{
-				IP:                 "127.0.0.1",
-				ServerName:         "test-server",
-				PidStr:             "12345",
-				EnableConsole:      true,
-				ConsoleFormatIsRaw: true,
-				Writer:             writer,
-			}
-			logger := logrus.New()
-			logger.SetFormatter(&logrus.JSONFormatter{})
-			entry := &logrus.Entry{
-				Logger:  logger,
-				Data:    logrus.Fields{"traceid": "trace-123"},
-				Context: context.Background(),
-				Time:    time.Now(),
-				Level:   logrus.InfoLevel,
-				Message: "test message",
-			}
-			err := hook.consolePrint(entry, testCaller)
-			c.So(err, c.ShouldBeNil)
-			c.So(len(writer.written), c.ShouldBeGreaterThan, 0)
+			hook := &xLogHook{consoleWriter: writer, consoleRaw: true}
+			jsonLine := []byte(`{"msg":"test message"}` + "\n")
+			c.So(hook.writeConsole(newEntry(logrus.Fields{"traceid": "trace-123"}), testCaller, jsonLine), c.ShouldBeNil)
+			// raw 模式直接复用已序列化结果，不做二次加工
+			c.So(string(writer.written), c.ShouldEqual, string(jsonLine))
 		})
 
-		mockey.PatchConvey("TestConsolePrint-Formatted", func() {
+		mockey.PatchConvey("TestWriteConsole-Formatted", func() {
 			writer := &mockWriter{}
-			hook := &xLogHook{
-				IP:                 "127.0.0.1",
-				ServerName:         "test-server",
-				PidStr:             "12345",
-				EnableConsole:      true,
-				ConsoleFormatIsRaw: false,
-				Writer:             writer,
-			}
-			logger := logrus.New()
-			logger.SetFormatter(&logrus.JSONFormatter{})
-			entry := &logrus.Entry{
-				Logger:  logger,
-				Data:    logrus.Fields{"traceid": "trace-123"},
-				Context: context.Background(),
-				Time:    time.Now(),
-				Level:   logrus.InfoLevel,
-				Message: "test message",
-			}
-			err := hook.consolePrint(entry, testCaller)
-			c.So(err, c.ShouldBeNil)
-			c.So(len(writer.written), c.ShouldBeGreaterThan, 0)
+			hook := &xLogHook{consoleWriter: writer}
+			c.So(hook.writeConsole(newEntry(logrus.Fields{"traceid": "trace-123"}), testCaller, nil), c.ShouldBeNil)
+			out := string(writer.written)
+			c.So(out, c.ShouldContainSubstring, "INFO")
+			c.So(out, c.ShouldContainSubstring, "file.go:100")
+			c.So(out, c.ShouldContainSubstring, "trace-123")
+			c.So(out, c.ShouldContainSubstring, "test message")
 		})
 
-		mockey.PatchConvey("TestConsolePrint-WithPanicStack", func() {
+		mockey.PatchConvey("TestWriteConsole-WithPanicStack", func() {
 			writer := &mockWriter{}
-			hook := &xLogHook{
-				IP:                 "127.0.0.1",
-				ServerName:         "test-server",
-				PidStr:             "12345",
-				EnableConsole:      true,
-				ConsoleFormatIsRaw: false,
-				Writer:             writer,
-			}
-			logger := logrus.New()
-			logger.SetFormatter(&logrus.JSONFormatter{})
-			entry := &logrus.Entry{
-				Logger:  logger,
-				Data:    logrus.Fields{"traceid": "trace-123", "panic_stack": "stack trace"},
-				Context: context.Background(),
-				Time:    time.Now(),
-				Level:   logrus.ErrorLevel,
-				Message: "panic message",
-			}
-			err := hook.consolePrint(entry, testCaller)
-			c.So(err, c.ShouldBeNil)
-			c.So(string(writer.written), c.ShouldContainSubstring, "panic message")
+			hook := &xLogHook{consoleWriter: writer}
+			entry := newEntry(logrus.Fields{"panic_stack": "goroutine 1 [running]"})
+			c.So(hook.writeConsole(entry, testCaller, nil), c.ShouldBeNil)
+			c.So(string(writer.written), c.ShouldContainSubstring, "goroutine 1 [running]")
+		})
+
+		mockey.PatchConvey("TestWriteConsole-NilCaller", func() {
+			writer := &mockWriter{}
+			hook := &xLogHook{consoleWriter: writer}
+			c.So(hook.writeConsole(newEntry(logrus.Fields{}), nil, nil), c.ShouldBeNil)
+			c.So(string(writer.written), c.ShouldContainSubstring, "???")
+		})
+
+		mockey.PatchConvey("TestWriteConsole-WriteError", func() {
+			hook := &xLogHook{consoleWriter: &errWriter{err: errors.New("broken pipe")}}
+			c.So(hook.writeConsole(newEntry(logrus.Fields{}), testCaller, nil), c.ShouldNotBeNil)
 		})
 	})
 }
-
-func TestTimeFormatter(t *testing.T) {
-	mockey.PatchConvey("TestTimeFormatter", t, func() {
-		mockey.PatchConvey("TestTimeFormatter-NilContext", func() {
-			tf := timeFormatter{
-				Formatter: &logrus.JSONFormatter{},
-				Location:  nil,
-			}
-			entry := &logrus.Entry{
-				Logger:  logrus.New(),
-				Data:    logrus.Fields{},
-				Context: nil,
-				Time:    time.Now(),
-				Level:   logrus.InfoLevel,
-				Message: "test",
-			}
-			bytes, err := tf.Format(entry)
-			c.So(err, c.ShouldBeNil)
-			c.So(len(bytes), c.ShouldBeGreaterThan, 0)
-		})
-
-		mockey.PatchConvey("TestTimeFormatter-WithLocation", func() {
-			loc, _ := time.LoadLocation("UTC")
-			tf := timeFormatter{
-				Formatter: &logrus.JSONFormatter{},
-				Location:  loc,
-			}
-			entry := &logrus.Entry{
-				Logger:  logrus.New(),
-				Data:    logrus.Fields{},
-				Context: context.Background(),
-				Time:    time.Now(),
-				Level:   logrus.InfoLevel,
-				Message: "test",
-			}
-			bytes, err := tf.Format(entry)
-			c.So(err, c.ShouldBeNil)
-			c.So(len(bytes), c.ShouldBeGreaterThan, 0)
-		})
-
-		mockey.PatchConvey("TestTimeFormatter-MultipleCallsIdempotent", func() {
-			loc, _ := time.LoadLocation("UTC")
-			tf := timeFormatter{
-				Formatter: &logrus.JSONFormatter{},
-				Location:  loc,
-			}
-			entry := &logrus.Entry{
-				Logger:  logrus.New(),
-				Data:    logrus.Fields{},
-				Context: context.Background(),
-				Time:    time.Now(),
-				Level:   logrus.InfoLevel,
-				Message: "test",
-			}
-			// 多次调用 Format 应产生一致结果（幂等性）
-			bytes1, err := tf.Format(entry)
-			c.So(err, c.ShouldBeNil)
-			bytes2, err := tf.Format(entry)
-			c.So(err, c.ShouldBeNil)
-			c.So(string(bytes1), c.ShouldEqual, string(bytes2))
-		})
-	})
-}
-
 func TestInitXLogByConfig(t *testing.T) {
 	mockey.PatchConvey("TestInitXLogByConfig-DirNotExist-MkdirFail", t, func() {
 		mockey.Mock(xutil.DirExist).Return(false).Build()
@@ -648,6 +608,64 @@ func TestInitXLogByConfig(t *testing.T) {
 		err := initXLogByConfig(config)
 		c.So(err, c.ShouldBeNil)
 		c.So(rotateMock.Times(), c.ShouldEqual, 0)
+	})
+}
+
+func TestKVFromCtx(t *testing.T) {
+	mockey.PatchConvey("TestKVFromCtx", t, func() {
+		mockey.PatchConvey("TestKVFromCtx-NotInjected", func() {
+			c.So(KVFromCtx(context.Background()), c.ShouldBeNil)
+		})
+
+		mockey.PatchConvey("TestKVFromCtx-Injected", func() {
+			ctx := CtxWithKV(context.Background(), map[string]any{"k": "v"})
+			c.So(KVFromCtx(ctx), c.ShouldResemble, map[string]any{"k": "v"})
+		})
+
+		mockey.PatchConvey("TestKVFromCtx-EmptyContainer", func() {
+			// 注入空容器与从未注入需可区分
+			ctx := CtxWithKV(context.Background(), nil)
+			got := KVFromCtx(ctx)
+			c.So(got, c.ShouldNotBeNil)
+			c.So(got, c.ShouldBeEmpty)
+		})
+
+		mockey.PatchConvey("TestKVFromCtx-ReturnsCopy", func() {
+			// 返回副本，调用方修改不应影响后续日志
+			ctx := CtxWithKV(context.Background(), map[string]any{"k": "v"})
+			got := KVFromCtx(ctx)
+			got["k"] = "changed"
+			c.So(KVFromCtx(ctx)["k"], c.ShouldEqual, "v")
+		})
+	})
+}
+
+func TestFileWriterLifecycle(t *testing.T) {
+	mockey.PatchConvey("TestFileWriterLifecycle", t, func() {
+		mockey.PatchConvey("TestCloseFileWriter-NoWriter", func() {
+			c.So(closeFileWriter(), c.ShouldBeNil)
+		})
+
+		mockey.PatchConvey("TestCloseFileWriter-ClosesUnderlying", func() {
+			mw := &mockWriteCloser{}
+			setFileWriter(newAsyncWriter(mw, 8))
+			c.So(closeFileWriter(), c.ShouldBeNil)
+			c.So(mw.closed, c.ShouldBeTrue)
+			// 重复关闭安全
+			c.So(closeFileWriter(), c.ShouldBeNil)
+		})
+
+		mockey.PatchConvey("TestSetFileWriter-ReplacesAndClosesPrevious", func() {
+			// 重复初始化不应泄漏上一个写入器的 goroutine
+			first, second := &mockWriteCloser{}, &mockWriteCloser{}
+			setFileWriter(newAsyncWriter(first, 8))
+			setFileWriter(newAsyncWriter(second, 8))
+			c.So(first.closed, c.ShouldBeTrue)
+			c.So(second.closed, c.ShouldBeFalse)
+
+			c.So(closeFileWriter(), c.ShouldBeNil)
+			c.So(second.closed, c.ShouldBeTrue)
+		})
 	})
 }
 

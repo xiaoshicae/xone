@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path"
-	"regexp"
 	"runtime"
 	"strings"
 
@@ -17,7 +16,6 @@ var logger *logrus.Logger
 
 func init() {
 	initLogger()
-	initCallerIgnoreRegList()
 }
 
 // ErrorIfEnableDebug 当开启 debug 模式时输出 Error 级别日志
@@ -46,29 +44,46 @@ func LogIfEnableDebug(level logrus.Level, msg string, args ...any) {
 }
 
 // GetLogCaller 获取日志调用方的栈帧，跳过 suffixToIgnore 和内置忽略列表中匹配的文件
-func GetLogCaller(callDepth int, suffixToIgnore []string) (frame *runtime.Frame) {
-	pcs := make([]uintptr, maximumCallerDepth)
-	depth := runtime.Callers(minimumCallerDepth+callDepth, pcs)
-	frames := runtime.CallersFrames(pcs[:depth])
-OUTER:
-	for f, hasMore := frames.Next(); hasMore; f, hasMore = frames.Next() {
-		frame = &f
-
-		// 跳过匹配忽略列表的调用帧
-		for _, s := range suffixToIgnore {
-			if strings.HasSuffix(f.File, s) {
-				continue OUTER
-			}
-		}
-		for _, r := range callerIgnoreRegList {
-			if r.MatchString(f.File) {
-				continue OUTER
-			}
-		}
-		break
+// 该函数位于日志热路径，匹配逻辑使用字符串比较而非正则，避免每帧回溯开销
+func GetLogCaller(callDepth int, suffixToIgnore []string) *runtime.Frame {
+	var pcs [maximumCallerDepth]uintptr
+	depth := runtime.Callers(minimumCallerDepth+callDepth, pcs[:])
+	if depth == 0 {
+		return nil
 	}
+	frames := runtime.CallersFrames(pcs[:depth])
+	for {
+		f, hasMore := frames.Next()
+		if !shouldIgnoreCallerFile(f.File, suffixToIgnore) {
+			return &f
+		}
+		if !hasMore {
+			// 所有栈帧都被忽略，返回最后一帧兜底，避免调用方拿到 nil
+			return &f
+		}
+	}
+}
 
-	return
+// shouldIgnoreCallerFile 判断栈帧文件是否应被跳过
+func shouldIgnoreCallerFile(file string, suffixToIgnore []string) bool {
+	for _, s := range suffixToIgnore {
+		if strings.HasSuffix(file, s) {
+			return true
+		}
+	}
+	base := path.Base(file)
+	for i := range callerIgnoreRules {
+		r := &callerIgnoreRules[i]
+		if r.pkg != "" && !strings.Contains(file, r.pkg) {
+			continue
+		}
+		for _, prefix := range r.filePrefixes {
+			if strings.HasPrefix(base, prefix) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 const (
@@ -90,18 +105,23 @@ func callerPretty(_ *runtime.Frame) (string, string) {
 	return "", fmt.Sprintf(" \x1b[34m%s:%d\x1b[0m", fName, frame.Line)
 }
 
-// callerIgnoreRegList 预编译的调用栈忽略正则列表
-var callerIgnoreRegList []*regexp.Regexp
+// callerIgnoreRule 调用栈忽略规则
+// pkg 为空表示不限定路径，仅按文件名前缀匹配
+type callerIgnoreRule struct {
+	pkg          string   // 栈帧文件路径中需包含的库标识
+	filePrefixes []string // 文件名（basename）前缀，命中任一即忽略
+}
 
-// callerIgnorePatterns 需要从调用栈中过滤的第三方库文件模式
-// 同一库的多个文件合并为一个正则，减少匹配次数
-var callerIgnorePatterns = []string{
-	`go-redis/(.*)/(?:string_commands|redis)\.go`,
-	`(?:xmysql|xredis)(|@v.*)/logger\.go`,
-	`logrus(|@v.*)/(?:hooks|entry|logger|exported)\.go`,
-	`gorm(|@v.*)/(?:callbacks|finisher_api)\.go`,
-	`mongo-driver(|@v.*)/(?:operation|database|client|collection|cursor).*\.go`,
-	`asm_\w+\.s`,
+// callerIgnoreRules 需要从调用栈中过滤的第三方库文件
+// 原为正则列表，因位于日志热路径改为字符串匹配：栈深 15 层时正则需回溯近百次
+var callerIgnoreRules = []callerIgnoreRule{
+	{pkg: "go-redis/", filePrefixes: []string{"string_commands.go", "redis.go"}},
+	{pkg: "xmysql", filePrefixes: []string{"logger.go"}},
+	{pkg: "xredis", filePrefixes: []string{"logger.go"}},
+	{pkg: "logrus", filePrefixes: []string{"hooks.go", "entry.go", "logger.go", "exported.go"}},
+	{pkg: "gorm", filePrefixes: []string{"callbacks.go", "finisher_api.go"}},
+	{pkg: "mongo-driver", filePrefixes: []string{"operation", "database", "client", "collection", "cursor"}},
+	{pkg: "", filePrefixes: []string{"asm_"}},
 }
 
 func initLogger() {
@@ -116,12 +136,4 @@ func initLogger() {
 	l.SetLevel(logrus.InfoLevel)
 	l.SetOutput(os.Stdout)
 	logger = l
-}
-
-// initCallerIgnoreRegList 预编译调用栈忽略正则
-func initCallerIgnoreRegList() {
-	callerIgnoreRegList = make([]*regexp.Regexp, len(callerIgnorePatterns))
-	for i, pattern := range callerIgnorePatterns {
-		callerIgnoreRegList[i] = regexp.MustCompile(pattern)
-	}
 }

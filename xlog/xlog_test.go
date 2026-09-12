@@ -12,7 +12,6 @@ import (
 	"github.com/xiaoshicae/xone/v2/xutil"
 
 	"github.com/bytedance/mockey"
-	rotatelogs "github.com/lestrrat-go/file-rotatelogs"
 	"github.com/sirupsen/logrus"
 	c "github.com/smartystreets/goconvey/convey"
 )
@@ -553,9 +552,9 @@ func TestInitXLogByConfig(t *testing.T) {
 		c.So(err.Error(), c.ShouldContainSubstring, "os.MkdirAll failed")
 	})
 
-	mockey.PatchConvey("TestInitXLogByConfig-RotatelogsFail", t, func() {
+	mockey.PatchConvey("TestInitXLogByConfig-OpenFileFail", t, func() {
 		mockey.Mock(xutil.DirExist).Return(true).Build()
-		mockey.Mock(rotatelogs.New).Return(nil, errors.New("rotatelogs failed")).Build()
+		mockey.Mock(newRotateWriter).Return(nil, errors.New("open log file failed")).Build()
 
 		config := &Config{
 			Path:          "/test/path",
@@ -567,13 +566,13 @@ func TestInitXLogByConfig(t *testing.T) {
 		}
 		err := initXLogByConfig(config)
 		c.So(err, c.ShouldNotBeNil)
-		c.So(err.Error(), c.ShouldContainSubstring, "rotatelogs.New failed")
+		c.So(err.Error(), c.ShouldContainSubstring, "open log file failed")
 	})
 
 	mockey.PatchConvey("TestInitXLogByConfig-DefaultConsoleOnly", t, func() {
 		// 默认配置不应创建日志目录、不应创建轮转文件
 		mkdirMock := mockey.Mock(os.MkdirAll).Return(nil).Build()
-		rotateMock := mockey.Mock(rotatelogs.New).Return(nil, errors.New("should not be called")).Build()
+		rotateMock := mockey.Mock(newRotateWriter).Return(nil, errors.New("should not be called")).Build()
 
 		config := configMergeDefault(nil)
 		err := initXLogByConfig(config)
@@ -584,7 +583,7 @@ func TestInitXLogByConfig(t *testing.T) {
 
 	mockey.PatchConvey("TestInitXLogByConfig-NilConfig", t, func() {
 		// 传入 nil 时走默认配置，不应 panic
-		rotateMock := mockey.Mock(rotatelogs.New).Return(nil, errors.New("should not be called")).Build()
+		rotateMock := mockey.Mock(newRotateWriter).Return(nil, errors.New("should not be called")).Build()
 
 		err := initXLogByConfig(nil)
 		c.So(err, c.ShouldBeNil)
@@ -593,7 +592,7 @@ func TestInitXLogByConfig(t *testing.T) {
 
 	mockey.PatchConvey("TestInitXLogByConfig-NilEnableConsole", t, func() {
 		// 未经 configMergeDefault 的 Config（EnableConsole 为 nil）不应 panic
-		rotateMock := mockey.Mock(rotatelogs.New).Return(nil, errors.New("should not be called")).Build()
+		rotateMock := mockey.Mock(newRotateWriter).Return(nil, errors.New("should not be called")).Build()
 
 		err := initXLogByConfig(&Config{Level: "debug"})
 		c.So(err, c.ShouldBeNil)
@@ -602,7 +601,7 @@ func TestInitXLogByConfig(t *testing.T) {
 
 	mockey.PatchConvey("TestInitXLogByConfig-ConsoleOnly-InvalidTimezone", t, func() {
 		// 仅控制台模式下时区加载失败也能正常初始化
-		rotateMock := mockey.Mock(rotatelogs.New).Return(nil, errors.New("should not be called")).Build()
+		rotateMock := mockey.Mock(newRotateWriter).Return(nil, errors.New("should not be called")).Build()
 
 		config := configMergeDefault(&Config{Timezone: "Invalid/Zone"})
 		err := initXLogByConfig(config)

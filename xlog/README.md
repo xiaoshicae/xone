@@ -6,7 +6,7 @@
 
 - 结构化 JSON 日志输出
 - 默认仅打印到标准输出，开箱适配 K8s 等容器环境
-- 可选的文件落盘与自动轮转（基于 [file-rotatelogs](https://github.com/lestrrat-go/file-rotatelogs)）
+- 可选的文件落盘与按时间自动轮转（模块内实现，无第三方依赖）
 - 文件写入异步化，日志 I/O 不阻塞业务调用
 - 每条日志最多只做一次 JSON 序列化，控制台使用可读格式时不做序列化
 - OpenTelemetry TraceID / SpanID 自动关联
@@ -57,7 +57,11 @@ XLog:
 
 #### 日志落盘
 
-需要写入文件时显式开启 `EnableFile`，按如下配置日志保存到 `/a/b/c/xxx.log`：
+需要写入文件时显式开启 `EnableFile`。日志按 `RotateTime` 周期轮转，文件名形如
+`xxx.log.20260912`，并维护一个指向当前文件的符号链接 `xxx.log` 便于 tail 跟随；
+超过 `MaxAge` 的历史文件会在轮转时自动清理。
+
+按如下配置日志保存到 `/a/b/c/` 目录下：
 
 ```yaml
 XLog:
@@ -68,6 +72,9 @@ XLog:
   RotateTime: "2d"
   EnableConsole: false        # 可选：关闭控制台输出，仅写文件
 ```
+
+`RotateTime` 支持小于一天的周期（如 `"6h"`、`"30m"`），文件名后缀会自动使用更细的
+时间粒度：`20260912` → `2026091206` → `202609120630`。
 
 ### 3. API 接口
 

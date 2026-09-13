@@ -66,23 +66,25 @@ func configMergeDefault(c *Config) *Config {
 
 ### 执行顺序机制
 
-XOne 各模块通过 `init()` 函数调用 `xhook.BeforeStart()` / `xhook.BeforeStop()` 注册 Hook。Go 的 import 机制保证了 `init()` 按包导入顺序依次执行，因此 Hook 的注册顺序由**用户 import 各模块的顺序**决定。
+XOne 各模块通过 `init()` 函数调用 `xhook.BeforeStart()` / `xhook.BeforeStop()` 注册 Hook，因此注册顺序就是包的初始化顺序。
 
-对于相同 Order 值的 Hook，`xhook` 使用**稳定排序**（`slices.SortStableFunc`），即不改变注册时的相对顺序。这意味着只要 import 顺序一致，执行顺序就是确定的。
+**Go 的 init 顺序是「拓扑排序（被依赖的包先）+ 就绪集合内按 import path 字典序」，与 import 的书写顺序无关**（`gofmt` 本来也会重排同组 import）。所以不要试图靠调整 import 顺序控制生命周期顺序。xone 各模块之间顺序正确，靠的是真实依赖边：每个模块都 import xconfig，xgorm / xhttp / xtrace 都 import xlog。
+
+对于相同 Order 值的 Hook，`xhook` 使用**稳定排序**（`slices.SortStableFunc`），不改变注册时的相对顺序。
 
 `Order` 表示**资源层级**而非阶段内优先级：值越小越底层，BeforeStart 越先执行、BeforeStop 越后执行。BeforeStop 是 BeforeStart 顺序的整体镜像，同 Order 内再按注册顺序逆序。这样一个资源只需声明一个 Order 就能做到「先启动、后关闭」。
 
 **BeforeStart 正序执行，BeforeStop 反序执行**，确保与启动顺序对称（LIFO）。后初始化的模块先关闭，先初始化的模块最后关闭。
 
-### 不推荐使用 Order
+### 不推荐普通模块使用 Order
 
-`xhook.Order()` 选项虽然可用，但**不推荐普通模块使用**，应保持默认值（100）。原因：
+`xhook.Order()` 选项虽然可用，但**普通模块与业务资源应保持默认值（100）**。原因：
 
-1. **依赖 import 顺序更直观**：Go 开发者天然理解 import 顺序，而显式 Order 值分散在各模块中，难以全局把控
+1. **越少越好把控**：Order 值分散在各模块中，声明得越多越难全局把控
 2. **避免 Order 冲突**：多个模块各自声明 Order 值，容易产生冲突或不一致
-3. **全部默认时行为即是所需**：所有模块保持默认 Order 时，行为恰好是「启动按注册顺序、关闭按注册逆序」
+3. **全部默认时行为即是所需**：所有模块保持默认 Order 时，行为恰好是「启动按 init 顺序、关闭按其逆序」
 
-框架内部只有 xconfig 使用 `Order(1)`。每个模块都 import xconfig，Go 保证被导入包的 `init()` 先执行，所以框架内部它本就排第一；`Order(1)` 防的是用户自己的包（不 import xconfig）在 main 的 import 列表中排在 xone 之前、且在其 `init()` 里注册了 BeforeStart 的情况。
+框架内部只有 xconfig（`Order(1)`）与 xlog（`Order(10)`）声明了 Order，且两者都不可省：Go 按 import path 字典序决定 init 顺序，用户模块叫 `acme/...` 还是 `myapp/...` 就决定了它排在 xone 之前还是之后，使用者无法通过 import 纪律控制。没有 `Order(1)`，路径靠前的用户包会在配置加载完成前执行 BeforeStart；没有 `Order(10)`，这样的用户包会在日志写入器关闭之后才关闭，其关闭日志直接丢失。
 
 ```go
 // 正确 - 使用默认 Order，依靠 import 顺序
@@ -97,17 +99,17 @@ func init() {
 }
 ```
 
-### 用户侧控制顺序的方式
+### 用户侧
 
-用户在 `main.go` 中通过 import 顺序控制各模块的初始化顺序：
+用户在 `main.go` 中按需匿名 import 各模块即可，**书写顺序不影响执行顺序**：
 
 ```go
 import (
-    _ "github.com/xiaoshicae/xone/v2/xconfig" // 1. 配置（Order=1，始终最先）
-    _ "github.com/xiaoshicae/xone/v2/xlog"    // 2. 日志（紧随配置，从而倒数第二个关闭）
-    _ "github.com/xiaoshicae/xone/v2/xtrace"  // 3. 链路追踪
-    _ "github.com/xiaoshicae/xone/v2/xhttp"   // 4. HTTP 客户端
-    _ "github.com/xiaoshicae/xone/v2/xgorm"   // 5. 数据库
+    _ "github.com/xiaoshicae/xone/v2/xconfig" // Order=1，最先启动
+    _ "github.com/xiaoshicae/xone/v2/xlog"    // Order=10，次先启动、最后关闭
+    _ "github.com/xiaoshicae/xone/v2/xtrace"
+    _ "github.com/xiaoshicae/xone/v2/xhttp"
+    _ "github.com/xiaoshicae/xone/v2/xgorm"
 )
 ```
 
@@ -117,6 +119,8 @@ BeforeStop 自动反序执行，无需额外配置：
 BeforeStart 执行顺序：xconfig → xlog → xtrace → xhttp → xgorm
 BeforeStop  执行顺序：xgorm → xhttp → xtrace → xlog → xconfig
 ```
+
+用户自己的资源保持默认 Order 即可：它一定在 xlog 之前关闭，关闭逻辑里可以放心打日志。
 
 ## 新增模块指南
 

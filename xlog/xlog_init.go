@@ -19,6 +19,13 @@ import (
 const (
 	// defaultLocalIP 获取本机 IP 失败时的兜底值
 	defaultLocalIP = "0.0.0.0"
+
+	// hookOrder 日志模块所处的资源层级，仅次于 xconfig（Order=1）
+	//
+	// 不能依赖注册顺序：Go 按「拓扑序 + import path 字典序」执行 init，
+	// 不看 import 的书写顺序。不依赖 xlog 的用户包（如模块名排在 github.com 之前的）
+	// 会先于 xlog 注册，逆序后反而在 xlog 之后关闭，其关闭日志将写不进文件。
+	hookOrder = 10
 )
 
 // findFrameIgnoreFileNames 定位调用方时需跳过的本模块文件
@@ -55,11 +62,11 @@ func init() {
 	handler.Store(newHandler(configMergeDefault(nil), time.Local, os.Stdout, nil, slog.LevelInfo))
 	currentLevel.Store(uint32(InfoLevel))
 
-	xhook.BeforeStart(initXLog)
-	// 与 BeforeStart 一并注册，使关闭顺序由 import 顺序决定：
-	// 日志模块在 xconfig 之后最早注册，因而最后关闭，其他模块关闭时打的日志仍能落盘。
+	// 同一个 Order 表达「最早启动、最晚关闭」：其他模块初始化时日志已就绪，
+	// 关闭时日志仍未关闭，其关闭阶段打的日志依然能落盘。
 	// 未启用文件日志时 closeFileWriter 直接返回 nil，无条件注册是安全的。
-	xhook.BeforeStop(closeFileWriter)
+	xhook.BeforeStart(initXLog, xhook.Order(hookOrder))
+	xhook.BeforeStop(closeFileWriter, xhook.Order(hookOrder))
 }
 
 func initXLog() error {

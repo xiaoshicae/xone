@@ -15,39 +15,48 @@ func init() {
 
 ## 执行顺序
 
-### BeforeStart：按注册顺序正序执行
+### 注册顺序由 Go 的 init 顺序决定，而不是 import 的书写顺序
 
-各模块通过 `init()` 注册 Hook，Go 的 import 机制保证 `init()` 按包导入顺序依次执行。对于相同 Order 值的 Hook，使用稳定排序保持注册时的相对顺序。
-
-```
-注册顺序：xconfig → xlog → xtrace → xhttp → xgorm
-执行顺序：xconfig → xlog → xtrace → xhttp → xgorm（正序）
-```
-
-### BeforeStop：按注册顺序反序执行
-
-BeforeStop 在执行时自动反转顺序，确保**后初始化的模块先关闭**，与 BeforeStart 形成对称。这符合资源管理的 LIFO（后进先出）原则——先申请的资源最后释放。
+各模块在 `init()` 中注册 Hook，所以注册顺序就是包的初始化顺序。Go 的规则是
+**拓扑排序（被依赖的包先初始化）+ 就绪集合内按 import path 字典序**，
+与 import 在源码中的书写顺序**无关** —— `gofmt` 本来也会把同一组内的 import 重排。
 
 ```
-注册顺序：xconfig → xlog → xtrace → xhttp → xgorm
-执行顺序：xgorm → xhttp → xtrace → xlog → xconfig（反序）
+写 pc, pb, pa（互不依赖）                → 实际 pa, pb, pc          字典序
+写 zebra, middle, alpha（alpha 依赖 zebra）→ 实际 middle, zebra, alpha 依赖优先
+目录 aaa/包名 zpkg、目录 zzz/包名 apkg     → 实际 aaa 先             比的是路径不是包名
 ```
 
-以上述顺序为例，xgorm 依赖 xlog 记录日志、依赖 xtrace 上报链路，因此关闭时应先关 xgorm，最后关 xconfig（配置在整个生命周期中都需要可用）。日志模块紧跟 xconfig 注册，于是最后一个关闭，其他模块在关闭阶段打的日志仍能落盘。
+因此**不要试图靠调整 import 顺序来控制生命周期顺序**。xone 各模块之间顺序正确，
+靠的是真实的依赖边：每个模块都 import xconfig，xgorm / xhttp / xtrace 都 import xlog，
+于是 xconfig、xlog 必然先初始化。
 
-### 用户侧控制顺序
+### BeforeStart 正序、BeforeStop 反序
 
-在 `main.go` 中通过 import 顺序控制各模块的生命周期顺序：
+BeforeStart 按 Order 升序执行，同 Order 内按注册顺序；BeforeStop 是它的整体镜像，
+确保**后初始化的模块先关闭**，符合资源管理的 LIFO 原则——先申请的资源最后释放。
 
-```go
-import (
-    _ "github.com/xiaoshicae/xone/v2/xconfig" // 最先启动，最后关闭
-    _ "github.com/xiaoshicae/xone/v2/xlog"    // 紧随配置，倒数第二个关闭
-    _ "github.com/xiaoshicae/xone/v2/xtrace"
-    _ "github.com/xiaoshicae/xone/v2/xhttp"
-    _ "github.com/xiaoshicae/xone/v2/xgorm"   // 最后启动，最先关闭
-)
 ```
+启动：xconfig → xlog → xtrace → xhttp → xgorm
+关闭：xgorm → xhttp → xtrace → xlog → xconfig
+```
+
+xgorm 依赖 xlog 记录日志、依赖 xtrace 上报链路，因此关闭时先关 xgorm，
+最后关 xconfig（配置在整个生命周期中都需要可用）。
+
+### 需要确定性保证时用 Order，而不是 import 顺序
+
+用户自己的包若在 `init()` 里注册 Hook，它相对 xone 各模块的位置取决于**模块路径的字典序**
+——模块名叫 `acme/...` 就排在 `github.com/xiaoshicae/xone/...` 之前，叫 `myapp/...` 就排在之后，
+用户无法通过调整 import 来改变。框架因此对两个必须保证位置的模块显式声明 Order：
+
+| 模块 | Order | 含义 |
+|------|-------|------|
+| xconfig | 1 | 最先启动（配置必须先于一切就绪）；它没有关闭钩子 |
+| xlog | 10 | 次先启动、最后关闭，使任何模块在关闭阶段打的日志仍能落盘 |
+| 其余模块 / 用户资源 | 100（默认） | 相互之间按 init 顺序，关闭时逆序 |
+
+用户资源保持默认 Order 即可：它一定在 xlog 之前关闭，所以关闭逻辑里可以放心打日志。
 
 ## 配置选项
 
@@ -73,16 +82,17 @@ import (
 若两个阶段都按 Order 升序执行，同一个资源就得在启停两处各填一个方向相反的值，
 启停对称性也就丢了。
 
-**不推荐普通模块使用 Order**，应保持默认值（100），依靠 import 顺序控制执行顺序。原因：
+**普通模块与业务资源应保持默认值（100）**，只有"必须在某一侧到底"的基础设施才声明 Order。原因：
 
-1. import 顺序更直观，Order 值分散在各模块中难以全局把控
-2. 多模块各自声明 Order 容易冲突
-3. 全部使用默认 Order 时，行为恰好就是"启动按注册顺序、关闭按注册逆序"
+1. Order 值分散在各模块中，声明得越多越难全局把控
+2. 多模块各自声明容易冲突
+3. 全部默认时行为就是"启动按 init 顺序、关闭按其逆序"，绝大多数资源要的正是这个
 
-框架内部只有 `xconfig` 使用 `Order(1)`：每个模块都 import xconfig，Go 保证被导入包的
-`init()` 先执行，所以框架内部它本来就排第一；`Order(1)` 防的是**用户自己的包**
-（不 import xconfig）在 main 的 import 列表中排在 xone 之前、且在其 `init()` 里注册了
-BeforeStart 的情况。这是唯一一处无法靠 import 纪律保证的位置。
+框架内部只有 `xconfig`（1）和 `xlog`（10）声明了 Order，且两者都不是可选的：
+Go 的 init 顺序按 import path 字典序排，用户模块叫 `acme/...` 还是 `myapp/...`
+就决定了它排在 xone 之前还是之后——这不是使用者能通过 import 纪律控制的。
+没有 Order(1)，路径靠前的用户包会在配置加载完成前就执行 BeforeStart；
+没有 Order(10)，这样的用户包会在日志写入器关闭之后才关闭，其关闭日志直接丢失。
 
 ### 关于重复注册
 

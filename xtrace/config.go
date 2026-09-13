@@ -7,7 +7,16 @@ const (
 
 	// defaultSampleRatio 默认采样率，全采样
 	defaultSampleRatio = 1.0
+
+	// defaultShutdownTimeoutStr 默认关闭超时
+	//
+	// 取值小于 xhook 单个 Hook 的默认超时（10s），确保导出端不可达时
+	// 是本模块自己按时返回，而不是被 xhook 放弃等待后留下泄漏的 goroutine。
+	defaultShutdownTimeoutStr = "5s"
 )
+
+// defaultShutdownTimeout 默认关闭超时，供初始化前的兜底使用
+var defaultShutdownTimeout = xutil.ToDuration(defaultShutdownTimeoutStr)
 
 // ForwardHeaderRule 按域名透传的 Header 规则
 // 仅当请求目标域名匹配 Domains 中的任一模式时，才透传对应 Headers
@@ -33,6 +42,11 @@ type Config struct {
 	// 需要完全关闭链路请用 Enable=false，本项不接受 0（0 视为未配置，回落到默认值）
 	// optional default 1.0
 	SampleRatio float64 `mapstructure:"SampleRatio"`
+
+	// ShutdownTimeout 关闭时等待 Span 导出完成的上限
+	// 使用者通过 AddSpanProcessor 注册了上报处理器时，该值决定退出前最多等多久
+	// optional default "5s"
+	ShutdownTimeout string `mapstructure:"ShutdownTimeout"`
 
 	// ForwardHeaders 需要在链路中透传的自定义 HTTP Header 列表（全局，向所有域名透传）
 	// 配置后会自动注册 HeaderPropagator，从上游请求 Extract 并向下游请求 Inject
@@ -63,6 +77,12 @@ func configMergeDefault(c *Config) *Config {
 	// 采样率非正数视为未配置：关闭链路请用 Enable=false
 	if c.SampleRatio <= 0 {
 		c.SampleRatio = defaultSampleRatio
+	}
+	if xutil.ToDuration(c.ShutdownTimeout) <= 0 {
+		if c.ShutdownTimeout != "" {
+			xutil.WarnIfEnableDebug("XOne xtrace ShutdownTimeout is invalid, fallback to %s, got=[%s]", defaultShutdownTimeoutStr, c.ShutdownTimeout)
+		}
+		c.ShutdownTimeout = defaultShutdownTimeoutStr
 	}
 	return c
 }

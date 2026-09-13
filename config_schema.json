@@ -167,6 +167,11 @@
               "description": "日志切割周期，最小1m（文件名时间后缀最细到分钟），默认1d",
               "default": "1d",
               "allOf": [{ "$ref": "#/definitions/Duration" }]
+            },
+            "Perm": {
+              "type": "string",
+              "description": "日志文件权限，八进制字符串，默认0644。日志可能含敏感信息，需要限制同机其他用户读取时配0600",
+              "default": "0644"
             }
           }
         }
@@ -332,6 +337,44 @@
         }
       }
     },
+    "XRedis": {
+      "type": ["object", "array"],
+      "description": "Redis 配置，单实例用对象、多实例用数组（数组元素必须配 Name）",
+      "items": { "$ref": "#/definitions/RedisConfig" },
+      "properties": {
+        "Addr": { "$ref": "#/definitions/RedisConfig/properties/Addr" },
+        "Username": { "$ref": "#/definitions/RedisConfig/properties/Username" },
+        "Password": { "$ref": "#/definitions/RedisConfig/properties/Password" },
+        "DB": { "$ref": "#/definitions/RedisConfig/properties/DB" },
+        "DialTimeout": { "$ref": "#/definitions/RedisConfig/properties/DialTimeout" },
+        "ReadTimeout": { "$ref": "#/definitions/RedisConfig/properties/ReadTimeout" },
+        "WriteTimeout": { "$ref": "#/definitions/RedisConfig/properties/WriteTimeout" },
+        "PoolSize": { "$ref": "#/definitions/RedisConfig/properties/PoolSize" },
+        "MinIdleConns": { "$ref": "#/definitions/RedisConfig/properties/MinIdleConns" },
+        "MaxIdleConns": { "$ref": "#/definitions/RedisConfig/properties/MaxIdleConns" },
+        "MaxActiveConns": { "$ref": "#/definitions/RedisConfig/properties/MaxActiveConns" },
+        "PoolTimeout": { "$ref": "#/definitions/RedisConfig/properties/PoolTimeout" },
+        "ConnMaxIdleTime": { "$ref": "#/definitions/RedisConfig/properties/ConnMaxIdleTime" },
+        "ConnMaxLifetime": { "$ref": "#/definitions/RedisConfig/properties/ConnMaxLifetime" },
+        "MaxRetries": { "$ref": "#/definitions/RedisConfig/properties/MaxRetries" },
+        "MinRetryBackoff": { "$ref": "#/definitions/RedisConfig/properties/MinRetryBackoff" },
+        "MaxRetryBackoff": { "$ref": "#/definitions/RedisConfig/properties/MaxRetryBackoff" },
+        "EnableMetric": { "$ref": "#/definitions/RedisConfig/properties/EnableMetric" },
+        "Name": { "$ref": "#/definitions/RedisConfig/properties/Name" }
+      }
+    },
+    "XCache": {
+      "type": ["object", "array"],
+      "description": "本地缓存配置（基于 ristretto），单实例用对象、多实例用数组（数组元素必须配 Name）",
+      "items": { "$ref": "#/definitions/CacheConfig" },
+      "properties": {
+        "NumCounters": { "$ref": "#/definitions/CacheConfig/properties/NumCounters" },
+        "MaxCost": { "$ref": "#/definitions/CacheConfig/properties/MaxCost" },
+        "BufferItems": { "$ref": "#/definitions/CacheConfig/properties/BufferItems" },
+        "DefaultTTL": { "$ref": "#/definitions/CacheConfig/properties/DefaultTTL" },
+        "Name": { "$ref": "#/definitions/CacheConfig/properties/Name" }
+      }
+    },
     "XGorm": {
       "type": [
         "object",
@@ -371,6 +414,9 @@
         },
         "EnableLog": {
           "$ref": "#/definitions/GormConfig/properties/EnableLog"
+        },
+        "EnableMetric": {
+          "$ref": "#/definitions/GormConfig/properties/EnableMetric"
         },
         "SlowThreshold": {
           "$ref": "#/definitions/GormConfig/properties/SlowThreshold"
@@ -437,6 +483,40 @@
           "pattern": "^\\$\\{[^}]*\\}$"
         }
       ]
+    },
+    "RedisConfig": {
+      "type": "object",
+      "properties": {
+        "Addr": { "type": "string", "description": "Redis 服务器地址，默认 localhost:6379" },
+        "Username": { "type": "string", "description": "Redis 6.0+ ACL 用户名" },
+        "Password": { "type": "string", "description": "Redis 认证密码，建议用 ${VAR} 形式从环境变量注入" },
+        "DB": { "type": ["integer", "string"], "description": "数据库编号，默认 0" },
+        "DialTimeout": { "type": "string", "description": "建立连接超时时间，默认 500ms" },
+        "ReadTimeout": { "type": "string", "description": "读超时时间，默认 500ms" },
+        "WriteTimeout": { "type": "string", "description": "写超时时间，默认 500ms" },
+        "PoolSize": { "type": ["integer", "string"], "description": "连接池最大连接数，默认由 go-redis 决定（10 * GOMAXPROCS）" },
+        "MinIdleConns": { "type": ["integer", "string"], "description": "最小空闲连接数，默认 5。多实例时每个实例都会常驻这么多连接" },
+        "MaxIdleConns": { "type": ["integer", "string"], "description": "最大空闲连接数，默认无限制" },
+        "MaxActiveConns": { "type": ["integer", "string"], "description": "最大活跃连接数，默认无限制" },
+        "PoolTimeout": { "type": "string", "description": "从连接池获取连接的超时时间，默认 1s" },
+        "ConnMaxIdleTime": { "type": "string", "description": "空闲连接最大存活时间，默认 5m" },
+        "ConnMaxLifetime": { "type": "string", "description": "连接最大存活时间，默认 5m" },
+        "MaxRetries": { "type": ["integer", "string"], "description": "最大重试次数，默认由 go-redis 决定（3 次），-1 禁用" },
+        "MinRetryBackoff": { "type": "string", "description": "最小重试退避时间，默认由 go-redis 决定（8ms），\"-1\" 禁用" },
+        "MaxRetryBackoff": { "type": "string", "description": "最大重试退避时间，默认由 go-redis 决定（512ms），\"-1\" 禁用" },
+        "EnableMetric": { "type": ["boolean", "string"], "description": "是否启用连接池 Prometheus 指标采集（redis_pool_*），默认 true。指标在 scrape 时实时读取 redis.PoolStats()，不额外占用协程" },
+        "Name": { "type": "string", "description": "多实例配置时的唯一标识，数组形式下必填" }
+      }
+    },
+    "CacheConfig": {
+      "type": "object",
+      "properties": {
+        "NumCounters": { "type": ["integer", "string"], "description": "用于跟踪频率的键数量，建议为期望缓存条目数的 10 倍，默认 1000000" },
+        "MaxCost": { "type": ["integer", "string"], "description": "缓存最大成本，每个条目 cost=1 时等价于最大条目数，默认 100000" },
+        "BufferItems": { "type": ["integer", "string"], "description": "Get 操作的内部缓冲区大小，默认 64" },
+        "DefaultTTL": { "type": "string", "description": "默认缓存过期时间，默认 5m" },
+        "Name": { "type": "string", "description": "多实例配置时的唯一标识，数组形式下必填" }
+      }
     },
     "GormConfig": {
       "type": "object",
@@ -515,6 +595,10 @@
         "EnableLog": {
           "type": ["boolean", "string"],
           "description": "是否开启日志(开启后SQL日志将记录到应用的log文件中)，默认false"
+        },
+        "EnableMetric": {
+          "type": ["boolean", "string"],
+          "description": "是否启用连接池 Prometheus 指标采集（db_connections_*），默认 true。指标在 scrape 时实时读取 sql.DB.Stats()，不额外占用协程"
         },
         "SlowThreshold": {
           "type": "string",

@@ -25,7 +25,7 @@ func newTestWriterInDir(t *testing.T, dir string, maxAge, rotate time.Duration, 
 	t.Helper()
 	base := filepath.Join(dir, "app.log")
 
-	w, err := newRotateWriter(base, maxAge, rotate)
+	w, err := newRotateWriter(base, maxAge, rotate, 0)
 	if err != nil {
 		t.Fatalf("newRotateWriter failed: %v", err)
 	}
@@ -132,7 +132,7 @@ func TestRotateWriter(t *testing.T) {
 
 	mockey.PatchConvey("TestRotateWriter-OpenFail", t, func() {
 		// 目录不存在时应在构造阶段就报错，而非首次写日志才失败
-		_, err := newRotateWriter(filepath.Join(t.TempDir(), "no-such-dir", "app.log"), time.Hour, time.Hour)
+		_, err := newRotateWriter(filepath.Join(t.TempDir(), "no-such-dir", "app.log"), time.Hour, time.Hour, 0)
 		c.So(err, c.ShouldNotBeNil)
 		c.So(err.Error(), c.ShouldContainSubstring, "open log file failed")
 	})
@@ -145,7 +145,7 @@ func TestRotateWriterPurge(t *testing.T) {
 
 		// 造一个 10 天前的历史文件
 		old := filepath.Join(dir, "app.log.20260902")
-		c.So(os.WriteFile(old, []byte("old\n"), logFilePerm), c.ShouldBeNil)
+		c.So(os.WriteFile(old, []byte("old\n"), defaultLogFilePerm), c.ShouldBeNil)
 		oldTime := now.Add(-10 * 24 * time.Hour)
 		c.So(os.Chtimes(old, oldTime, oldTime), c.ShouldBeNil)
 
@@ -160,7 +160,7 @@ func TestRotateWriterPurge(t *testing.T) {
 		w, dir := newTestWriter(t, 48*time.Hour, 24*time.Hour, &now)
 
 		recent := filepath.Join(dir, "app.log.20260911")
-		c.So(os.WriteFile(recent, []byte("recent\n"), logFilePerm), c.ShouldBeNil)
+		c.So(os.WriteFile(recent, []byte("recent\n"), defaultLogFilePerm), c.ShouldBeNil)
 		recentTime := now.Add(-1 * time.Hour)
 		c.So(os.Chtimes(recent, recentTime, recentTime), c.ShouldBeNil)
 
@@ -180,7 +180,7 @@ func TestRotateWriterPurge(t *testing.T) {
 		w, dir := newTestWriter(t, 0, 24*time.Hour, &now)
 
 		old := filepath.Join(dir, "app.log.20250101")
-		c.So(os.WriteFile(old, []byte("old\n"), logFilePerm), c.ShouldBeNil)
+		c.So(os.WriteFile(old, []byte("old\n"), defaultLogFilePerm), c.ShouldBeNil)
 		oldTime := now.Add(-365 * 24 * time.Hour)
 		c.So(os.Chtimes(old, oldTime, oldTime), c.ShouldBeNil)
 
@@ -357,7 +357,7 @@ func TestRotateWriterPurgeErrorPaths(t *testing.T) {
 		mockey.PatchConvey("跳过无法 stat 的文件", func() {
 			w, dir := newTestWriter(t, 48*time.Hour, 24*time.Hour, &now)
 			stale := filepath.Join(dir, "app.log.20260901")
-			c.So(os.WriteFile(stale, []byte("x"), logFilePerm), c.ShouldBeNil)
+			c.So(os.WriteFile(stale, []byte("x"), defaultLogFilePerm), c.ShouldBeNil)
 
 			mockey.Mock(os.Lstat).Return(nil, errors.New("stat failed")).Build()
 			w.purge(w.currentName)
@@ -383,12 +383,72 @@ func TestRotateWriterPurgeErrorPaths(t *testing.T) {
 		mockey.PatchConvey("删除失败仅记录不中断", func() {
 			w, dir := newTestWriter(t, 48*time.Hour, 24*time.Hour, &now)
 			stale := filepath.Join(dir, "app.log.20260901")
-			c.So(os.WriteFile(stale, []byte("x"), logFilePerm), c.ShouldBeNil)
+			c.So(os.WriteFile(stale, []byte("x"), defaultLogFilePerm), c.ShouldBeNil)
 			old := now.Add(-10 * 24 * time.Hour)
 			c.So(os.Chtimes(stale, old, old), c.ShouldBeNil)
 
 			mockey.Mock(os.Remove).Return(errors.New("remove failed")).Build()
 			w.purge(w.currentName) // 不应 panic
 		})
+	})
+}
+
+func TestRotateWriterExpired(t *testing.T) {
+	mockey.PatchConvey("TestRotateWriterExpired", t, func() {
+		now := time.Date(2026, 9, 12, 10, 0, 0, 0, time.Local)
+		w, dir := newTestWriter(t, 48*time.Hour, 24*time.Hour, &now)
+		cutoff := now.Add(-48 * time.Hour)
+
+		mockey.PatchConvey("按文件名时间判断，不受 mtime 影响", func() {
+			// 备份恢复、rsync、容器镜像分层都会重写 mtime，
+			// 按它判断可能把上周的日志当成刚写的而永远不清
+			old := filepath.Join(dir, "app.log.20260901")
+			if err := os.WriteFile(old, []byte("x"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			// mtime 是刚刚，但文件名说它是 9 月 1 日的
+			fi, err := os.Lstat(old)
+			c.So(err, c.ShouldBeNil)
+			c.So(w.expired(old, fi, cutoff), c.ShouldBeTrue)
+		})
+
+		mockey.PatchConvey("周期未结束的文件不算过期", func() {
+			recent := filepath.Join(dir, "app.log.20260912")
+			if err := os.WriteFile(recent, []byte("x"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			fi, err := os.Lstat(recent)
+			c.So(err, c.ShouldBeNil)
+			c.So(w.expired(recent, fi, cutoff), c.ShouldBeFalse)
+		})
+
+		mockey.PatchConvey("文件名解析不了时退回 mtime", func() {
+			weird := filepath.Join(dir, "app.log.backup")
+			if err := os.WriteFile(weird, []byte("x"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			fi, err := os.Lstat(weird)
+			c.So(err, c.ShouldBeNil)
+			// mtime 是真实的墙上时钟，晚于 cutoff，不过期
+			c.So(w.expired(weird, fi, cutoff), c.ShouldBeFalse)
+			// cutoff 推到 mtime 之后则过期（注入的 now 是过去时刻，不能用它来推）
+			c.So(w.expired(weird, fi, fi.ModTime().Add(time.Hour)), c.ShouldBeTrue)
+		})
+	})
+}
+
+func TestRotateWriterPerm(t *testing.T) {
+	mockey.PatchConvey("TestRotateWriterPerm", t, func() {
+		now := time.Now()
+		dir := t.TempDir()
+		w, err := newRotateWriter(filepath.Join(dir, "app.log"), time.Hour, time.Hour, 0o600)
+		c.So(err, c.ShouldBeNil)
+		defer w.Close()
+		_ = now
+
+		fi, statErr := os.Lstat(w.currentName)
+		c.So(statErr, c.ShouldBeNil)
+		// 日志可能含敏感信息，需要限制同机其他用户读取时配 0600
+		c.So(fi.Mode().Perm(), c.ShouldEqual, os.FileMode(0o600))
 	})
 }

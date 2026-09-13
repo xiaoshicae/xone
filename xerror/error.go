@@ -47,15 +47,28 @@ func Newf(module, op, format string, args ...any) *XOneError {
 }
 
 // Is 判断 err 链中是否包含指定模块的 XOneError
+//
+// 遍历整条链而不是只看最外层：模块之间会互相包装错误
+// （xgorm 初始化失败里裹着 xconfig 的错误），只比对第一个 XOneError
+// 会让 Is(err, "xconfig") 在这种链上返回 false，与本函数的语义不符
 func Is(err error, module string) bool {
-	var xe *XOneError
-	if errors.As(err, &xe) {
-		return xe.Module == module
+	for err != nil {
+		var xe *XOneError
+		if !errors.As(err, &xe) {
+			return false
+		}
+		if xe.Module == module {
+			return true
+		}
+		err = xe.Err // 从当前 XOneError 的内层继续找
 	}
 	return false
 }
 
-// Module 从 err 链中提取模块名，若非 XOneError 则返回空字符串
+// Module 提取最外层 XOneError 的模块名，若非 XOneError 则返回空字符串
+//
+// 取最外层而非遍历整条链：错误一路向上包装，最外层代表「谁最终报出了这个错误」，
+// 这正是调用方要分流处理的依据。要判断链中是否涉及某个模块，用 Is
 func Module(err error) string {
 	var xe *XOneError
 	if errors.As(err, &xe) {

@@ -95,6 +95,23 @@ productCache := xcache.C("product-cache")
 defaultCache := xcache.C()
 ```
 
+## 包级函数
+
+操作全局缓存（未配置 `XCache` 时懒初始化一个默认实例）：
+
+| 函数 | 说明 |
+|------|------|
+| `Get[V](key) (V, bool)` | 取值并转换为目标类型 |
+| `Set(key, value) bool` | 设置，使用默认 TTL，cost=1 |
+| `SetWithTTL(key, value, ttl) bool` | 指定 TTL |
+| `SetWithCost(key, value, cost) bool` | 指定 cost |
+| `SetWithCostAndTTL(key, value, cost, ttl) bool` | 同时指定 cost 与 TTL |
+| `Del(key)` | 删除 |
+| `Clear()` | 清空 |
+| `Wait()` | 等待缓冲写入完成（ristretto 是环形缓冲，Set 后不一定立即可读，主要用于测试） |
+
+需要操作具名实例时用 `C("name")` 取到 `*Cache`，方法名与上表一致。
+
 ## 注意事项
 
 - ristretto 内部使用环形缓冲区，`Set` 后值不一定立即可通过 `Get` 读取。在测试场景下可调用 `Wait()` 确保写入完成，生产环境下通常无需关注。

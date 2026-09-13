@@ -113,3 +113,40 @@ func TestObserverPanicIsolated(t *testing.T) {
 		})
 	})
 }
+
+func TestRemoveObserver(t *testing.T) {
+	mockey.PatchConvey("TestRemoveObserver", t, func() {
+		withCleanObservers(func() {
+			var got []string
+			h1 := AddObserver(func(context.Context, Record) { got = append(got, "first") })
+			AddObserver(func(context.Context, Record) { got = append(got, "second") })
+
+			RemoveObserver(h1)
+			notifyObservers(context.Background(), Record{})
+			c.So(got, c.ShouldResemble, []string{"second"})
+		})
+	})
+
+	mockey.PatchConvey("TestRemoveObserver-边界", t, func() {
+		withCleanObservers(func() {
+			// 零值句柄（AddObserver(nil) 的返回值）不应误删任何观察者
+			called := false
+			AddObserver(func(context.Context, Record) { called = true })
+			RemoveObserver(ObserverHandle{})
+			RemoveObserver(AddObserver(nil))
+			notifyObservers(context.Background(), Record{})
+			c.So(called, c.ShouldBeTrue)
+
+			// 重复注销同一个句柄是安全的
+			h := AddObserver(func(context.Context, Record) {})
+			RemoveObserver(h)
+			RemoveObserver(h)
+		})
+	})
+
+	mockey.PatchConvey("TestRemoveObserver-未注册时安全", t, func() {
+		withCleanObservers(func() {
+			RemoveObserver(ObserverHandle{id: 999})
+		})
+	})
+}

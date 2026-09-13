@@ -56,6 +56,10 @@ func initSingle() error {
 	}
 
 	setDefault(client)
+
+	if config.metricEnabled() {
+		registerPoolMetrics()
+	}
 	return nil
 }
 
@@ -86,6 +90,14 @@ func initMulti() error {
 		// 第一个 client 为 C() 默认获取的 client
 		if idx == 0 {
 			setDefault(client)
+		}
+	}
+
+	// 指标是进程级的单个 collector，只要有任一 client 开启就注册
+	for _, config := range configs {
+		if config.metricEnabled() {
+			registerPoolMetrics()
+			break
 		}
 	}
 	return nil

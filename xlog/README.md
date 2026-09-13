@@ -244,3 +244,34 @@ func main() {
 
 **ctx 为 nil 时日志照常输出**，只是取不到 TraceID 与 ctx 中注入的 KV。
 为一次传参疏忽丢掉一整条可能是 Error 级的日志，代价太大。
+
+## 观察者注销
+
+`AddObserver` 返回一个句柄，传给 `RemoveObserver` 即可注销：
+
+```go
+h := xlog.AddObserver(func(ctx context.Context, r xlog.Record) { ... })
+defer xlog.RemoveObserver(h)
+```
+
+以句柄而非函数值为准，是因为 Go 中函数不可比较 —— 相同的闭包每次构造都是不同的实例，
+按值是找不回来的。不需要注销时忽略返回值即可。
+
+## 日志文件权限
+
+默认 `0644`。日志可能含敏感信息，需要限制同机其他用户读取时：
+
+```yaml
+XLog:
+  File:
+    Enable: true
+    Perm: "0600"
+```
+
+八进制字符串，写错会回退到默认值并打一条 warn —— 笔误不应让日志文件变成不可读或全局可写。
+
+## 历史文件清理
+
+`MaxAge` 到期的历史文件在轮转时清理。过期判断优先用**文件名里的时间后缀**而不是 mtime：
+备份恢复、rsync、容器镜像分层都会重写 mtime，按它判断可能把上周的日志当成刚写的而永远不清，
+也可能把刚轮转出来的文件当成过期的删掉。文件名解析不了时才退回 mtime。

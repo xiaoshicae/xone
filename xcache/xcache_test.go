@@ -687,3 +687,37 @@ func TestRemoveCaches(t *testing.T) {
 		})
 	})
 }
+
+func TestGlobalCacheFullAPI(t *testing.T) {
+	PatchConvey("TestGlobalCacheFullAPI", t, func() {
+		PatchConvey("SetWithCost / SetWithCostAndTTL / Clear / Wait", func() {
+			withCleanGlobal(func() {
+				c.So(SetWithCost("a", "va", 3), c.ShouldBeTrue)
+				c.So(SetWithCostAndTTL("b", "vb", 3, time.Hour), c.ShouldBeTrue)
+				Wait()
+
+				va, okA := Get[string]("a")
+				vb, okB := Get[string]("b")
+				c.So(okA, c.ShouldBeTrue)
+				c.So(va, c.ShouldEqual, "va")
+				c.So(okB, c.ShouldBeTrue)
+				c.So(vb, c.ShouldEqual, "vb")
+
+				Clear()
+				Wait()
+				_, found := Get[string]("a")
+				c.So(found, c.ShouldBeFalse)
+			})
+		})
+
+		PatchConvey("关闭后所有包级函数安全返回", func() {
+			withCleanGlobal(func() {
+				c.So(closeXCache(), c.ShouldBeNil)
+				c.So(SetWithCost("a", "v", 1), c.ShouldBeFalse)
+				c.So(SetWithCostAndTTL("a", "v", 1, time.Hour), c.ShouldBeFalse)
+				Clear() // 不应 panic
+				Wait()  // 不应 panic
+			})
+		})
+	})
+}

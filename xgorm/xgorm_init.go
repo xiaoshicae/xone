@@ -78,6 +78,10 @@ func initSingle() error {
 	}
 
 	setDefault(client)
+
+	if config.metricEnabled() {
+		registerPoolMetrics()
+	}
 	return nil
 }
 
@@ -108,6 +112,14 @@ func initMulti() error {
 		// 第一个client为C()默认获取的client
 		if idx == 0 {
 			setDefault(client)
+		}
+	}
+
+	// 指标是进程级的单个 collector，只要有任一 client 开启就注册
+	for _, config := range configs {
+		if config.metricEnabled() {
+			registerPoolMetrics()
+			break
 		}
 	}
 	return nil
@@ -416,17 +428,20 @@ func injectPostgresKV(dsn string, injects map[string]string) string {
 
 	var sb strings.Builder
 	sb.WriteString(dsn)
+	// 只跟踪末字符而不是每轮 sb.String()：后者每次都会把整串复制一遍，
+	// 拼 n 个参数就是 O(n²)
+	needSpace := len(dsn) > 0 && !strings.HasSuffix(dsn, " ")
 	for _, k := range sortedKeys(injects) {
 		if _, dup := existing[k]; dup {
 			continue
 		}
-		v := injects[k]
-		if sb.Len() > 0 && !strings.HasSuffix(sb.String(), " ") {
+		if needSpace {
 			sb.WriteByte(' ')
 		}
 		sb.WriteString(k)
 		sb.WriteByte('=')
-		sb.WriteString(quotePostgresKVValue(v))
+		sb.WriteString(quotePostgresKVValue(injects[k]))
+		needSpace = true
 	}
 	return sb.String()
 }

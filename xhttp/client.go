@@ -69,3 +69,12 @@ func setRawHttpClient(client *http.Client) {
 	defer clientMu.Unlock()
 	rawHttpClient = client
 }
+
+// swapRawHttpClient 替换原生 client 并返回被替换掉的那个，供调用方释放其连接
+func swapRawHttpClient(client *http.Client) *http.Client {
+	clientMu.Lock()
+	defer clientMu.Unlock()
+	old := rawHttpClient
+	rawHttpClient = client
+	return old
+}

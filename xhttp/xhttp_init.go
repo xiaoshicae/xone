@@ -104,7 +104,10 @@ func initHttpClient() error {
 	}
 
 	setDefaultClient(restyClient)
-	setRawHttpClient(rawHttpClient)
+	// 重复初始化时释放上一个 transport 的空闲连接，否则旧连接一直挂着
+	if old := swapRawHttpClient(rawHttpClient); old != nil {
+		old.CloseIdleConnections()
+	}
 
 	return nil
 }

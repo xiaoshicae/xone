@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/xiaoshicae/xone/v2/xconfig"
 	"github.com/xiaoshicae/xone/v2/xtrace"
 	"github.com/xiaoshicae/xone/v2/xutil"
@@ -33,6 +34,7 @@ func TestConfigMergeDefault(t *testing.T) {
 				MaxLifetime:   "5m",
 				MaxIdleTime:   "5m",
 				SlowThreshold: "3s",
+				EnableMetric:  xutil.ToPtr(true),
 			})
 		})
 
@@ -743,5 +745,99 @@ func TestMaxIdleConnsPointer(t *testing.T) {
 			cfg := configMergeDefault(&Config{MaxOpenConns: 20, MaxIdleConns: xutil.ToPtr(0)})
 			c.So(cfg.maxIdleConns(), c.ShouldEqual, 0)
 		})
+	})
+}
+
+func TestPoolCollector(t *testing.T) {
+	PatchConvey("TestPoolCollector", t, func() {
+		PatchConvey("导出各连接池的实时状态", func() {
+			col := newPoolCollector()
+			col.statsFor = func() map[string]sql.DBStats {
+				return map[string]sql.DBStats{
+					"primary": {OpenConnections: 7, InUse: 3, Idle: 4, MaxOpenConnections: 50, WaitCount: 2, WaitDuration: 1500 * time.Millisecond},
+				}
+			}
+
+			reg := prometheus.NewRegistry()
+			c.So(reg.Register(col), c.ShouldBeNil)
+			got, err := reg.Gather()
+			c.So(err, c.ShouldBeNil)
+
+			values := map[string]float64{}
+			for _, f := range got {
+				for _, m := range f.Metric {
+					if m.Gauge != nil {
+						values[f.GetName()] = m.Gauge.GetValue()
+					}
+					if m.Counter != nil {
+						values[f.GetName()] = m.Counter.GetValue()
+					}
+				}
+			}
+			c.So(values[metricOpenConns], c.ShouldEqual, 7)
+			c.So(values[metricInUseConns], c.ShouldEqual, 3)
+			c.So(values[metricIdleConns], c.ShouldEqual, 4)
+			c.So(values[metricMaxOpenConns], c.ShouldEqual, 50)
+			c.So(values[metricWaitCount], c.ShouldEqual, 2)
+			// 耗时按秒记录，与 Prometheus 基准单位约定一致
+			c.So(values[metricWaitDuration], c.ShouldEqual, 1.5)
+		})
+
+		PatchConvey("Describe 覆盖全部指标", func() {
+			ch := make(chan *prometheus.Desc, 16)
+			newPoolCollector().Describe(ch)
+			close(ch)
+			n := 0
+			for range ch {
+				n++
+			}
+			c.So(n, c.ShouldEqual, 8)
+		})
+	})
+}
+
+func TestCollectPoolStats(t *testing.T) {
+	PatchConvey("TestCollectPoolStats", t, func() {
+		Mock((*gorm.DB).DB).Return(&sql.DB{}, nil).Build()
+		Mock((*sql.DB).Stats).Return(sql.DBStats{OpenConnections: 1}).Build()
+
+		PatchConvey("default 是具名 client 的别名，不重复导出", func() {
+			// 不跳过会让同一个池子的指标出现两份、总量翻倍
+			db := &gorm.DB{}
+			clientMu.Lock()
+			clientMap = map[string]*gorm.DB{defaultClientName: db, "primary": db}
+			clientMu.Unlock()
+
+			stats := collectPoolStats()
+			c.So(len(stats), c.ShouldEqual, 1)
+			_, ok := stats["primary"]
+			c.So(ok, c.ShouldBeTrue)
+		})
+
+		PatchConvey("单 client 场景用 default 兜底", func() {
+			clientMu.Lock()
+			clientMap = map[string]*gorm.DB{defaultClientName: &gorm.DB{}}
+			clientMu.Unlock()
+
+			stats := collectPoolStats()
+			c.So(len(stats), c.ShouldEqual, 1)
+			_, ok := stats[defaultClientName]
+			c.So(ok, c.ShouldBeTrue)
+		})
+
+		PatchConvey("无 client 时返回空", func() {
+			clientMu.Lock()
+			clientMap = map[string]*gorm.DB{}
+			clientMu.Unlock()
+			c.So(collectPoolStats(), c.ShouldBeEmpty)
+		})
+	})
+}
+
+func TestMetricEnabled(t *testing.T) {
+	PatchConvey("TestMetricEnabled", t, func() {
+		c.So((&Config{}).metricEnabled(), c.ShouldBeTrue)
+		c.So((&Config{EnableMetric: xutil.ToPtr(false)}).metricEnabled(), c.ShouldBeFalse)
+		c.So(configMergeDefault(nil).metricEnabled(), c.ShouldBeTrue)
 	})
 }

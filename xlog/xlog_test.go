@@ -36,6 +36,7 @@ func TestXLogConfig(t *testing.T) {
 				Name:       "app",
 				MaxAge:     "7d",
 				RotateTime: "1d",
+				Perm:       defaultFilePerm,
 			},
 		})
 	})
@@ -55,6 +56,7 @@ func TestXLogConfig(t *testing.T) {
 				Name:       "2",
 				MaxAge:     "4",
 				RotateTime: "5",
+				Perm:       defaultFilePerm,
 			},
 		}
 		// RotateTime "5" 会被解析为 5 纳秒，低于下限，回退到默认值
@@ -1149,5 +1151,65 @@ func TestAsyncWriterCloseTimeout(t *testing.T) {
 			_, _ = aw.Write([]byte("ok\n"))
 			c.So(aw.Close(), c.ShouldBeNil)
 		})
+	})
+}
+
+func TestCloseFileWriterSwapsHandler(t *testing.T) {
+	mockey.PatchConvey("TestCloseFileWriterSwapsHandler", t, func() {
+		// xlog 是最后关闭的模块，但 xconfig 的保留层级更低，其关闭日志在此之后产生。
+		// 不摘掉 fileWriter，这些日志会写进已关闭的写入器并静默失败
+		mockey.PatchConvey("摘掉文件写入器并保留控制台", func() {
+			consoleW := &mockWriter{}
+			aw := newAsyncWriter(&mockWriteCloser{}, 8)
+			handler.Store(&xHandler{
+				consoleWriter: newLockedWriter(consoleW),
+				fileWriter:    aw,
+				level:         slogLevelTrace,
+			})
+			fileWriterMu.Lock()
+			fileWriter = aw
+			fileWriterMu.Unlock()
+
+			c.So(closeFileWriter(), c.ShouldBeNil)
+			c.So(handler.Load().fileWriter, c.ShouldBeNil)
+			c.So(handler.Load().consoleWriter, c.ShouldNotBeNil)
+
+			// 关闭之后的日志仍能落到标准输出
+			RawLog(context.Background(), InfoLevel, "关闭阶段的日志")
+			c.So(string(consoleW.written), c.ShouldContainSubstring, "关闭阶段的日志")
+		})
+
+		mockey.PatchConvey("原本只写文件时补上标准输出", func() {
+			aw := newAsyncWriter(&mockWriteCloser{}, 8)
+			handler.Store(&xHandler{fileWriter: aw, level: slogLevelTrace})
+			fileWriterMu.Lock()
+			fileWriter = aw
+			fileWriterMu.Unlock()
+
+			c.So(closeFileWriter(), c.ShouldBeNil)
+			c.So(handler.Load().fileWriter, c.ShouldBeNil)
+			// 否则关闭阶段的日志彻底无处可去
+			c.So(handler.Load().consoleWriter, c.ShouldNotBeNil)
+		})
+
+		mockey.PatchConvey("没有文件写入器时是空操作", func() {
+			handler.Store(&xHandler{level: slogLevelTrace})
+			fileWriterMu.Lock()
+			fileWriter = nil
+			fileWriterMu.Unlock()
+			c.So(closeFileWriter(), c.ShouldBeNil)
+		})
+	})
+}
+
+func TestFileConfigFileMode(t *testing.T) {
+	mockey.PatchConvey("TestFileConfigFileMode", t, func() {
+		c.So(FileConfig{Perm: "0644"}.FileMode(), c.ShouldEqual, os.FileMode(0o644))
+		c.So(FileConfig{Perm: "0600"}.FileMode(), c.ShouldEqual, os.FileMode(0o600))
+		c.So(FileConfig{Perm: "600"}.FileMode(), c.ShouldEqual, os.FileMode(0o600))
+		// 笔误不应让日志文件变成不可读或全局可写
+		c.So(FileConfig{Perm: "abc"}.FileMode(), c.ShouldEqual, os.FileMode(defaultLogFilePerm))
+		c.So(FileConfig{Perm: ""}.FileMode(), c.ShouldEqual, os.FileMode(defaultLogFilePerm))
+		c.So(FileConfig{Perm: "0"}.FileMode(), c.ShouldEqual, os.FileMode(defaultLogFilePerm))
 	})
 }

@@ -1,5 +1,7 @@
 package xredis
 
+import "github.com/xiaoshicae/xone/v2/xutil"
+
 const XRedisConfigKey = "XRedis"
 
 type Config struct {
@@ -71,9 +73,20 @@ type Config struct {
 	// optional default ""（go-redis 默认 512ms，设置 "-1" 禁用退避）
 	MaxRetryBackoff string `mapstructure:"MaxRetryBackoff"`
 
+	// EnableMetric 是否启用连接池 Prometheus 指标采集（需配合 xmetric 模块）
+	// 指标在 scrape 时实时读取 redis.PoolStats()，不额外占用协程
+	// optional default true
+	EnableMetric *bool `mapstructure:"EnableMetric"`
+
 	// Name 用于区分多 client 配置时的唯一身份
 	// optional default ""
 	Name string `mapstructure:"Name"`
+}
+
+// metricEnabled 返回是否启用连接池指标
+// nil 视为启用，与文档中的默认值一致，避免直接构造 Config 的调用方踩空指针
+func (c *Config) metricEnabled() bool {
+	return c.EnableMetric == nil || *c.EnableMetric
 }
 
 func configMergeDefault(c *Config) *Config {
@@ -107,6 +120,9 @@ func configMergeDefault(c *Config) *Config {
 	}
 	// MaxRetries/MinRetryBackoff/MaxRetryBackoff 不设默认值
 	// go-redis 内部处理：0 → 使用默认值（3次/8ms/512ms），-1 → 禁用
+	if c.EnableMetric == nil {
+		c.EnableMetric = xutil.ToPtr(true)
+	}
 	return c
 }
 

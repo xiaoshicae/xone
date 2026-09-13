@@ -49,6 +49,24 @@ func SetWithTTL(key string, value any, ttl time.Duration) bool {
 	return cache.SetWithTTL(key, value, ttl)
 }
 
+// SetWithCost 向全局缓存设置值，指定 cost，使用默认 TTL
+func SetWithCost(key string, value any, cost int64) bool {
+	cache := global()
+	if cache == nil {
+		return false
+	}
+	return cache.SetWithCost(key, value, cost)
+}
+
+// SetWithCostAndTTL 向全局缓存设置值，指定 cost 和 TTL
+func SetWithCostAndTTL(key string, value any, cost int64, ttl time.Duration) bool {
+	cache := global()
+	if cache == nil {
+		return false
+	}
+	return cache.SetWithCostAndTTL(key, value, cost, ttl)
+}
+
 // Del 从全局缓存删除值
 func Del(key string) {
 	cache := global()
@@ -56,4 +74,23 @@ func Del(key string) {
 		return
 	}
 	cache.Del(key)
+}
+
+// Clear 清空全局缓存
+func Clear() {
+	cache := global()
+	if cache == nil {
+		return
+	}
+	cache.Clear()
+}
+
+// Wait 等待全局缓存的缓冲写入完成，主要用于测试场景
+// ristretto 内部使用环形缓冲区，Set 后值不一定立即可读
+func Wait() {
+	cache := global()
+	if cache == nil {
+		return
+	}
+	cache.Wait()
 }

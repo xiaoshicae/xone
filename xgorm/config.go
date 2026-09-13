@@ -63,6 +63,11 @@ type Config struct {
 	// optional default false
 	EnableLog bool `mapstructure:"EnableLog"`
 
+	// EnableMetric 是否启用连接池 Prometheus 指标采集（需配合 xmetric 模块）
+	// 指标在 scrape 时实时读取 sql.DB.Stats()，不额外占用协程
+	// optional default true
+	EnableMetric *bool `mapstructure:"EnableMetric"`
+
 	// Name 用于区分多client配置时的唯一身份
 	// optional default ""
 	Name string `mapstructure:"Name"`
@@ -138,7 +143,16 @@ func configMergeDefault(c *Config) *Config {
 	if c.SlowThreshold == "" {
 		c.SlowThreshold = "3s"
 	}
+	if c.EnableMetric == nil {
+		c.EnableMetric = xutil.ToPtr(true)
+	}
 	return c
+}
+
+// metricEnabled 返回是否启用连接池指标
+// nil 视为启用，与文档中的默认值一致，避免直接构造 Config 的调用方踩空指针
+func (c *Config) metricEnabled() bool {
+	return c.EnableMetric == nil || *c.EnableMetric
 }
 
 // maxIdleConns 返回生效的最大空闲连接数

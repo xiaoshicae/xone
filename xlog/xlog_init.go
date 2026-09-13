@@ -151,7 +151,7 @@ func newFileWriter(c *Config) (*asyncWriter, error) {
 	}
 
 	logFilePath := path.Join(c.File.Path, c.File.Name+".log")
-	w, err := newRotateWriter(logFilePath, xutil.ToDuration(c.File.MaxAge), xutil.ToDuration(c.File.RotateTime))
+	w, err := newRotateWriter(logFilePath, xutil.ToDuration(c.File.MaxAge), xutil.ToDuration(c.File.RotateTime), c.File.FileMode())
 	if err != nil {
 		return nil, err
 	}
@@ -176,7 +176,22 @@ func swapFileWriter(aw *asyncWriter) {
 }
 
 // closeFileWriter 关闭文件写入器，等待缓冲区写完
+//
+// 关闭前先把 handler 换成只留控制台的版本：xlog 是最后关闭的模块，
+// 但 xconfig 的保留层级比它更低，其关闭日志仍会在此之后产生。
+// 不摘掉 fileWriter 的话，这些日志会写进已关闭的写入器并静默失败，
+// 换掉之后它们至少还能落到标准输出
 func closeFileWriter() error {
+	if h := handler.Load(); h != nil && h.fileWriter != nil {
+		next := *h
+		next.fileWriter = nil
+		if next.consoleWriter == nil {
+			// 原本只写文件，此时补上标准输出，否则关闭阶段的日志彻底无处可去
+			next.consoleWriter = newLockedWriter(os.Stdout)
+		}
+		handler.Store(&next)
+	}
+
 	fileWriterMu.Lock()
 	aw := fileWriter
 	fileWriter = nil

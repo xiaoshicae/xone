@@ -137,3 +137,7 @@ XHttp:
   一直挂着，出现在 BeforeStop hook 里就会卡住整个进程的退出流程
 - 推荐使用 `RWithCtx(ctx)` 以确保链路追踪信息正确传递
 - 时间配置支持 "d"（天）格式，如 `"1d12h"` 表示 1 天 12 小时
+- 出站 trace 的 span 名是 `METHOD /path`，用的是**实际路径**而非路由模板。
+  访问 `/user/123` 这类含 ID 的接口会产生高基数 span 名，链路后端上会看到大量
+  只出现一次的 span。指标侧不受影响（label 只有 method/host/status，不含 path）；
+  需要模板化时用 `otelhttp.WithSpanNameFormatter` 自行包装 transport

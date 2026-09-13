@@ -3,6 +3,7 @@ package xlog
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -18,8 +19,8 @@ const (
 	rotateLayoutMinute = "200601021504"
 )
 
-// logFilePerm 日志文件权限
-const logFilePerm = 0o644
+// defaultLogFilePerm 日志文件默认权限
+const defaultLogFilePerm = 0o644
 
 // rotateErrLogInterval 轮转失败告警的最小间隔
 const rotateErrLogInterval = time.Minute
@@ -40,6 +41,9 @@ type rotateWriter struct {
 	// clock 可注入的时间源，便于测试轮转与清理
 	clock func() time.Time
 
+	// perm 日志文件权限
+	perm os.FileMode
+
 	mu          sync.Mutex
 	file        *os.File
 	currentName string
@@ -51,7 +55,10 @@ type rotateWriter struct {
 
 // newRotateWriter 创建轮转写入器并立即打开当前文件
 // 提前打开可将权限、路径等问题暴露在初始化阶段，而非首次写日志时才失败
-func newRotateWriter(base string, maxAge, rotate time.Duration) (*rotateWriter, error) {
+func newRotateWriter(base string, maxAge, rotate time.Duration, perm os.FileMode) (*rotateWriter, error) {
+	if perm == 0 {
+		perm = defaultLogFilePerm
+	}
 	w := &rotateWriter{
 		base:     base,
 		linkName: base,
@@ -59,6 +66,7 @@ func newRotateWriter(base string, maxAge, rotate time.Duration) (*rotateWriter, 
 		maxAge:   maxAge,
 		rotate:   rotate,
 		clock:    time.Now,
+		perm:     perm,
 	}
 	if err := w.rotateTo(w.filenameFor(w.clock())); err != nil {
 		return nil, err
@@ -142,7 +150,7 @@ func (w *rotateWriter) filenameFor(t time.Time) string {
 // rotateTo 切换到指定文件
 // 调用方需持有锁；构造阶段实例尚未被共享，此时无需加锁
 func (w *rotateWriter) rotateTo(name string) error {
-	f, err := os.OpenFile(name, os.O_CREATE|os.O_WRONLY|os.O_APPEND, logFilePerm)
+	f, err := os.OpenFile(name, os.O_CREATE|os.O_WRONLY|os.O_APPEND, w.perm)
 	if err != nil {
 		return xerror.Newf("xlog", "rotate", "open log file failed, file=[%s], err=[%v]", name, err)
 	}
@@ -206,13 +214,27 @@ func (w *rotateWriter) purge(current string) {
 		if path == current {
 			continue // 不删除正在写入的文件
 		}
-		if fi.ModTime().After(cutoff) {
+		if !w.expired(path, fi, cutoff) {
 			continue
 		}
 		if err := os.Remove(path); err != nil {
 			xutil.WarnIfEnableDebug("XOne rotateWriter remove expired log failed, file=[%s], err=[%v]", path, err)
 		}
 	}
+}
+
+// expired 判断历史日志文件是否已过保留期
+//
+// 优先用文件名里的时间后缀，而不是 mtime：备份恢复、rsync、容器镜像分层
+// 都会重写 mtime，按它判断可能把昨天的日志当成刚写的而永远不清，
+// 也可能把刚轮转出来的文件当成过期的删掉。文件名解析不了时才退回 mtime
+func (w *rotateWriter) expired(path string, fi os.FileInfo, cutoff time.Time) bool {
+	suffix := strings.TrimPrefix(path, w.base+".")
+	if t, err := time.ParseInLocation(w.layout, suffix, w.clock().Location()); err == nil {
+		// 文件名记的是所属周期的起点，整个周期结束后才算过期
+		return t.Add(w.rotate).Before(cutoff) || t.Add(w.rotate).Equal(cutoff)
+	}
+	return !fi.ModTime().After(cutoff)
 }
 
 // truncateInLocation 按周期截断时间，且对齐到本地时区

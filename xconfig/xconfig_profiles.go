@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/xiaoshicae/xone/v2/xerror"
@@ -17,6 +18,12 @@ const (
 	profilesActiveConfigKey = "Server.Profiles.Active"
 	profilesActiveEnvKey    = "SERVER_PROFILES_ACTIVE"
 )
+
+// profilesActivePattern 激活环境名的合法字符集
+//
+// 环境名会被拼进配置文件路径，必须限制字符集：否则 SERVER_PROFILES_ACTIVE=../../etc/x
+// 会让进程去加载任意路径下的 YAML。
+var profilesActivePattern = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 
 func detectProfilesActive(vip *viper.Viper) string {
 	if pa := getProfilesActiveFromArg(); pa != "" {
@@ -51,12 +58,20 @@ func getProfilesActiveFromViperConfig(vp *viper.Viper) string {
 	if vp == nil {
 		return ""
 	}
-	return vp.GetString(profilesActiveConfigKey)
+	// 此时整份配置尚未展开占位符，单独展开这一个值即可；
+	// 环境变量缺失时返回原样，随后的字符集校验会拦下它
+	expanded, _ := expandEnvPlaceholder(vp.GetString(profilesActiveConfigKey))
+	return expanded
 }
 
 // toProfilesActiveConfigLocation 根据基础配置文件路径和激活的环境，构建环境配置文件路径
 // 例如: ./conf/application.yml + dev -> ./conf/application-dev.yml
 func toProfilesActiveConfigLocation(configLocation string, pa string) (string, error) {
+	if !profilesActivePattern.MatchString(pa) {
+		return "", xerror.Newf("xconfig", "init",
+			"profiles active is invalid, only letters, digits, '_' and '-' are allowed, profiles_active=[%s]", pa)
+	}
+
 	ext := filepath.Ext(configLocation)
 	if ext == "" {
 		return "", xerror.Newf("xconfig", "init", "config file name is invalid, no extension found")

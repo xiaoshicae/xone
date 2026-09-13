@@ -2,6 +2,7 @@ package xconfig
 
 import (
 	"reflect"
+	"sync"
 	"time"
 
 	"github.com/xiaoshicae/xone/v2/xerror"
@@ -20,12 +21,13 @@ const (
 	dotEnvFileName = ".env"
 )
 
+// UnmarshalConfig 把 key 对应的配置反序列化到 conf，conf 必须是非 nil 指针
 func UnmarshalConfig(key string, conf any) error {
 	if err := checkParam(key, conf); err != nil {
 		return err
 	}
 	if err := getViperConfig().UnmarshalKey(key, conf); err != nil {
-		return err
+		return xerror.Newf("xconfig", "UnmarshalConfig", "unmarshal failed, key=[%s], err=[%v]", key, err)
 	}
 	return nil
 }
@@ -86,10 +88,13 @@ func GetRawServerName() string {
 	return getViperConfig().GetString(serverNameConfigKey)
 }
 
-// GetServerVersion 获取Server的Version，如果没有配置则为空
+// GetServerVersion 获取Server的Version，如果没有配置则为默认值 v0.0.1
 func GetServerVersion() string {
 	return xutil.GetOrDefault(getViperConfig().GetString(serverVersionConfigKey), defaultServerVersion)
 }
+
+// emptyViperConfig 未初始化时返回的空配置，进程内复用一份，避免每次调用都分配
+var emptyViperConfig = sync.OnceValue(viper.New)
 
 func getViperConfig() *viper.Viper {
 	vipMu.RLock()
@@ -97,7 +102,7 @@ func getViperConfig() *viper.Viper {
 	vipMu.RUnlock()
 	if v == nil {
 		xutil.WarnIfEnableDebug("config not found，please init config first")
-		return viper.New()
+		return emptyViperConfig()
 	}
 	return v
 }
@@ -109,8 +114,13 @@ func checkParam(key string, conf any) error {
 	if conf == nil {
 		return xerror.Newf("xconfig", "checkParam", "param conf is nil")
 	}
-	if reflect.TypeOf(conf).Kind() != reflect.Ptr {
+	v := reflect.ValueOf(conf)
+	if v.Kind() != reflect.Ptr {
 		return xerror.Newf("xconfig", "checkParam", "param conf is not ptr")
+	}
+	// 类型化的 nil 指针能通过 Kind 检查，但反序列化时无处可写
+	if v.IsNil() {
+		return xerror.Newf("xconfig", "checkParam", "param conf is a nil pointer")
 	}
 	return nil
 }

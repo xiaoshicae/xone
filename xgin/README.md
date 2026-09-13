@@ -139,7 +139,7 @@ XGin:
 
 Metric 中间件采集指标：
 - `http_requests_total{method, path, status}` — 入站请求总数
-- `http_request_duration_ms{method, path, status}` — 入站请求耗时（毫秒）
+- `http_request_duration_seconds{method, path, status}` — 入站请求耗时（秒）
 
 关闭方式：
 

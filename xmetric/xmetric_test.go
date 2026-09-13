@@ -696,14 +696,14 @@ func TestConstLabels(t *testing.T) {
 		metricConfig = &Config{ConstLabels: map[string]string{"cluster": "cn-east"}}
 		registryMu.Unlock()
 
-		HistogramObserve("latency_ms", 10, T("api", "users"))
+		HistogramObserve("latency_seconds", 10, T("api", "users"))
 
 		metrics, err := defaultRegistry.Gather()
 		So(err, ShouldBeNil)
 
 		var found *dto.MetricFamily
 		for _, m := range metrics {
-			if *m.Name == "latency_ms" {
+			if *m.Name == "latency_seconds" {
 				found = m
 				break
 			}
@@ -834,7 +834,7 @@ func TestConfigAccessorsReturnCopies(t *testing.T) {
 			*c.EnableGoMetrics = false
 
 			So(GetConfig().Namespace, ShouldEqual, "orig")
-			So(getHttpDurationBuckets()[0], ShouldEqual, 1)
+			So(getHttpDurationBuckets()[0], ShouldEqual, 0.001)
 			So(GetConstLabels()["env"], ShouldEqual, "prod")
 			So(*GetConfig().EnableGoMetrics, ShouldBeTrue)
 		})
@@ -842,7 +842,7 @@ func TestConfigAccessorsReturnCopies(t *testing.T) {
 		PatchConvey("桶边界返回副本", func() {
 			b := GetHttpDurationBuckets()
 			b[0] = -999
-			So(GetHttpDurationBuckets()[0], ShouldEqual, 1)
+			So(GetHttpDurationBuckets()[0], ShouldEqual, 0.001)
 
 			hb := getHistogramObserveBuckets()
 			hb[0] = -999

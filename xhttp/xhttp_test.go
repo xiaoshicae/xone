@@ -574,7 +574,7 @@ func TestRecordHTTPClientMetric_NilReq(t *testing.T) {
 	mockey.PatchConvey("TestRecordHTTPClientMetric-nil请求不panic", t, func() {
 		// req 为 nil 时不应 panic
 		c.So(func() {
-			xmetric.RecordHTTPClientMetric("GET", "example.com", "200", 100, nil)
+			xmetric.RecordHTTPClientMetric("GET", "example.com", "200", 100*time.Millisecond, nil)
 		}, c.ShouldNotPanic)
 	})
 }
@@ -613,7 +613,7 @@ func TestRegisterMetricHooks_DurationRecorded(t *testing.T) {
 		metrics, gatherErr := xmetric.Registry().Gather()
 		c.So(gatherErr, c.ShouldBeNil)
 
-		histFamily := findMetricFamily(metrics, "http_client_request_duration_ms")
+		histFamily := findMetricFamily(metrics, "http_client_request_duration_seconds")
 		c.So(histFamily, c.ShouldNotBeNil)
 
 		// 应有至少 1 个 histogram 样本
@@ -621,8 +621,8 @@ func TestRegisterMetricHooks_DurationRecorded(t *testing.T) {
 		for _, m := range histFamily.Metric {
 			if findLabelValue(m, "host") == host {
 				c.So(*m.Histogram.SampleCount, c.ShouldBeGreaterThan, 0)
-				// 耗时应 >= 10ms
-				c.So(*m.Histogram.SampleSum, c.ShouldBeGreaterThanOrEqualTo, 10)
+				// 耗时应 >= 10ms，指标以秒记录
+				c.So(*m.Histogram.SampleSum, c.ShouldBeGreaterThanOrEqualTo, 0.01)
 			}
 		}
 	})

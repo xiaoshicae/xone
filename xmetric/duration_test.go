@@ -97,3 +97,78 @@ func gatherHistogram(t *testing.T, name string) *dto.Histogram {
 	t.Fatalf("metric %s not found, got %v", name, gatheredNames())
 	return nil
 }
+
+func TestTrackInFlight(t *testing.T) {
+	PatchConvey("TestTrackInFlight", t, func() {
+		resetState()
+
+		gaugeValue := func(name string) float64 {
+			fams, _ := Registry().Gather()
+			for _, f := range fams {
+				if f.GetName() == name {
+					return f.GetMetric()[0].GetGauge().GetValue()
+				}
+			}
+			return -1
+		}
+
+		PatchConvey("进入时 +1，返回的函数执行时 -1", func() {
+			done := TrackInFlight("active_requests")
+			So(gaugeValue("active_requests"), ShouldEqual, 1)
+
+			done()
+			So(gaugeValue("active_requests"), ShouldEqual, 0)
+		})
+
+		PatchConvey("并发进行中数量正确", func() {
+			var stops []func()
+			for range 5 {
+				stops = append(stops, TrackInFlight("active_requests"))
+			}
+			So(gaugeValue("active_requests"), ShouldEqual, 5)
+
+			for _, stop := range stops {
+				stop()
+			}
+			So(gaugeValue("active_requests"), ShouldEqual, 0)
+		})
+
+		PatchConvey("重复调用返回值不会把计数减穿", func() {
+			done := TrackInFlight("active_requests")
+			done()
+			done()
+			done()
+			So(gaugeValue("active_requests"), ShouldEqual, 0)
+		})
+
+		PatchConvey("标签照常生效", func() {
+			done := TrackInFlight("active_requests", T("api", "/order"))
+			defer done()
+
+			fams, _ := Registry().Gather()
+			var found bool
+			for _, f := range fams {
+				if f.GetName() != "active_requests" {
+					continue
+				}
+				for _, m := range f.GetMetric() {
+					for _, l := range m.GetLabel() {
+						if l.GetName() == "api" && l.GetValue() == "/order" {
+							found = true
+						}
+					}
+				}
+			}
+			So(found, ShouldBeTrue)
+		})
+
+		PatchConvey("defer 写法下 panic 也能正确减回", func() {
+			func() {
+				defer func() { recover() }()
+				defer TrackInFlight("active_requests")()
+				panic("boom")
+			}()
+			So(gaugeValue("active_requests"), ShouldEqual, 0)
+		})
+	})
+}

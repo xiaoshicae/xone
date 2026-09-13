@@ -2,6 +2,7 @@ package xmetric
 
 import (
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -45,4 +46,21 @@ func durationMetricName(name string) string {
 		return name
 	}
 	return name + durationSuffix
+}
+
+// TrackInFlight 记录"当前正在进行中的数量"，返回的函数在调用时减回去
+//
+//	defer xmetric.TrackInFlight("active_requests", xmetric.T("api", "/order"))()
+//
+// GaugeInc / GaugeDec 必须成对出现，而早返回和 panic 路径上极容易漏掉 Dec——
+// 漏一次计数就永久偏高，且不会有任何报错。交给 defer 才是天然正确的。
+//
+// 返回的函数重复调用只有首次生效，避免计数被减穿。
+func TrackInFlight(name string, tags ...Tag) func() {
+	GaugeInc(name, tags...)
+
+	var once sync.Once
+	return func() {
+		once.Do(func() { GaugeDec(name, tags...) })
+	}
 }

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"testing"
+	"time"
 
 	. "github.com/bytedance/mockey"
 	"github.com/prometheus/client_golang/prometheus"
@@ -112,7 +113,7 @@ func TestHTTPClientMetricTransport_RoundTrip_Success(t *testing.T) {
 		So(findLabelValue(counterFamily.Metric[0], "status"), ShouldEqual, "200")
 
 		// 验证 histogram
-		histFamily := findMetricFamily(metrics, "http_client_request_duration_ms")
+		histFamily := findMetricFamily(metrics, "http_client_request_duration_seconds")
 		So(histFamily, ShouldNotBeNil)
 		So(*histFamily.Metric[0].Histogram.SampleCount, ShouldEqual, 1)
 	})
@@ -182,7 +183,7 @@ func TestHTTPClientMetricTransport_RoundTrip_MultipleRequests(t *testing.T) {
 		}
 
 		// 验证 histogram 总计 4 次
-		histFamily := findMetricFamily(metrics, "http_client_request_duration_ms")
+		histFamily := findMetricFamily(metrics, "http_client_request_duration_seconds")
 		So(histFamily, ShouldNotBeNil)
 		var totalCount uint64
 		for _, m := range histFamily.Metric {
@@ -267,7 +268,7 @@ func TestHTTPClientMetricTransport_RoundTrip_DurationRecorded(t *testing.T) {
 		metrics, err := defaultRegistry.Gather()
 		So(err, ShouldBeNil)
 
-		histFamily := findMetricFamily(metrics, "http_client_request_duration_ms")
+		histFamily := findMetricFamily(metrics, "http_client_request_duration_seconds")
 		So(histFamily, ShouldNotBeNil)
 		So(*histFamily.Metric[0].Histogram.SampleCount, ShouldEqual, 1)
 		// 耗时应 >= 0（mockRoundTripper 几乎无延迟）
@@ -400,7 +401,7 @@ func TestRecordHTTPClientMetric_ExemplarOverLimit(t *testing.T) {
 
 		req, _ := http.NewRequest("GET", "http://example.com/a]long/path/that/is/not/short", nil)
 		So(func() {
-			RecordHTTPClientMetric("GET", "example.com", "200", 50, req)
+			RecordHTTPClientMetric("GET", "example.com", "200", 50*time.Millisecond, req)
 		}, ShouldNotPanic)
 
 		// 指标应被正常记录（即使 exemplar 附加失败）
@@ -411,7 +412,7 @@ func TestRecordHTTPClientMetric_ExemplarOverLimit(t *testing.T) {
 		So(counterFamily, ShouldNotBeNil)
 		So(*counterFamily.Metric[0].Counter.Value, ShouldEqual, 1)
 
-		histFamily := findMetricFamily(metrics, "http_client_request_duration_ms")
+		histFamily := findMetricFamily(metrics, "http_client_request_duration_seconds")
 		So(histFamily, ShouldNotBeNil)
 		So(*histFamily.Metric[0].Histogram.SampleCount, ShouldEqual, 1)
 	})
@@ -434,14 +435,14 @@ func TestHttpClientCollectors(t *testing.T) {
 		registryMu.Lock()
 		metricConfig = configMergeDefault(&Config{Namespace: "first"})
 		registryMu.Unlock()
-		RecordHTTPClientMetric("GET", "a.com", "200", 1, nil)
+		RecordHTTPClientMetric("GET", "a.com", "200", 1*time.Millisecond, nil)
 
 		// 关闭会清空缓存，重新初始化后新的 Namespace 必须生效
 		So(closeMetric(), ShouldBeNil)
 		registryMu.Lock()
 		metricConfig = configMergeDefault(&Config{Namespace: "second"})
 		registryMu.Unlock()
-		RecordHTTPClientMetric("GET", "b.com", "200", 1, nil)
+		RecordHTTPClientMetric("GET", "b.com", "200", 1*time.Millisecond, nil)
 
 		names := gatheredNames()
 		So(names, ShouldContain, "second_http_client_requests_total")
@@ -450,7 +451,7 @@ func TestHttpClientCollectors(t *testing.T) {
 
 func TestDefaultHttpDurationBuckets(t *testing.T) {
 	PatchConvey("TestDefaultHttpDurationBuckets-桶边界正确", t, func() {
-		expected := []float64{1, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000}
+		expected := []float64{0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10}
 		So(defaultHttpDurationBuckets, ShouldResemble, expected)
 	})
 }

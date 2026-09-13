@@ -11,8 +11,12 @@ import (
 
 const XMetricConfigKey = "XMetric"
 
-// defaultHttpDurationBuckets HTTP 请求耗时默认桶边界（毫秒）
-var defaultHttpDurationBuckets = []float64{1, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000}
+// defaultHttpDurationBuckets HTTP 请求耗时默认桶边界（秒）
+//
+// 与 prometheus.DefBuckets 同构，另在头部补一档 1ms 以便观察极快的接口。
+// 用秒而非毫秒：Prometheus 约定以基准单位记录，DefBuckets、各类 exporter、
+// 社区看板与告警模板都按秒来，混用单位会让同一个服务导出两套刻度。
+var defaultHttpDurationBuckets = []float64{0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10}
 
 // Config xmetric 配置
 type Config struct {
@@ -25,12 +29,12 @@ type Config struct {
 	// optional default nil
 	ConstLabels map[string]string `mapstructure:"ConstLabels"`
 
-	// HttpDurationBuckets HTTP 入站/出站请求耗时 Histogram 的桶边界（毫秒）
-	// 影响 http_request_duration_ms（xgin middleware）和 http_client_request_duration_ms（xhttp transport）
-	// optional default [1, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000]
+	// HttpDurationBuckets HTTP 入站/出站请求耗时 Histogram 的桶边界（秒）
+	// 影响 http_request_duration_seconds（xgin middleware）和 http_client_request_duration_seconds（xhttp transport）
+	// optional default [0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10]
 	HttpDurationBuckets []float64 `mapstructure:"HttpDurationBuckets"`
 
-	// HistogramObserveBuckets 通过 HistogramObserve() API 创建的业务 Histogram 默认桶边界（秒）
+	// HistogramObserveBuckets 通过 HistogramObserve() / ObserveDuration() 创建的业务 Histogram 默认桶边界（秒）
 	// 影响 xmetric.HistogramObserve() 调用创建的所有 Histogram 指标
 	// optional default prometheus.DefBuckets
 	HistogramObserveBuckets []float64 `mapstructure:"HistogramObserveBuckets"`

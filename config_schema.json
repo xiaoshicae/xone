@@ -236,7 +236,7 @@
         },
         "HttpDurationBuckets": {
           "type": "array",
-          "description": "HTTP 入站/出站请求耗时 Histogram 桶边界（毫秒），影响 http_request_duration_ms 和 http_client_request_duration_ms，默认 [1,5,10,25,50,100,250,500,1000,2500,5000,10000]",
+          "description": "HTTP 入站/出站请求耗时 Histogram 桶边界（秒），影响 http_request_duration_seconds 和 http_client_request_duration_seconds，默认 [0.001,0.005,0.01,0.025,0.05,0.1,0.25,0.5,1,2.5,5,10]",
           "items": {
             "type": "number"
           }
@@ -304,7 +304,7 @@
         },
         "EnableMetric": {
           "type": ["boolean", "string"],
-          "description": "是否启用出站请求 Prometheus 指标采集（http_client_requests_total / http_client_request_duration_ms），默认 true"
+          "description": "是否启用出站请求 Prometheus 指标采集（http_client_requests_total / http_client_request_duration_seconds），默认 true"
         }
       }
     },

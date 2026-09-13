@@ -129,7 +129,7 @@ func metricOnSuccess(_ *resty.Client, resp *resty.Response) {
 		raw.Method,
 		raw.URL.Host,
 		strconv.Itoa(resp.StatusCode()),
-		float64(resp.Time().Milliseconds()),
+		resp.Time(),
 		raw,
 	)
 }
@@ -141,15 +141,15 @@ func metricOnError(req *resty.Request, err error) {
 		return
 	}
 	status := "0"
-	durationMs := float64(time.Since(req.Time).Milliseconds())
+	duration := time.Since(req.Time)
 
 	// ResponseError 包含最终响应（如非重试条件的错误带有部分响应）
 	var re *resty.ResponseError
 	if errors.As(err, &re) && re.Response != nil {
 		status = strconv.Itoa(re.Response.StatusCode())
-		durationMs = float64(re.Response.Time().Milliseconds())
+		duration = re.Response.Time()
 	}
-	xmetric.RecordHTTPClientMetric(raw.Method, raw.URL.Host, status, durationMs, raw)
+	xmetric.RecordHTTPClientMetric(raw.Method, raw.URL.Host, status, duration, raw)
 }
 
 func getConfig() (*Config, error) {

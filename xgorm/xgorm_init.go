@@ -4,10 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"maps"
 	"math"
 	"net/url"
 	"regexp"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -405,7 +406,7 @@ func injectPostgresURL(dsn string, injects map[string]string) (string, error) {
 		return "", err
 	}
 	q := u.Query()
-	for _, k := range sortedKeys(injects) {
+	for _, k := range slices.Sorted(maps.Keys(injects)) {
 		if _, exists := q[k]; exists {
 			continue
 		}
@@ -431,7 +432,7 @@ func injectPostgresKV(dsn string, injects map[string]string) string {
 	// 只跟踪末字符而不是每轮 sb.String()：后者每次都会把整串复制一遍，
 	// 拼 n 个参数就是 O(n²)
 	needSpace := len(dsn) > 0 && !strings.HasSuffix(dsn, " ")
-	for _, k := range sortedKeys(injects) {
+	for _, k := range slices.Sorted(maps.Keys(injects)) {
 		if _, dup := existing[k]; dup {
 			continue
 		}
@@ -457,16 +458,6 @@ func quotePostgresKVValue(v string) string {
 	escaped := strings.ReplaceAll(v, `\`, `\\`)
 	escaped = strings.ReplaceAll(escaped, `'`, `\'`)
 	return "'" + escaped + "'"
-}
-
-// sortedKeys 返回 map 键的排序切片，保证注入顺序稳定（方便测试）
-func sortedKeys(m map[string]string) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
 }
 
 // durationToSeconds 把时长字符串向上取整为整数秒字符串（供 PG connect_timeout 使用）

@@ -7,17 +7,36 @@ import (
 	"github.com/xiaoshicae/xone/v2/xmetric"
 )
 
-// 连接池指标名，按 Prometheus 约定以基准单位命名
-const (
-	metricOpenConns     = "db_connections_open"
-	metricInUseConns    = "db_connections_in_use"
-	metricIdleConns     = "db_connections_idle"
-	metricMaxOpenConns  = "db_connections_max_open"
-	metricWaitCount     = "db_connections_wait_total"
-	metricWaitDuration  = "db_connections_wait_duration_seconds_total"
-	metricMaxIdleClosed = "db_connections_closed_max_idle_total"
-	metricMaxLifeClosed = "db_connections_closed_max_lifetime_total"
-)
+// poolMetric 一个连接池指标的完整定义
+//
+// 用表驱动而不是为每个指标开一个结构体字段：后者要在常量、字段、
+// 构造函数、Collect 四处各写一遍，加一个指标就得同步改四个地方
+type poolMetric struct {
+	name  string
+	help  string
+	typ   prometheus.ValueType
+	value func(sql.DBStats) float64
+}
+
+// poolMetrics 连接池指标表，指标名按 Prometheus 约定以基准单位命名
+var poolMetrics = []poolMetric{
+	{"db_connections_open", "当前已建立的连接数（使用中 + 空闲）", prometheus.GaugeValue,
+		func(s sql.DBStats) float64 { return float64(s.OpenConnections) }},
+	{"db_connections_in_use", "当前正在使用的连接数", prometheus.GaugeValue,
+		func(s sql.DBStats) float64 { return float64(s.InUse) }},
+	{"db_connections_idle", "当前空闲的连接数", prometheus.GaugeValue,
+		func(s sql.DBStats) float64 { return float64(s.Idle) }},
+	{"db_connections_max_open", "连接数上限，0 表示不限制", prometheus.GaugeValue,
+		func(s sql.DBStats) float64 { return float64(s.MaxOpenConnections) }},
+	{"db_connections_wait_total", "累计等待连接的次数", prometheus.CounterValue,
+		func(s sql.DBStats) float64 { return float64(s.WaitCount) }},
+	{"db_connections_wait_duration_seconds_total", "累计等待连接的时长", prometheus.CounterValue,
+		func(s sql.DBStats) float64 { return s.WaitDuration.Seconds() }},
+	{"db_connections_closed_max_idle_total", "因超过空闲上限而关闭的连接累计数", prometheus.CounterValue,
+		func(s sql.DBStats) float64 { return float64(s.MaxIdleTimeClosed) }},
+	{"db_connections_closed_max_lifetime_total", "因超过存活时长而关闭的连接累计数", prometheus.CounterValue,
+		func(s sql.DBStats) float64 { return float64(s.MaxLifetimeClosed) }},
+}
 
 // poolCollector 在 scrape 时读取各连接池的实时状态
 //
@@ -25,63 +44,32 @@ const (
 // 连接池状态是瞬时量，推模式下采集间隔与推送间隔错开就会读到过期值，
 // 而且需要额外一个后台协程
 type poolCollector struct {
-	openDesc    *prometheus.Desc
-	inUseDesc   *prometheus.Desc
-	idleDesc    *prometheus.Desc
-	maxOpenDesc *prometheus.Desc
-	waitDesc    *prometheus.Desc
-	waitDurDesc *prometheus.Desc
-	maxIdleDesc *prometheus.Desc
-	maxLifeDesc *prometheus.Desc
-	statsFor    func() map[string]sql.DBStats
+	descs    []*prometheus.Desc // 与 poolMetrics 一一对应
+	statsFor func() map[string]sql.DBStats
 }
 
 func newPoolCollector() *poolCollector {
 	ns := xmetric.GetConfig().Namespace
 	labels := xmetric.GetConstLabels()
-	newDesc := func(name, help string) *prometheus.Desc {
-		return prometheus.NewDesc(prometheus.BuildFQName(ns, "", name), help, []string{"name"}, labels)
+
+	descs := make([]*prometheus.Desc, len(poolMetrics))
+	for i, m := range poolMetrics {
+		descs[i] = prometheus.NewDesc(prometheus.BuildFQName(ns, "", m.name), m.help, []string{"name"}, labels)
 	}
-	return &poolCollector{
-		openDesc:    newDesc(metricOpenConns, "当前已建立的连接数（使用中 + 空闲）"),
-		inUseDesc:   newDesc(metricInUseConns, "当前正在使用的连接数"),
-		idleDesc:    newDesc(metricIdleConns, "当前空闲的连接数"),
-		maxOpenDesc: newDesc(metricMaxOpenConns, "连接数上限，0 表示不限制"),
-		waitDesc:    newDesc(metricWaitCount, "累计等待连接的次数"),
-		waitDurDesc: newDesc(metricWaitDuration, "累计等待连接的时长"),
-		maxIdleDesc: newDesc(metricMaxIdleClosed, "因超过空闲上限而关闭的连接累计数"),
-		maxLifeDesc: newDesc(metricMaxLifeClosed, "因超过存活时长而关闭的连接累计数"),
-		statsFor:    collectPoolStats,
-	}
+	return &poolCollector{descs: descs, statsFor: collectPoolStats}
 }
 
 func (c *poolCollector) Describe(ch chan<- *prometheus.Desc) {
-	ch <- c.openDesc
-	ch <- c.inUseDesc
-	ch <- c.idleDesc
-	ch <- c.maxOpenDesc
-	ch <- c.waitDesc
-	ch <- c.waitDurDesc
-	ch <- c.maxIdleDesc
-	ch <- c.maxLifeDesc
+	for _, d := range c.descs {
+		ch <- d
+	}
 }
 
 func (c *poolCollector) Collect(ch chan<- prometheus.Metric) {
 	for name, s := range c.statsFor() {
-		gauge := func(d *prometheus.Desc, v float64) {
-			ch <- prometheus.MustNewConstMetric(d, prometheus.GaugeValue, v, name)
+		for i, m := range poolMetrics {
+			ch <- prometheus.MustNewConstMetric(c.descs[i], m.typ, m.value(s), name)
 		}
-		counter := func(d *prometheus.Desc, v float64) {
-			ch <- prometheus.MustNewConstMetric(d, prometheus.CounterValue, v, name)
-		}
-		gauge(c.openDesc, float64(s.OpenConnections))
-		gauge(c.inUseDesc, float64(s.InUse))
-		gauge(c.idleDesc, float64(s.Idle))
-		gauge(c.maxOpenDesc, float64(s.MaxOpenConnections))
-		counter(c.waitDesc, float64(s.WaitCount))
-		counter(c.waitDurDesc, s.WaitDuration.Seconds())
-		counter(c.maxIdleDesc, float64(s.MaxIdleTimeClosed))
-		counter(c.maxLifeDesc, float64(s.MaxLifetimeClosed))
 	}
 }
 

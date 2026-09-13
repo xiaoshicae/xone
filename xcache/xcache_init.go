@@ -84,20 +84,21 @@ func closeXCache() error {
 	closed = true
 
 	// 用于去重，避免同一个 *Cache 被关闭多次（multi 模式下 default 指向第一个 named cache）
-	closed := make(map[*Cache]struct{})
+	// 不叫 closed：那样会遮蔽上面的包级标志位，读的人得停下来确认一次
+	seen := make(map[*Cache]struct{})
 
 	for _, cache := range cacheMap {
-		if _, ok := closed[cache]; ok {
+		if _, ok := seen[cache]; ok {
 			continue
 		}
-		closed[cache] = struct{}{}
+		seen[cache] = struct{}{}
 		cache.Close()
 	}
 	clear(cacheMap)
 
 	// 关闭懒初始化的全局缓存
 	if globalCache != nil {
-		if _, ok := closed[globalCache]; !ok {
+		if _, ok := seen[globalCache]; !ok {
 			globalCache.Close()
 		}
 		globalCache = nil

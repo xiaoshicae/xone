@@ -2,7 +2,8 @@ package trans
 
 import (
 	"errors"
-	"sort"
+	"maps"
+	"slices"
 	"strings"
 	"sync"
 
@@ -56,23 +57,18 @@ func ToZHErr(err error) error {
 		result[e.Field()] = append(result[e.Field()], e.Translate(t))
 	}
 
-	kvs := make([]VErrKV, 0)
-	for k, v := range result {
-		kvs = append(kvs, VErrKV{Field: k, Transl: strings.Join(v, ", ")})
+	// 按字段名排序输出，保证同一组校验错误每次得到相同的消息
+	msgs := make([]string, 0, len(result))
+	for _, field := range slices.Sorted(maps.Keys(result)) {
+		msgs = append(msgs, strings.Join(result[field], ", "))
 	}
 
-	sort.Slice(kvs, func(i, j int) bool {
-		return kvs[i].Field < kvs[j].Field
-	})
-
-	errMessages := make([]string, 0)
-	for _, kv := range kvs {
-		errMessages = append(errMessages, kv.Transl)
-	}
-
-	return &ZHErr{Msg: strings.Join(errMessages, ", "), CauseErr: err}
+	return &ZHErr{Msg: strings.Join(msgs, ", "), CauseErr: err}
 }
 
+// VErrKV 字段名与其翻译后的错误消息
+//
+// Deprecated: 保留仅为兼容，内部已不再使用
 type VErrKV struct {
 	Field  string
 	Transl string

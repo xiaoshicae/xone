@@ -40,88 +40,109 @@ type HeaderPropagator struct {
 // globalHeaders 会向所有域名透传，rules 按域名匹配后透传
 // header 名会被 http.CanonicalHeaderKey 规范化，域名会转为小写
 func NewHeaderPropagator(globalHeaders []string, rules []ForwardHeaderRule) *HeaderPropagator {
-	// 先收集受域名规则约束的 header：它们不能再走全局无条件注入，
-	// 否则一个误配就让 ForwardHeaderRules 的域名限制彻底失效。
+	restricted := restrictedHeaders(rules)
+	normalizedGlobal := normalizeGlobalHeaders(globalHeaders, restricted)
+	normalizedRules := normalizeRules(rules)
+
+	return &HeaderPropagator{
+		globalHeaders: normalizedGlobal,
+		rules:         normalizedRules,
+		allHeaders:    mergeHeaders(normalizedGlobal, normalizedRules),
+	}
+}
+
+// restrictedHeaders 收集受域名规则约束的 header
+//
+// 它们不能再走全局无条件注入，否则一个误配就让 ForwardHeaderRules
+// 的域名限制彻底失效
+func restrictedHeaders(rules []ForwardHeaderRule) map[string]struct{} {
 	restricted := make(map[string]struct{})
 	for _, r := range rules {
 		if len(r.Domains) == 0 {
 			continue
 		}
-		for _, h := range r.Headers {
-			if h != "" {
-				restricted[http.CanonicalHeaderKey(h)] = struct{}{}
-			}
+		for _, h := range canonicalHeaders(r.Headers) {
+			restricted[h] = struct{}{}
 		}
 	}
+	return restricted
+}
 
-	// 规范化全局 header，剔除受规则约束的
-	normalizedGlobal := make([]string, 0, len(globalHeaders))
-	for _, h := range globalHeaders {
-		if h == "" {
-			continue
-		}
-		canonical := http.CanonicalHeaderKey(h)
-		if _, limited := restricted[canonical]; limited {
+// normalizeGlobalHeaders 规范化全局 header，剔除受域名规则约束的
+func normalizeGlobalHeaders(globalHeaders []string, restricted map[string]struct{}) []string {
+	out := make([]string, 0, len(globalHeaders))
+	for _, h := range canonicalHeaders(globalHeaders) {
+		if _, limited := restricted[h]; limited {
 			// 同一 header 既在全局列表又在域名规则中，以更严格的规则为准
 			xutil.WarnIfEnableDebug("XOne xtrace header=[%s] appears in both ForwardHeaders and ForwardHeaderRules, "+
-				"the domain rule wins and it will NOT be forwarded globally", canonical)
+				"the domain rule wins and it will NOT be forwarded globally", h)
 			continue
 		}
-		normalizedGlobal = append(normalizedGlobal, canonical)
+		out = append(out, h)
 	}
+	return out
+}
 
-	// 规范化规则
-	normalizedRules := make([]headerRule, 0, len(rules))
+// normalizeRules 规范化域名规则，域名或 header 为空的规则整条丢弃
+func normalizeRules(rules []ForwardHeaderRule) []headerRule {
+	out := make([]headerRule, 0, len(rules))
 	for _, r := range rules {
-		if len(r.Domains) == 0 || len(r.Headers) == 0 {
+		domains := normalizeDomains(r.Domains)
+		headers := canonicalHeaders(r.Headers)
+		if len(domains) == 0 || len(headers) == 0 {
 			continue
 		}
-		domains := make([]string, 0, len(r.Domains))
-		for _, d := range r.Domains {
-			d = strings.TrimSpace(d)
-			if d != "" {
-				domains = append(domains, strings.ToLower(d))
-			}
+		out = append(out, headerRule{domains: domains, headers: headers})
+	}
+	return out
+}
+
+// mergeHeaders 汇总去重后的 header 列表，保持稳定顺序：全局在前，规则在后
+func mergeHeaders(global []string, rules []headerRule) []string {
+	all := make([]string, 0, len(global))
+	added := make(map[string]struct{}, len(global))
+	appendOnce := func(h string) {
+		if _, exists := added[h]; exists {
+			return
 		}
-		if len(domains) == 0 {
-			continue
-		}
-		headers := make([]string, 0, len(r.Headers))
-		for _, h := range r.Headers {
-			if h == "" {
-				continue
-			}
-			headers = append(headers, http.CanonicalHeaderKey(h))
-		}
-		if len(headers) == 0 {
-			continue
-		}
-		normalizedRules = append(normalizedRules, headerRule{domains: domains, headers: headers})
+		added[h] = struct{}{}
+		all = append(all, h)
 	}
 
-	// 构建 allHeaders 去重列表，保持稳定顺序：全局 header 在前，规则 header 在后
-	allHeaders := make([]string, 0, len(normalizedGlobal)+len(restricted))
-	added := make(map[string]struct{}, len(normalizedGlobal)+len(restricted))
-	for _, h := range normalizedGlobal {
-		if _, exists := added[h]; !exists {
-			added[h] = struct{}{}
-			allHeaders = append(allHeaders, h)
-		}
+	for _, h := range global {
+		appendOnce(h)
 	}
-	for _, r := range normalizedRules {
+	for _, r := range rules {
 		for _, h := range r.headers {
-			if _, exists := added[h]; !exists {
-				added[h] = struct{}{}
-				allHeaders = append(allHeaders, h)
-			}
+			appendOnce(h)
 		}
 	}
+	return all
+}
 
-	return &HeaderPropagator{
-		globalHeaders: normalizedGlobal,
-		rules:         normalizedRules,
-		allHeaders:    allHeaders,
+// canonicalHeaders 规范化 header 名并丢弃空项
+//
+// 不做 TrimSpace：header 名本就不允许含空格，CanonicalHeaderKey 遇到
+// 非法字符会原样返回，trim 掉反而会把一个明显的配置错误悄悄改对
+func canonicalHeaders(headers []string) []string {
+	out := make([]string, 0, len(headers))
+	for _, h := range headers {
+		if h != "" {
+			out = append(out, http.CanonicalHeaderKey(h))
+		}
 	}
+	return out
+}
+
+// normalizeDomains 规范化域名并丢弃空项
+func normalizeDomains(domains []string) []string {
+	out := make([]string, 0, len(domains))
+	for _, d := range domains {
+		if d = strings.TrimSpace(d); d != "" {
+			out = append(out, strings.ToLower(d))
+		}
+	}
+	return out
 }
 
 // Extract 从 carrier 中读取所有配置的 Header 并存入 context

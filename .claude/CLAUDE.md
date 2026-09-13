@@ -13,16 +13,23 @@ XOne 是 Go 三方库集成框架，提供配置管理、日志、HTTP 客户端
 
 ```
 xone/
+├── xerror/      # 统一错误类型（基础层，零第三方依赖）
 ├── xutil/       # 工具函数（基础层，零第三方依赖）
 ├── xhook/       # 生命周期钩子（基础层，零第三方依赖）
+├── internal/
+│   └── hookorder/    # 框架保留 Order，外部 import 编译失败
 ├── xconfig/     # 配置管理（核心层，基于 Viper）
-├── xtrace/      # 链路追踪（核心层，基于 OpenTelemetry）
 ├── xlog/        # 日志（核心层，基于标准库 log/slog）
+├── xtrace/      # 链路追踪（核心层，基于 OpenTelemetry）
+├── xmetric/     # 指标采集（核心层，基于 Prometheus）
+├── xflow/       # 流程编排（核心层，强弱依赖 + 自动回滚）
 ├── xhttp/       # HTTP 客户端（服务层，基于 Resty）
 ├── xgorm/       # 数据库（服务层，基于 GORM，MySQL/PostgreSQL）
+├── xredis/      # Redis（服务层，基于 go-redis）
+├── xcache/      # 本地缓存（服务层，基于 ristretto）
 ├── xserver/     # 服务运行和生命周期管理（生命周期层）
 ├── xgin/        # Gin Web 框架集成（应用层，Builder 模式 + 内置中间件）
-│   ├── middleware/   # 中间件（Log/Trace/Recover/Session）
+│   ├── middleware/   # 中间件（Session/Trace/Log/Metric/Recover）
 │   ├── options/      # 选项
 │   ├── swagger/      # Swagger 集成
 │   └── trans/        # 中文翻译
@@ -31,8 +38,9 @@ xone/
 
 ## Hook 生命周期
 
-**BeforeStart 初始化顺序**：正序执行（xconfig → xlog → xtrace → xhttp → xgorm）
-**BeforeStop 关闭顺序**：自动反序执行（xgorm → xhttp → xtrace → xlog → xconfig），LIFO 保证后初始化的模块先关闭
+**BeforeStart 初始化顺序**：xconfig（Order -100）→ xlog（Order -50）→ 其余模块（默认 Order 100，同 Order 内按 init 顺序）
+**BeforeStop 关闭顺序**：BeforeStart 的整体镜像，业务资源 → xlog → xconfig，同 Order 内 LIFO
+**注意**：只有两个保留层级是框架承诺的；业务区内部的先后由 import path 字典序决定，不要依赖它
 **Order 语义**：资源层级，值越小越底层 —— 启动越早、关闭越晚。负值为框架保留区（xconfig=-100、xlog=-50，经 `xhook.ReservedOrder` + `internal/hookorder` 强制隔离），业务 Hook 传负值会 panic，保持默认 100 即可
 **注意**：Go 的 init 顺序是「拓扑序 + import path 字典序」，**与 import 书写顺序无关**，不要靠调整 import 控制生命周期顺序
 

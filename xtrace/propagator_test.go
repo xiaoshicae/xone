@@ -75,6 +75,17 @@ func TestNewHeaderPropagator(t *testing.T) {
 			So(p.allHeaders, ShouldResemble, []string{"X-Request-Id", "X-Auth"})
 		})
 
+		PatchConvey("RulesDedup-同一 header 出现在多条规则中", func() {
+			// 重构前这条路径没有测试：RulesDedup 里的重复 header 因为受规则约束
+			// 已经被从全局列表里剔除了，实际走不到去重分支
+			rules := []ForwardHeaderRule{
+				{Domains: []string{"a.com"}, Headers: []string{"X-Auth", "X-Tenant-Id"}},
+				{Domains: []string{"b.com"}, Headers: []string{"X-Auth", "X-Trace-Id"}},
+			}
+			p := NewHeaderPropagator(nil, rules)
+			So(p.allHeaders, ShouldResemble, []string{"X-Auth", "X-Tenant-Id", "X-Trace-Id"})
+		})
+
 		PatchConvey("SkipEmptyRules", func() {
 			rules := []ForwardHeaderRule{
 				{Domains: []string{}, Headers: []string{"X-Auth"}},        // 无域名，跳过

@@ -721,3 +721,77 @@ func TestGlobalCacheFullAPI(t *testing.T) {
 		})
 	})
 }
+
+func TestGlobalDoubleCheck(t *testing.T) {
+	PatchConvey("TestGlobalDoubleCheck", t, func() {
+		// 两个 goroutine 同时走慢路径时，后进来的要在写锁下看到先进来的结果，
+		// 否则会各建一个实例，其中一个永远没人关
+		withCleanGlobal(func() {
+			cache, err := newCache(configMergeDefault(nil))
+			c.So(err, c.ShouldBeNil)
+			setDefault(cache)
+
+			// mock 掉快路径，模拟「读锁检查时还没有，拿到写锁时已被别人填上」
+			Mock(get).Return(nil).Build()
+
+			c.So(global(), c.ShouldEqual, cache)
+			c.So(globalCache, c.ShouldBeNil) // 没有重复创建
+		})
+	})
+}
+
+func TestInitMultiRollback(t *testing.T) {
+	PatchConvey("TestInitMultiRollback", t, func() {
+		// 第二个实例失败时，第一个必须被关闭并从 cacheMap 中摘除
+		withCleanGlobal(func() {
+			Mock(xconfig.ContainKey).Return(true).Build()
+			Mock(xutil.IsSlice).Return(true).Build()
+			Mock(xutil.InfoIfEnableDebug).Return().Build()
+			Mock(getMultiConfig).Return([]*Config{{Name: "a"}, {Name: "b"}}, nil).Build()
+
+			calls := 0
+			Mock(newCache).To(func(cfg *Config) (*Cache, error) {
+				calls++
+				if calls == 1 {
+					return &Cache{raw: nil}, nil
+				}
+				return nil, errors.New("second failed")
+			}).Build()
+			Mock((*Cache).Close).Return().Build()
+
+			err := initXCache()
+			c.So(err, c.ShouldNotBeNil)
+			c.So(err.Error(), c.ShouldContainSubstring, "second failed")
+
+			cacheMu.RLock()
+			size := len(cacheMap)
+			cacheMu.RUnlock()
+			c.So(size, c.ShouldEqual, 0)
+		})
+	})
+}
+
+func TestGetMultiConfigValidation(t *testing.T) {
+	PatchConvey("TestGetMultiConfigValidation", t, func() {
+		mockConfigs := func(cs []*Config) {
+			Mock(xconfig.UnmarshalConfig).To(func(_ string, out any) error {
+				*(out.(*[]*Config)) = cs
+				return nil
+			}).Build()
+		}
+
+		PatchConvey("Name 不能是保留名", func() {
+			mockConfigs([]*Config{{Name: defaultCacheName}})
+			_, err := getMultiConfig()
+			c.So(err, c.ShouldNotBeNil)
+			c.So(err.Error(), c.ShouldContainSubstring, "reserved name")
+		})
+
+		PatchConvey("Name 不能重复", func() {
+			mockConfigs([]*Config{{Name: "a"}, {Name: "a"}})
+			_, err := getMultiConfig()
+			c.So(err, c.ShouldNotBeNil)
+			c.So(err.Error(), c.ShouldContainSubstring, "duplicated")
+		})
+	})
+}

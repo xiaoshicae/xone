@@ -356,3 +356,65 @@ func TestWaitRunExitTimeout(t *testing.T) {
 		})
 	})
 }
+
+// runErrAfterStopServer 阻塞在 Run，Stop 释放阻塞后 Run 返回一个真实错误
+type runErrAfterStopServer struct {
+	quit chan struct{}
+}
+
+func (s *runErrAfterStopServer) Run() error {
+	<-s.quit
+	return errors.New("graceful shutdown failed")
+}
+
+func (s *runErrAfterStopServer) Stop() error {
+	close(s.quit)
+	return nil
+}
+
+// neverExitServer 的 Run 永不返回，用于触发等待超时分支
+type neverExitServer struct{}
+
+func (neverExitServer) Run() error  { select {} }
+func (neverExitServer) Stop() error { return nil }
+
+func TestRunWithServer_AfterStopPaths(t *testing.T) {
+	PatchConvey("TestRunWithServer-AfterStopPaths", t, func() {
+		PatchConvey("Run 在 Stop 之后返回的错误不被丢弃", func() {
+			// 优雅退出失败时，这个错误往往是唯一线索
+			MockValue(&quitSignals).To([]os.Signal{syscall.SIGUSR1})
+			Mock(xutil.InfoIfEnableDebug).Return().Build()
+			Mock(xutil.ErrorIfEnableDebug).Return().Build()
+
+			go func() {
+				time.Sleep(50 * time.Millisecond)
+				_ = syscall.Kill(syscall.Getpid(), syscall.SIGUSR1)
+			}()
+
+			err := runWithServer(&runErrAfterStopServer{quit: make(chan struct{})})
+			So(err, ShouldNotBeNil)
+			So(err.Error(), ShouldContainSubstring, "graceful shutdown failed")
+		})
+
+		PatchConvey("Run 不退出时等待超时只告警不阻止退出", func() {
+			MockValue(&quitSignals).To([]os.Signal{syscall.SIGUSR1})
+			Mock(xutil.InfoIfEnableDebug).Return().Build()
+
+			warned := 0
+			Mock(xutil.WarnIfEnableDebug).To(func(_ string, _ ...any) { warned++ }).Build()
+
+			origin := getWaitRunExitTimeout()
+			SetWaitRunExitTimeout(30 * time.Millisecond)
+			defer SetWaitRunExitTimeout(origin)
+
+			go func() {
+				time.Sleep(50 * time.Millisecond)
+				_ = syscall.Kill(syscall.Getpid(), syscall.SIGUSR1)
+			}()
+
+			// 等待超时不应阻止进程退出，只打一条 warn
+			So(runWithServer(neverExitServer{}), ShouldBeNil)
+			So(warned, ShouldBeGreaterThanOrEqualTo, 1)
+		})
+	})
+}

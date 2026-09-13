@@ -841,3 +841,199 @@ func TestMetricEnabled(t *testing.T) {
 		c.So(configMergeDefault(nil).metricEnabled(), c.ShouldBeTrue)
 	})
 }
+
+func TestNewClientErrorPaths(t *testing.T) {
+	PatchConvey("TestNewClientErrorPaths", t, func() {
+		PatchConvey("resolveDialector 失败", func() {
+			_, err := newClient(&Config{Driver: "sqlite", DSN: "x.db"})
+			c.So(err, c.ShouldNotBeNil)
+			c.So(err.Error(), c.ShouldContainSubstring, "resolveDialector failed")
+		})
+
+		PatchConvey("gorm.Open 失败时也关连接池", func() {
+			// gorm.Open 内部已经建好连接池才做自动 ping，失败时它不会关掉那个池子
+			closed := 0
+			Mock(resolveDialector).Return(nil, nil).Build()
+			Mock(gorm.Open).Return(&gorm.DB{}, errors.New("open failed")).Build()
+			Mock((*gorm.DB).DB).Return(&sql.DB{}, nil).Build()
+			Mock((*sql.DB).Close).To(func(_ *sql.DB) error { closed++; return nil }).Build()
+
+			_, err := newClient(&Config{})
+			c.So(err, c.ShouldNotBeNil)
+			c.So(err.Error(), c.ShouldContainSubstring, "gorm.Open failed")
+			c.So(closed, c.ShouldEqual, 1)
+		})
+
+		PatchConvey("client.DB 失败", func() {
+			Mock(resolveDialector).Return(nil, nil).Build()
+			Mock(gorm.Open).Return(&gorm.DB{}, nil).Build()
+			Mock((*gorm.DB).DB).Return(nil, errors.New("no db")).Build()
+
+			_, err := newClient(&Config{})
+			c.So(err, c.ShouldNotBeNil)
+			c.So(err.Error(), c.ShouldContainSubstring, "client.DB failed")
+		})
+
+		PatchConvey("EnableLog 时装配 gorm logger", func() {
+			var gotCfg *gorm.Config
+			Mock(resolveDialector).Return(nil, nil).Build()
+			Mock(gorm.Open).To(func(_ gorm.Dialector, cfgs ...gorm.Option) (*gorm.DB, error) {
+				if len(cfgs) > 0 {
+					gotCfg, _ = cfgs[0].(*gorm.Config)
+				}
+				return nil, errors.New("stop here")
+			}).Build()
+
+			_, err := newClient(&Config{EnableLog: true, SlowThreshold: "1s"})
+			c.So(err, c.ShouldNotBeNil)
+			c.So(gotCfg, c.ShouldNotBeNil)
+			c.So(gotCfg.Logger, c.ShouldNotBeNil)
+		})
+	})
+}
+
+func TestCloseGormDB(t *testing.T) {
+	PatchConvey("TestCloseGormDB", t, func() {
+		PatchConvey("nil client 安全返回", func() {
+			closeGormDB(nil) // 不应 panic
+		})
+
+		PatchConvey("取不到底层 db 时安全返回", func() {
+			Mock((*gorm.DB).DB).Return(nil, errors.New("no db")).Build()
+			closeGormDB(&gorm.DB{})
+		})
+
+		PatchConvey("Close 出错只记日志", func() {
+			warned := 0
+			Mock((*gorm.DB).DB).Return(&sql.DB{}, nil).Build()
+			Mock((*sql.DB).Close).Return(errors.New("close failed")).Build()
+			Mock(xutil.WarnIfEnableDebug).To(func(_ string, _ ...any) { warned++ }).Build()
+
+			closeGormDB(&gorm.DB{})
+			c.So(warned, c.ShouldEqual, 1)
+		})
+	})
+}
+
+func TestResolveDialectorDSNErrors(t *testing.T) {
+	PatchConvey("TestResolveDialectorDSNErrors", t, func() {
+		PatchConvey("MySQL DSN 解析失败", func() {
+			_, err := resolveDialector(&Config{Driver: "mysql", DSN: "!!!not a dsn!!!"})
+			c.So(err, c.ShouldNotBeNil)
+			c.So(err.Error(), c.ShouldContainSubstring, "resolve mysql dsn failed")
+		})
+
+		PatchConvey("Postgres DSN 解析失败", func() {
+			// URL 形式但 host 含空格，url.Parse 会报错
+			_, err := resolveDialector(&Config{
+				Driver:      "postgres",
+				DSN:         "postgres://u:p@ho st:5432/db",
+				DialTimeout: "1s",
+			})
+			c.So(err, c.ShouldNotBeNil)
+			c.So(err.Error(), c.ShouldContainSubstring, "resolve postgres dsn failed")
+		})
+	})
+}
+
+func TestGetMultiConfigValidation(t *testing.T) {
+	PatchConvey("TestGetMultiConfigValidation", t, func() {
+		mockConfigs := func(cs []*Config) {
+			Mock(xconfig.UnmarshalConfig).To(func(_ string, out any) error {
+				*(out.(*[]*Config)) = cs
+				return nil
+			}).Build()
+		}
+
+		PatchConvey("Name 不能是保留名", func() {
+			mockConfigs([]*Config{{DSN: "d", Name: defaultClientName}})
+			_, err := getMultiConfig()
+			c.So(err, c.ShouldNotBeNil)
+			c.So(err.Error(), c.ShouldContainSubstring, "reserved name")
+		})
+
+		PatchConvey("Name 不能重复", func() {
+			mockConfigs([]*Config{{DSN: "d", Name: "a"}, {DSN: "d", Name: "a"}})
+			_, err := getMultiConfig()
+			c.So(err, c.ShouldNotBeNil)
+			c.So(err.Error(), c.ShouldContainSubstring, "duplicated")
+		})
+	})
+}
+
+func TestInitMultiRollback(t *testing.T) {
+	PatchConvey("TestInitMultiRollback", t, func() {
+		// 第二个 client 失败时，第一个必须被关闭并从 map 中摘除
+		clientMu.Lock()
+		clientMap = make(map[string]*gorm.DB)
+		clientMu.Unlock()
+
+		closed := 0
+		Mock(xconfig.ContainKey).Return(true).Build()
+		Mock(xutil.IsSlice).Return(true).Build()
+		Mock(xutil.InfoIfEnableDebug).Return().Build()
+		Mock(getMultiConfig).Return([]*Config{{Name: "a", DSN: "d"}, {Name: "b", DSN: "d"}}, nil).Build()
+		Mock((*gorm.DB).DB).Return(&sql.DB{}, nil).Build()
+		Mock((*sql.DB).Close).To(func(_ *sql.DB) error { closed++; return nil }).Build()
+
+		calls := 0
+		Mock(newClient).To(func(_ *Config) (*gorm.DB, error) {
+			calls++
+			if calls == 1 {
+				return &gorm.DB{}, nil
+			}
+			return nil, errors.New("second failed")
+		}).Build()
+
+		err := initXGorm()
+		c.So(err, c.ShouldNotBeNil)
+		c.So(err.Error(), c.ShouldContainSubstring, "second failed")
+		c.So(closed, c.ShouldEqual, 1)
+
+		clientMu.RLock()
+		size := len(clientMap)
+		clientMu.RUnlock()
+		c.So(size, c.ShouldEqual, 0)
+	})
+}
+
+func TestSanitizeDSNEdgeCases(t *testing.T) {
+	PatchConvey("TestSanitizeDSNEdgeCases", t, func() {
+		PatchConvey("scheme 含非法字符不算 URL", func() {
+			c.So(isURLDSN("pos tgres://u:p@h/db"), c.ShouldBeFalse)
+			c.So(isURLDSN("://h/db"), c.ShouldBeFalse)
+			c.So(isURLDSN("postgresql+ssl://u:p@h/db"), c.ShouldBeTrue)
+		})
+
+		PatchConvey("孤立 token 原样保留", func() {
+			c.So(sanitizeKVDSN("host=h standalone password=x"), c.ShouldEqual, "host=h standalone password=***")
+		})
+
+		PatchConvey("末尾是空白时不越界", func() {
+			c.So(sanitizeKVDSN("host=h password=x   "), c.ShouldEqual, "host=h password=***   ")
+		})
+
+		PatchConvey("引号值含转义反斜杠", func() {
+			// 转义的引号不能被当成值的结束，否则后半段密码会漏出去
+			out := sanitizeKVDSN(`host=h password='a\'b c' dbname=d`)
+			c.So(out, c.ShouldEqual, "host=h password=*** dbname=d")
+		})
+
+		PatchConvey("引号未闭合时吃到末尾", func() {
+			c.So(skipKVValue("'unterminated", 0), c.ShouldEqual, len("'unterminated"))
+		})
+	})
+}
+
+func TestCollectPoolStatsDBError(t *testing.T) {
+	PatchConvey("TestCollectPoolStatsDBError", t, func() {
+		// 取不到底层 db 的 client 跳过，不应让整个采集失败
+		Mock((*gorm.DB).DB).Return(nil, errors.New("no db")).Build()
+
+		clientMu.Lock()
+		clientMap = map[string]*gorm.DB{"broken": {}}
+		clientMu.Unlock()
+
+		c.So(collectPoolStats(), c.ShouldBeEmpty)
+	})
+}

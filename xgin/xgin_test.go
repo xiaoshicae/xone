@@ -1053,3 +1053,25 @@ func TestMiddlewareOrder_PanicObserved(t *testing.T) {
 		So(accessLogged, ShouldEqual, 1) // log 中间件的访问日志：修复前这里是 0
 	})
 }
+
+func TestRun_TLSConfigIncomplete(t *testing.T) {
+	PatchConvey("TestRun-TLS配置不完整", t, func() {
+		// 只配一半会让服务以明文起来，而运维以为它是 HTTPS —— 必须直接失败
+		PatchConvey("只配 CertFile", func() {
+			Mock(getConfig).Return(&Config{Host: "127.0.0.1", Port: 0, CertFile: "/path/cert.pem"}, nil).Build()
+			g := New(options.EnableLogMiddleware(false), options.EnableTraceMiddleware(false))
+			err := g.Run()
+			So(err, ShouldNotBeNil)
+			So(err.Error(), ShouldContainSubstring, "TLS config incomplete")
+			So(g.srv, ShouldBeNil)
+		})
+
+		PatchConvey("只配 KeyFile", func() {
+			Mock(getConfig).Return(&Config{Host: "127.0.0.1", Port: 0, KeyFile: "/path/key.pem"}, nil).Build()
+			g := New(options.EnableLogMiddleware(false), options.EnableTraceMiddleware(false))
+			err := g.Run()
+			So(err, ShouldNotBeNil)
+			So(err.Error(), ShouldContainSubstring, "TLS config incomplete")
+		})
+	})
+}

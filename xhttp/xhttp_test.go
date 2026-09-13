@@ -705,3 +705,28 @@ func TestCloseHttpClientRestoresFallback(t *testing.T) {
 		c.So(RawClient().Timeout, c.ShouldEqual, fallbackTimeout)
 	})
 }
+
+func TestInitHttpClient_ForwardHeaderOnly(t *testing.T) {
+	mockey.PatchConvey("TestInitHttpClient-仅开启Header透传", t, func() {
+		// trace 关闭但配置了 Header 透传时，仍要装上 ForwardHeaderTransport，
+		// 链路关闭不应让已配置的 Header 透传静默失效
+		mockey.Mock(getConfig).Return(&Config{
+			Timeout:             "60s",
+			DialTimeout:         "30s",
+			DialKeepAlive:       "30s",
+			MaxIdleConns:        100,
+			MaxIdleConnsPerHost: 10,
+			IdleConnTimeout:     "90s",
+			EnableMetric:        xutil.ToPtr(false),
+		}, nil).Build()
+		mockey.Mock(xtrace.EnableTrace).Return(false).Build()
+		mockey.Mock(xtrace.EnableForwardHeader).Return(true).Build()
+
+		c.So(initHttpClient(), c.ShouldBeNil)
+
+		host, ok := RawClient().Transport.(*xtrace.HostAwareTransport)
+		c.So(ok, c.ShouldBeTrue)
+		_, ok = host.Next.(*xtrace.ForwardHeaderTransport)
+		c.So(ok, c.ShouldBeTrue)
+	})
+}

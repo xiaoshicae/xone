@@ -1,10 +1,18 @@
 package xcache
 
-import "time"
+import (
+	"time"
+
+	"github.com/xiaoshicae/xone/v2/xutil"
+)
 
 // --- 包级泛型函数，操作全局缓存 ---
 
 // Get 从全局缓存获取值，自动转换为目标类型
+//
+// 类型不匹配时返回零值与 false，与 cache miss 的返回值相同，
+// 因此额外打一条日志：否则「明明 Set 了却永远 miss」没有任何线索，
+// 典型场景是存的是 *T 而取的是 T
 func Get[V any](key string) (V, bool) {
 	var zero V
 	cache := global()
@@ -17,6 +25,7 @@ func Get[V any](key string) (V, bool) {
 	}
 	typed, ok := val.(V)
 	if !ok {
+		xutil.WarnIfEnableDebug("XOne xcache type mismatch, key=[%s], stored=[%T], want=[%T], treated as miss", key, val, zero)
 		return zero, false
 	}
 	return typed, ok

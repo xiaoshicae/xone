@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-resty/resty/v2"
@@ -30,6 +31,9 @@ func closeHttpClient() error {
 		rawHttpClient.CloseIdleConnections()
 		rawHttpClient = nil
 	}
+	// 回到带兜底超时的 client：关闭后仍可能有 BeforeStop hook 发请求，
+	// 让它超时退出，而不是挂住整个关闭流程
+	defaultClient = newFallbackRestyClient()
 	return nil
 }
 
@@ -88,6 +92,10 @@ func initHttpClient() error {
 			SetRetryCount(c.RetryCount).
 			SetRetryWaitTime(xutil.ToDuration(c.RetryWaitTime)).
 			SetRetryMaxWaitTime(xutil.ToDuration(c.RetryMaxWaitTime))
+
+		if c.retryOnlyIdempotentEnabled() {
+			restyClient.AddRetryCondition(retryOnlyIdempotent)
+		}
 	}
 
 	// Resty 层记录 metric，只记录重试后的最终结果（不记录重试中间状态）
@@ -99,6 +107,36 @@ func initHttpClient() error {
 	setRawHttpClient(rawHttpClient)
 
 	return nil
+}
+
+// idempotentMethods 可安全重试的 HTTP 方法（RFC 9110 幂等方法）
+var idempotentMethods = map[string]struct{}{
+	http.MethodGet:     {},
+	http.MethodHead:    {},
+	http.MethodOptions: {},
+	http.MethodTrace:   {},
+	http.MethodPut:     {},
+	http.MethodDelete:  {},
+}
+
+// retryOnlyIdempotent 只允许幂等方法重试
+//
+// resty 默认的重试条件是「传输层出错就重试」，不看 HTTP 方法。
+// 但超时无法区分「请求没到服务端」和「服务端处理完了但响应丢了」，
+// 重发一个 POST 就可能变成重复下单
+func retryOnlyIdempotent(resp *resty.Response, err error) bool {
+	if err == nil {
+		return false // 拿到响应就不重试，与 resty 默认条件一致
+	}
+	method := ""
+	if resp != nil && resp.Request != nil {
+		method = strings.ToUpper(resp.Request.Method)
+	}
+	_, ok := idempotentMethods[method]
+	if !ok {
+		xutil.WarnIfEnableDebug("XHttp skip retry for non-idempotent method=[%s], set XHttp.RetryOnlyIdempotent=false to allow", method)
+	}
+	return ok
 }
 
 // spanNameFormatter otelhttp 的 span 命名格式：METHOD PATH

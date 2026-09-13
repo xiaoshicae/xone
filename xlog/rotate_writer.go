@@ -21,6 +21,9 @@ const (
 // logFilePerm 日志文件权限
 const logFilePerm = 0o644
 
+// rotateErrLogInterval 轮转失败告警的最小间隔
+const rotateErrLogInterval = time.Minute
+
 // rotateWriter 按时间轮转的日志文件写入器
 //
 // 文件名形如 {base}.20260912，并维护一个指向当前文件的符号链接 {base}，
@@ -41,6 +44,9 @@ type rotateWriter struct {
 	file        *os.File
 	currentName string
 	closed      bool
+
+	// lastRotateErrAt 上次记录轮转失败的时刻，用于告警降噪
+	lastRotateErrAt time.Time
 }
 
 // newRotateWriter 创建轮转写入器并立即打开当前文件
@@ -83,13 +89,31 @@ func (w *rotateWriter) Write(p []byte) (int, error) {
 
 	if name := w.filenameFor(w.clock()); name != w.currentName {
 		if err := w.rotateTo(name); err != nil {
-			return 0, err
+			// 轮转失败不能丢日志：旧文件句柄仍然可用，降级继续写它。
+			// 直接返回错误的话，从第一次轮转失败起每条日志都走这条路，
+			// 而 asyncWriter 只保留第一个错误且只在 Close 时返回——
+			// 现象就是某天日志突然断了，没有任何报错
+			w.reportRotateFailure(err)
+		} else {
+			// 清理放到后台执行，避免阻塞日志写入；当前文件名以参数传入，避免再次取锁
+			go w.purge(name)
 		}
-		// 清理放到后台执行，避免阻塞日志写入；当前文件名以参数传入，避免再次取锁
-		go w.purge(name)
 	}
 
+	if w.file == nil {
+		return 0, os.ErrClosed
+	}
 	return w.file.Write(p)
+}
+
+// reportRotateFailure 记录轮转失败
+// 按间隔降噪：轮转周期到了之后每条日志都会重试，不限流会把告警刷爆
+func (w *rotateWriter) reportRotateFailure(err error) {
+	now := w.clock()
+	if w.lastRotateErrAt.IsZero() || now.Sub(w.lastRotateErrAt) >= rotateErrLogInterval {
+		w.lastRotateErrAt = now
+		xutil.WarnIfEnableDebug("XOne rotateWriter rotate failed, keep writing current file=[%s], err=[%v]", w.currentName, err)
+	}
 }
 
 // Close 关闭当前日志文件，多次调用安全

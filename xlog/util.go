@@ -42,7 +42,9 @@ func Debug(ctx context.Context, msg string, args ...any) {
 // args 中的 Option 会被提取为日志的 KV 字段，其余参数用于 msg 的格式化占位符
 func RawLog(ctx context.Context, level Level, msg string, args ...any) {
 	if ctx == nil {
-		return
+		// 传 nil ctx 是调用方的疏忽，但为此丢掉一整条（可能是 Error 级的）日志
+		// 代价太大，用 Background 兜底，只是取不到 trace 与 ctx 中的 KV
+		ctx = context.Background()
 	}
 
 	h := handler.Load()

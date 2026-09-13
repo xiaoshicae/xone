@@ -15,6 +15,10 @@ func init() {
 }
 
 func initXCache() error {
+	cacheMu.Lock()
+	closed = false // 重新初始化时解除关闭状态，支持重复初始化
+	cacheMu.Unlock()
+
 	if !xconfig.ContainKey(XCacheConfigKey) {
 		xutil.WarnIfEnableDebug("XOne init %s failed, config key [%s] not exists", XCacheConfigKey, XCacheConfigKey)
 		return nil
@@ -50,12 +54,19 @@ func initMulti() error {
 	}
 	xutil.InfoIfEnableDebug("XOne init %s got config: %s", XCacheConfigKey, xutil.ToJsonString(configs))
 
+	created := make([]*Cache, 0, len(configs))
 	for idx, config := range configs {
 		cache, err := newCache(config)
 		if err != nil {
+			// 回滚：关闭已创建的实例并从 cacheMap 中摘除
+			for _, c := range created {
+				c.Close()
+			}
+			removeCaches(configs[:idx])
 			return xerror.Newf("xcache", "init", "newCache failed, name=[%v], err=[%v]", config.Name, err)
 		}
 
+		created = append(created, cache)
 		set(config.Name, cache)
 
 		// 第一个 cache 为 C() 默认获取的 cache
@@ -69,6 +80,8 @@ func initMulti() error {
 func closeXCache() error {
 	cacheMu.Lock()
 	defer cacheMu.Unlock()
+
+	closed = true
 
 	// 用于去重，避免同一个 *Cache 被关闭多次（multi 模式下 default 指向第一个 named cache）
 	closed := make(map[*Cache]struct{})

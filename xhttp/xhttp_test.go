@@ -40,6 +40,7 @@ func TestXHttpConfig(t *testing.T) {
 			RetryCount:          0,
 			RetryWaitTime:       "100ms",
 			RetryMaxWaitTime:    "2s",
+			RetryOnlyIdempotent: xutil.ToPtr(true),
 			EnableMetric:        xutil.ToPtr(true),
 		})
 	})
@@ -59,6 +60,7 @@ func TestXHttpConfig(t *testing.T) {
 			RetryCount:          0,
 			RetryWaitTime:       "100ms",
 			RetryMaxWaitTime:    "2s",
+			RetryOnlyIdempotent: xutil.ToPtr(true),
 			EnableMetric:        xutil.ToPtr(true),
 		})
 	})
@@ -87,7 +89,9 @@ func TestRawClient(t *testing.T) {
 		rawHttpClient = nil
 		client := RawClient()
 		c.So(client, c.ShouldNotBeNil)
-		c.So(client, c.ShouldEqual, http.DefaultClient)
+		// 兜底 client 必须带超时：http.DefaultClient 的超时是 0，请求可永久挂起
+		c.So(client, c.ShouldNotEqual, http.DefaultClient)
+		c.So(client.Timeout, c.ShouldEqual, fallbackTimeout)
 	})
 
 	mockey.PatchConvey("TestRawClient-Set", t, func() {
@@ -646,5 +650,58 @@ func TestMetricOnSuccess_NilRawRequest(t *testing.T) {
 		c.So(func() {
 			metricOnSuccess(nil, resp)
 		}, c.ShouldNotPanic)
+	})
+}
+
+func TestRetryOnlyIdempotent(t *testing.T) {
+	mockey.PatchConvey("TestRetryOnlyIdempotent", t, func() {
+		mockey.Mock(xutil.WarnIfEnableDebug).Return().Build()
+
+		mockey.PatchConvey("幂等方法允许重试", func() {
+			for _, m := range []string{http.MethodGet, http.MethodHead, http.MethodOptions, http.MethodTrace, http.MethodPut, http.MethodDelete} {
+				resp := &resty.Response{Request: &resty.Request{Method: m}}
+				c.So(retryOnlyIdempotent(resp, errors.New("timeout")), c.ShouldBeTrue)
+			}
+		})
+
+		mockey.PatchConvey("非幂等方法不重试", func() {
+			// 超时无法区分「请求没到服务端」和「服务端处理完了但响应丢了」，
+			// 重发一个 POST 就可能变成重复下单
+			for _, m := range []string{http.MethodPost, http.MethodPatch, http.MethodConnect} {
+				resp := &resty.Response{Request: &resty.Request{Method: m}}
+				c.So(retryOnlyIdempotent(resp, errors.New("timeout")), c.ShouldBeFalse)
+			}
+		})
+
+		mockey.PatchConvey("拿到响应就不重试", func() {
+			resp := &resty.Response{Request: &resty.Request{Method: http.MethodGet}}
+			c.So(retryOnlyIdempotent(resp, nil), c.ShouldBeFalse)
+		})
+
+		mockey.PatchConvey("响应缺失时按非幂等处理", func() {
+			c.So(retryOnlyIdempotent(nil, errors.New("timeout")), c.ShouldBeFalse)
+		})
+	})
+}
+
+func TestRetryOnlyIdempotentEnabled(t *testing.T) {
+	mockey.PatchConvey("TestRetryOnlyIdempotentEnabled", t, func() {
+		// nil 视为启用，避免直接构造 Config 的调用方踩空指针
+		c.So((&Config{}).retryOnlyIdempotentEnabled(), c.ShouldBeTrue)
+		c.So((&Config{RetryOnlyIdempotent: xutil.ToPtr(true)}).retryOnlyIdempotentEnabled(), c.ShouldBeTrue)
+		c.So((&Config{RetryOnlyIdempotent: xutil.ToPtr(false)}).retryOnlyIdempotentEnabled(), c.ShouldBeFalse)
+	})
+}
+
+func TestCloseHttpClientRestoresFallback(t *testing.T) {
+	mockey.PatchConvey("TestCloseHttpClientRestoresFallback", t, func() {
+		// 关闭后仍可能有 BeforeStop hook 发请求，必须让它超时退出，
+		// 而不是用一个零超时的 client 挂住整个关闭流程
+		setDefaultClient(resty.New())
+		setRawHttpClient(&http.Client{})
+
+		c.So(closeHttpClient(), c.ShouldBeNil)
+		c.So(C().GetClient().Timeout, c.ShouldEqual, fallbackTimeout)
+		c.So(RawClient().Timeout, c.ShouldEqual, fallbackTimeout)
 	})
 }

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"io"
 	"sync"
+	"time"
 )
 
 const (
@@ -46,7 +47,17 @@ func putBuf(bp *[]byte) {
 	logBufPool.Put(bp)
 }
 
-var errAsyncWriterClosed = errors.New("async writer is closed")
+var (
+	errAsyncWriterClosed       = errors.New("async writer is closed")
+	errAsyncWriterDrainTimeout = errors.New("async writer drain timeout, remaining logs dropped")
+)
+
+// defaultDrainTimeout Close 等待缓冲区写完的上限
+//
+// 底层写入卡住时（磁盘满、NFS 不响应）这里会一直等下去，
+// 而 xlog 是最后关闭的模块，卡在这里等于整个进程退不出去。
+// 宁可丢掉缓冲区里剩下的日志，也不能让进程停在关闭流程上
+const defaultDrainTimeout = 5 * time.Second
 
 // asyncWriter 异步写入器，通过 channel + goroutine 将同步写入转为异步
 // 实现 io.WriteCloser 接口
@@ -61,6 +72,9 @@ type asyncWriter struct {
 	// 保证 close(ch) 时不存在正在发送的 Write，从而无需 recover 兜底
 	mu sync.RWMutex
 
+	// drainTimeout Close 等待缓冲区写完的上限，可注入以便测试
+	drainTimeout time.Duration
+
 	wg        sync.WaitGroup
 	closeOnce sync.Once
 	writeOnce sync.Once
@@ -74,9 +88,10 @@ func newAsyncWriter(w io.WriteCloser, bufferSize int) *asyncWriter {
 		bufferSize = defaultAsyncBufferSize
 	}
 	aw := &asyncWriter{
-		ch:     make(chan *[]byte, bufferSize),
-		writer: w,
-		done:   make(chan struct{}),
+		ch:           make(chan *[]byte, bufferSize),
+		writer:       w,
+		done:         make(chan struct{}),
+		drainTimeout: defaultDrainTimeout,
 	}
 	aw.wg.Add(1)
 	go aw.loop()
@@ -119,15 +134,42 @@ func (aw *asyncWriter) Close() error {
 		aw.mu.Lock()
 		close(aw.ch)
 		aw.mu.Unlock()
-		// 3. 等待消费协程把已入队数据写完
-		aw.wg.Wait()
-		aw.closeErr = aw.writer.Close()
+		// 3. 等待消费协程把已入队数据写完，超时则放弃剩余日志
+		if !aw.waitDrain() {
+			aw.closeErr = errAsyncWriterDrainTimeout
+		}
+		if err := aw.writer.Close(); err != nil && aw.closeErr == nil {
+			aw.closeErr = err
+		}
 	})
 
 	if aw.closeErr != nil {
 		return aw.closeErr
 	}
 	return aw.writeErr
+}
+
+// waitDrain 等待消费协程退出，返回是否在超时前完成
+func (aw *asyncWriter) waitDrain() bool {
+	if aw.drainTimeout <= 0 {
+		aw.wg.Wait()
+		return true
+	}
+
+	done := make(chan struct{})
+	go func() {
+		aw.wg.Wait()
+		close(done)
+	}()
+
+	timer := time.NewTimer(aw.drainTimeout)
+	defer timer.Stop()
+	select {
+	case <-done:
+		return true
+	case <-timer.C:
+		return false
+	}
 }
 
 // loop 消费 channel 中的数据写入底层 writer，写完归还 buffer

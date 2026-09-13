@@ -2,6 +2,7 @@ package xgorm
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"math"
 	"net/url"
@@ -25,7 +26,21 @@ import (
 	"gorm.io/plugin/opentelemetry/tracing"
 )
 
-const defaultClientName = "__default_client__"
+const (
+	defaultClientName = "__default_client__"
+
+	// dsnMask DSN 脱敏后的占位符
+	dsnMask = "***"
+	// dsnRedacted DSN 无法解析时的整串占位符
+	dsnRedacted = "[redacted dsn]"
+
+	// pingAttempts 建连验证的尝试次数
+	pingAttempts = 3
+	// pingRetryInterval 建连验证的重试间隔
+	pingRetryInterval = time.Second
+	// defaultPingTimeout 无法从配置推算时单次 Ping 的兜底超时
+	defaultPingTimeout = time.Second
+)
 
 var (
 	clientMap = make(map[string]*gorm.DB)
@@ -78,12 +93,12 @@ func initMulti() error {
 	for idx, config := range configs {
 		client, err := newClient(config)
 		if err != nil {
-			// 回滚已创建的连接
+			// 回滚：关闭已创建的连接，并从 clientMap 中摘除
+			// 只关不摘的话，回滚到 BeforeStop 执行之间 C() 会返回已关闭的 client
 			for _, c := range created {
-				if db, dbErr := c.DB(); dbErr == nil {
-					_ = db.Close()
-				}
+				closeGormDB(c)
 			}
+			removeClients(configs[:idx])
 			return xerror.Newf("xgorm", "init", "newClient failed, name=[%v], err=[%v]", config.Name, err)
 		}
 
@@ -148,6 +163,16 @@ func setDefault(client *gorm.DB) {
 	clientMap[defaultClientName] = client
 }
 
+// removeClients 把指定配置对应的 client 从 clientMap 中摘除，用于初始化失败回滚
+func removeClients(configs []*Config) {
+	clientMu.Lock()
+	defer clientMu.Unlock()
+	for _, c := range configs {
+		delete(clientMap, c.Name)
+	}
+	delete(clientMap, defaultClientName)
+}
+
 func newClient(c *Config) (*gorm.DB, error) {
 	dialector, err := resolveDialector(c)
 	if err != nil {
@@ -160,8 +185,19 @@ func newClient(c *Config) (*gorm.DB, error) {
 	}
 	client, err := gorm.Open(dialector, gormConfig)
 	if err != nil {
+		// gorm.Open 内部已经建好连接池才做自动 ping，失败时它不会关掉那个池子，
+		// 留下的 database/sql 连接开启协程再也不会退出
+		closeGormDB(client)
 		return nil, xerror.Newf("xgorm", "newClient", "invoke gorm.Open failed, err=[%v]", err)
 	}
+
+	// 此后任一步失败都必须关掉连接池，否则每次建连失败泄漏一个常驻协程
+	ok := false
+	defer func() {
+		if !ok {
+			closeGormDB(client)
+		}
+	}()
 
 	db, err := client.DB()
 	if err != nil {
@@ -170,17 +206,11 @@ func newClient(c *Config) (*gorm.DB, error) {
 
 	// 连接池参数配置
 	db.SetMaxOpenConns(c.MaxOpenConns)
-	db.SetMaxIdleConns(c.MaxIdleConns)
+	db.SetMaxIdleConns(c.maxIdleConns())
 	db.SetConnMaxLifetime(xutil.ToDuration(c.MaxLifetime))
 	db.SetConnMaxIdleTime(xutil.ToDuration(c.MaxIdleTime))
 
-	pingTimeout := xutil.ToDuration(c.DialTimeout)
-	err = xutil.Retry(func() error {
-		ctx, cancel := context.WithTimeout(context.Background(), pingTimeout)
-		defer cancel()
-		return db.PingContext(ctx)
-	}, 3, time.Second)
-	if err != nil {
+	if err = pingWithRetry(db, c); err != nil {
 		return nil, xerror.Newf("xgorm", "newClient", "invoke db.PingContext failed, err=[%v]", err)
 	}
 
@@ -190,7 +220,58 @@ func newClient(c *Config) (*gorm.DB, error) {
 		}
 	}
 
+	ok = true
 	return client, nil
+}
+
+// pingWithRetry 建连验证，失败按固定间隔重试
+//
+// 用带 context 的重试：初始化跑在 BeforeStart 里，不可中断的重试会让
+// 启动阶段收到的退出信号必须等满 attempts×sleep 才生效
+func pingWithRetry(db *sql.DB, c *Config) error {
+	ctx, cancel := context.WithTimeout(context.Background(), pingTotalBudget(c))
+	defer cancel()
+
+	timeout := pingTimeout(c)
+	return xutil.RetryWithContext(ctx, func(ctx context.Context) error {
+		pingCtx, pingCancel := context.WithTimeout(ctx, timeout)
+		defer pingCancel()
+		return db.PingContext(pingCtx)
+	}, pingAttempts, pingRetryInterval)
+}
+
+// pingTimeout 单次 Ping 的超时
+//
+// 不能只用 DialTimeout：Ping 的耗时是建连加一个往返，
+// 拿建连预算当整体预算，会让连接刚建成就判超时
+func pingTimeout(c *Config) time.Duration {
+	d := xutil.ToDuration(c.DialTimeout)
+	if c.GetDriver() == DriverMySQL {
+		d += xutil.ToDuration(c.MySQL.ReadTimeout)
+	}
+	if d <= 0 {
+		return defaultPingTimeout
+	}
+	return d
+}
+
+// pingTotalBudget 建连验证的总预算，兜住整轮重试的最坏耗时
+func pingTotalBudget(c *Config) time.Duration {
+	return pingTimeout(c)*pingAttempts + pingRetryInterval*(pingAttempts-1)
+}
+
+// closeGormDB 关闭 gorm 实例底层的连接池，用于建连失败时兜底
+func closeGormDB(client *gorm.DB) {
+	if client == nil {
+		return
+	}
+	db, err := client.DB()
+	if err != nil || db == nil {
+		return
+	}
+	if cerr := db.Close(); cerr != nil {
+		xutil.WarnIfEnableDebug("XOne xgorm close db after failed init got error, err=[%v]", cerr)
+	}
 }
 
 // resolveDialector 根据 driver 类型返回对应的 gorm dialector
@@ -231,7 +312,8 @@ func resolveDialector(c *Config) (gorm.Dialector, error) {
 func resolveMySQLDSN(c *Config) (string, error) {
 	mysqlConfig, err := stdMysql.ParseDSN(c.DSN)
 	if err != nil {
-		return "", err
+		// 驱动的解析错误可能回显 DSN 片段，不能原样外传
+		return "", xerror.Newf("xgorm", "resolveMySQLDSN", "parse dsn failed, dsn=[%s], err=[%v]", sanitizeDSN(c.DSN), sanitizeDSN(err.Error()))
 	}
 
 	if mysqlConfig.ReadTimeout == 0 && c.MySQL.ReadTimeout != "" {
@@ -433,37 +515,159 @@ func getMultiConfig() ([]*Config, error) {
 }
 
 // sanitizeDSN 对 DSN 中的密码进行脱敏处理
-// 支持 URL 格式 (user:password@host) 和 Postgres key=value 格式 (password=xxx)
+//
+// 按 DSN 的实际格式分派，而不是「看见 @ 就当成 URL」——
+// key=value 格式的 DSN 里 @ 很常见（如 application_name=svc@cluster），
+// 按 @ 判断会让整串 DSN 连同 password= 原样进入日志
 func sanitizeDSN(dsn string) string {
-	// URL 格式: user:password@host
-	atIdx := strings.Index(dsn, "@")
-	if atIdx >= 0 {
-		prefix := dsn[:atIdx]
-		colonIdx := strings.LastIndex(prefix, ":")
-		if colonIdx >= 0 {
-			return prefix[:colonIdx+1] + "***" + dsn[atIdx:]
-		}
-		return dsn
+	if isURLDSN(dsn) {
+		return sanitizeURLDSN(dsn)
 	}
-
-	// Postgres key=value 格式: password=xxx
-	return sanitizeDSNPasswordKV(dsn)
+	if strings.Contains(dsn, "=") {
+		return sanitizeKVDSN(dsn)
+	}
+	// 既不是 URL 也不含 key=value，可能是 MySQL 的 user:pass@tcp(...)/db 形式
+	return sanitizeMySQLDSN(dsn)
 }
 
-// sanitizeDSNPasswordKV 对 key=value 格式 DSN 中的 password 字段脱敏
-func sanitizeDSNPasswordKV(dsn string) string {
-	const passwordKey = "password="
-	idx := strings.Index(strings.ToLower(dsn), passwordKey)
-	if idx < 0 {
+// isURLDSN 判断是否为 scheme://... 形式
+func isURLDSN(dsn string) bool {
+	i := strings.Index(dsn, "://")
+	if i <= 0 {
+		return false
+	}
+	for _, r := range dsn[:i] {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '+' || r == '-' || r == '.') {
+			return false
+		}
+	}
+	return true
+}
+
+// sanitizeURLDSN 脱敏 URL 形式 DSN 的 userinfo 与 query 中的密码
+//
+// 用 url.Parse 而非手工找冒号：密码里含 @ 时（p@ssw0rd），
+// 按第一个 @ 切分会把密码的后半段留在日志里
+func sanitizeURLDSN(dsn string) string {
+	u, err := url.Parse(dsn)
+	if err != nil {
+		// 解析不了就整串遮掉，宁可少一条排查信息，也不能把凭证漏出去
+		return dsnRedacted
+	}
+	if u.User != nil {
+		if _, hasPwd := u.User.Password(); hasPwd {
+			u.User = url.UserPassword(u.User.Username(), dsnMask)
+		}
+	}
+	q := u.Query()
+	changed := false
+	for k := range q {
+		if isSecretKey(k) {
+			q.Set(k, dsnMask)
+			changed = true
+		}
+	}
+	if changed {
+		// Encode 会重排 query 参数顺序，对日志用途无妨
+		u.RawQuery = q.Encode()
+	}
+	// url.String 会把掩码里的 * 百分号编码，还原成可读形式
+	return strings.ReplaceAll(u.String(), url.QueryEscape(dsnMask), dsnMask)
+}
+
+// sanitizeMySQLDSN 脱敏 user:password@protocol(addr)/db 形式
+//
+// 密码可能含 @，因此以最后一个 @ 为分界（host 部分不含 @）
+func sanitizeMySQLDSN(dsn string) string {
+	atIdx := strings.LastIndex(dsn, "@")
+	if atIdx < 0 {
 		return dsn
 	}
-	start := idx + len(passwordKey)
-	end := strings.IndexByte(dsn[start:], ' ')
-	if end < 0 {
-		// password 在末尾
-		return dsn[:start] + "***"
+	credentials := dsn[:atIdx]
+	colonIdx := strings.Index(credentials, ":") // 用户名不含冒号，第一个冒号即分界
+	if colonIdx < 0 {
+		return dsn // 没有密码
 	}
-	return dsn[:start] + "***" + dsn[start+end:]
+	return credentials[:colonIdx+1] + dsnMask + dsn[atIdx:]
+}
+
+// sanitizeKVDSN 脱敏 libpq key=value 形式 DSN 中的所有敏感字段
+//
+// 逐段扫描而非只找第一个 password=：DSN 里出现两次同名 key 是合法的
+// （后者生效），只遮第一个会把真正生效的那个留在日志里。
+// 同时按 libpq 规则处理单引号包裹的值，否则 password='my secret'
+// 会在空格处被截断，后半段照样漏出去
+func sanitizeKVDSN(dsn string) string {
+	var sb strings.Builder
+	sb.Grow(len(dsn))
+
+	i := 0
+	for i < len(dsn) {
+		// 保留段前的空白
+		start := i
+		for i < len(dsn) && (dsn[i] == ' ' || dsn[i] == '\t') {
+			i++
+		}
+		sb.WriteString(dsn[start:i])
+		if i >= len(dsn) {
+			break
+		}
+
+		// 读 key
+		keyStart := i
+		for i < len(dsn) && dsn[i] != '=' && dsn[i] != ' ' && dsn[i] != '\t' {
+			i++
+		}
+		key := dsn[keyStart:i]
+		sb.WriteString(key)
+		if i >= len(dsn) || dsn[i] != '=' {
+			continue // 没有 = 的孤立 token，原样保留
+		}
+		sb.WriteByte('=')
+		i++
+
+		valStart := i
+		i = skipKVValue(dsn, i)
+		if isSecretKey(key) {
+			sb.WriteString(dsnMask)
+		} else {
+			sb.WriteString(dsn[valStart:i])
+		}
+	}
+	return sb.String()
+}
+
+// skipKVValue 返回 libpq key=value 中一个 value 结束后的下标
+// 单引号包裹的值内部可含空格，反斜杠用于转义
+func skipKVValue(s string, i int) int {
+	if i < len(s) && s[i] == '\'' {
+		i++ // 跳过起始引号
+		for i < len(s) {
+			if s[i] == '\\' && i+1 < len(s) {
+				i += 2
+				continue
+			}
+			if s[i] == '\'' {
+				return i + 1 // 含结束引号
+			}
+			i++
+		}
+		return i
+	}
+	for i < len(s) && s[i] != ' ' && s[i] != '\t' {
+		i++
+	}
+	return i
+}
+
+// isSecretKey 判断 DSN 参数名是否承载凭证
+func isSecretKey(k string) bool {
+	switch strings.ToLower(k) {
+	case "password", "passwd", "pwd", "sslpassword":
+		return true
+	default:
+		return false
+	}
 }
 
 // sanitizeConfigForLog 创建配置的脱敏副本用于日志输出

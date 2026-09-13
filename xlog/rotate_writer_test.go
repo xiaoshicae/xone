@@ -9,6 +9,7 @@ import (
 
 	"github.com/bytedance/mockey"
 	c "github.com/smartystreets/goconvey/convey"
+	"github.com/xiaoshicae/xone/v2/xutil"
 )
 
 // newTestWriter 在新建临时目录中创建写入器并注入可控时间源
@@ -230,16 +231,53 @@ func TestRotateLayoutFor(t *testing.T) {
 
 func TestRotateWriterErrorPaths(t *testing.T) {
 	mockey.PatchConvey("TestRotateWriterErrorPaths", t, func() {
-		mockey.PatchConvey("轮转时打开新文件失败", func() {
+		mockey.PatchConvey("轮转失败时降级继续写旧文件", func() {
+			// 直接返回错误的话，从第一次轮转失败起每条日志都走同一条失败路径，
+			// 而 asyncWriter 只保留第一个错误且只在 Close 时返回——
+			// 现象就是某天日志突然断了，没有任何报错
 			now := time.Date(2026, 9, 12, 10, 0, 0, 0, time.Local)
 			w, _ := newTestWriter(t, time.Hour, 24*time.Hour, &now)
 
-			mockey.Mock(os.OpenFile).Return(nil, errors.New("permission denied")).Build()
+			if _, err := w.Write([]byte("before\n")); err != nil {
+				t.Fatalf("轮转前写入应成功: %v", err)
+			}
+			current := w.currentName
+
+			// os.ReadFile 内部也走 os.OpenFile，写完后要立刻解除 mock 才能读回文件
+			openMock := mockey.Mock(os.OpenFile).Return(nil, errors.New("permission denied")).Build()
 			now = now.Add(48 * time.Hour) // 触发轮转
 
-			_, err := w.Write([]byte("x"))
-			c.So(err, c.ShouldNotBeNil)
-			c.So(err.Error(), c.ShouldContainSubstring, "open log file failed")
+			n, err := w.Write([]byte("after\n"))
+			openMock.UnPatch()
+
+			c.So(err, c.ShouldBeNil)
+			c.So(n, c.ShouldEqual, len("after\n"))
+			// 仍然写在原来的文件上，没有切到新文件
+			c.So(w.currentName, c.ShouldEqual, current)
+
+			content, readErr := os.ReadFile(current)
+			c.So(readErr, c.ShouldBeNil)
+			c.So(string(content), c.ShouldContainSubstring, "after")
+		})
+
+		mockey.PatchConvey("轮转失败告警按间隔降噪", func() {
+			now := time.Date(2026, 9, 12, 10, 0, 0, 0, time.Local)
+			w, _ := newTestWriter(t, time.Hour, 24*time.Hour, &now)
+
+			warned := 0
+			mockey.Mock(xutil.WarnIfEnableDebug).To(func(_ string, _ ...any) { warned++ }).Build()
+			mockey.Mock(os.OpenFile).Return(nil, errors.New("permission denied")).Build()
+			now = now.Add(48 * time.Hour)
+
+			for i := 0; i < 5; i++ {
+				_, _ = w.Write([]byte("x"))
+			}
+			// 轮转周期到了之后每条日志都会重试，不限流会把告警刷爆
+			c.So(warned, c.ShouldEqual, 1)
+
+			now = now.Add(2 * rotateErrLogInterval)
+			_, _ = w.Write([]byte("x"))
+			c.So(warned, c.ShouldEqual, 2)
 		})
 
 		mockey.PatchConvey("旧文件关闭失败不影响继续写入", func() {

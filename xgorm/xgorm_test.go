@@ -5,8 +5,10 @@ import (
 	"database/sql"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/xiaoshicae/xone/v2/xconfig"
+	"github.com/xiaoshicae/xone/v2/xtrace"
 	"github.com/xiaoshicae/xone/v2/xutil"
 
 	"gorm.io/gorm"
@@ -27,7 +29,7 @@ func TestConfigMergeDefault(t *testing.T) {
 				Driver:        "postgres",
 				DialTimeout:   "500ms",
 				MaxOpenConns:  50,
-				MaxIdleConns:  50,
+				MaxIdleConns:  xutil.ToPtr(50),
 				MaxLifetime:   "5m",
 				MaxIdleTime:   "5m",
 				SlowThreshold: "3s",
@@ -58,7 +60,7 @@ func TestConfigMergeDefault(t *testing.T) {
 					WriteTimeout: "3s",
 				},
 				MaxOpenConns:  10,
-				MaxIdleConns:  5,
+				MaxIdleConns:  xutil.ToPtr(5),
 				MaxLifetime:   "10m",
 				MaxIdleTime:   "8m",
 				SlowThreshold: "5s",
@@ -67,7 +69,7 @@ func TestConfigMergeDefault(t *testing.T) {
 			})
 			c.So(config.Driver, c.ShouldEqual, "mysql")
 			c.So(config.MaxOpenConns, c.ShouldEqual, 10)
-			c.So(config.MaxIdleConns, c.ShouldEqual, 5)
+			c.So(config.maxIdleConns(), c.ShouldEqual, 5)
 			c.So(config.MySQL.ReadTimeout, c.ShouldEqual, "2s")
 			c.So(config.MySQL.WriteTimeout, c.ShouldEqual, "3s")
 		})
@@ -263,11 +265,49 @@ func TestNewClient(t *testing.T) {
 		Mock(gorm.Open).Return(&gorm.DB{}, nil).Build()
 		Mock((*gorm.DB).DB).Return(&sql.DB{}, nil).Build()
 
-		PatchConvey("PingErr", func() {
+		PatchConvey("PingErr-连接池被关闭", func() {
+			// 失败路径必须关掉连接池，否则每次建连失败泄漏一个常驻协程
+			closed := 0
+			Mock((*sql.DB).Close).To(func(_ *sql.DB) error {
+				closed++
+				return nil
+			}).Build()
 			Mock((*sql.DB).PingContext).Return(errors.New("ping err")).Build()
+
 			_, err := newClient(&Config{})
 			c.So(err, c.ShouldNotBeNil)
 			c.So(err.Error(), c.ShouldContainSubstring, "db.PingContext failed")
+			c.So(closed, c.ShouldEqual, 1)
+		})
+
+		PatchConvey("TracingErr-连接池被关闭", func() {
+			closed := 0
+			Mock((*sql.DB).Close).To(func(_ *sql.DB) error {
+				closed++
+				return nil
+			}).Build()
+			Mock((*sql.DB).PingContext).Return(nil).Build()
+			Mock(xtrace.EnableTrace).Return(true).Build()
+			Mock((*gorm.DB).Use).Return(errors.New("use err")).Build()
+
+			_, err := newClient(&Config{})
+			c.So(err, c.ShouldNotBeNil)
+			c.So(err.Error(), c.ShouldContainSubstring, "use tracing.NewPlugin failed")
+			c.So(closed, c.ShouldEqual, 1)
+		})
+
+		PatchConvey("Success-连接池不被关闭", func() {
+			closed := 0
+			Mock((*sql.DB).Close).To(func(_ *sql.DB) error {
+				closed++
+				return nil
+			}).Build()
+			Mock((*sql.DB).PingContext).Return(nil).Build()
+			Mock((*gorm.DB).Use).Return(nil).Build()
+
+			_, err := newClient(&Config{})
+			c.So(err, c.ShouldBeNil)
+			c.So(closed, c.ShouldEqual, 0)
 		})
 
 		PatchConvey("Success", func() {
@@ -603,6 +643,105 @@ func TestGetMultiConfig(t *testing.T) {
 				c.So(err, c.ShouldBeNil)
 				c.So(configs, c.ShouldHaveLength, 1)
 			})
+		})
+	})
+}
+
+func TestSanitizeDSN_Leaks(t *testing.T) {
+	PatchConvey("TestSanitizeDSN-不得泄漏凭证", t, func() {
+		cases := []struct {
+			name   string
+			dsn    string
+			secret string
+		}{
+			{"MySQL", "user:pass@tcp(127.0.0.1:3306)/db", "pass"},
+			{"URL", "postgres://user:pass@host:5432/db", "pass"},
+			{"KV", "host=127.0.0.1 user=app password=s3cret dbname=app", "s3cret"},
+			// application_name 是 PG 常规字段，值里带 @ 很自然；
+			// 按「有没有 @」判断格式会让整串 DSN 连同 password 原样进日志
+			{"KV含@", "host=127.0.0.1 user=app password=s3cret application_name=svc@cluster", "s3cret"},
+			// 密码含 @ 时，按第一个 @ 切分会把后半段留在日志里
+			{"密码含@", "user:p@ssw0rd@tcp(127.0.0.1:3306)/db", "ssw0rd"},
+			// 引号内的空格会让「找下一个空格」的实现提前截断
+			{"引号包裹的密码", "host=127.0.0.1 password='my secret' dbname=app", "secret"},
+			// 同名 key 出现两次是合法的，后者生效，只遮第一个等于没遮
+			{"重复password", "host=h password=a user=u password=bxyz", "bxyz"},
+			{"URL中的sslpassword", "postgres://u:p@h:5432/db?sslpassword=xyzsecret", "xyzsecret"},
+		}
+		for _, tc := range cases {
+			PatchConvey(tc.name, func() {
+				out := sanitizeDSN(tc.dsn)
+				c.So(out, c.ShouldNotContainSubstring, tc.secret)
+				c.So(out, c.ShouldContainSubstring, dsnMask)
+			})
+		}
+
+		PatchConvey("无凭证的 DSN 原样保留", func() {
+			c.So(sanitizeDSN("host=127.0.0.1 user=app dbname=app"), c.ShouldEqual, "host=127.0.0.1 user=app dbname=app")
+			c.So(sanitizeDSN("user@tcp(127.0.0.1:3306)/db"), c.ShouldEqual, "user@tcp(127.0.0.1:3306)/db")
+		})
+
+		PatchConvey("URL 解析失败时整串遮掉", func() {
+			c.So(sanitizeDSN("postgres://user:pa ss@ho st:5432/db"), c.ShouldEqual, dsnRedacted)
+		})
+	})
+}
+
+func TestRemoveClients(t *testing.T) {
+	PatchConvey("TestRemoveClients", t, func() {
+		// 初始化失败回滚时，已关闭的 client 必须从 clientMap 中摘除，
+		// 否则回滚到 BeforeStop 执行之间 C() 会返回已关闭的 client
+		clientMu.Lock()
+		clientMap = make(map[string]*gorm.DB)
+		clientMu.Unlock()
+
+		set("a", &gorm.DB{})
+		set("b", &gorm.DB{})
+		setDefault(&gorm.DB{})
+
+		removeClients([]*Config{{Name: "a"}, {Name: "b"}})
+
+		clientMu.RLock()
+		size := len(clientMap)
+		clientMu.RUnlock()
+		c.So(size, c.ShouldEqual, 0)
+	})
+}
+
+func TestPingTimeout(t *testing.T) {
+	PatchConvey("TestPingTimeout", t, func() {
+		PatchConvey("MySQL 含读超时而非只用建连超时", func() {
+			// Ping 的耗时是建连加一个往返，只给建连预算会让连接刚建成就判超时
+			cfg := configMergeDefault(&Config{Driver: "mysql", DialTimeout: "500ms"})
+			c.So(pingTimeout(cfg), c.ShouldEqual, 500*time.Millisecond+3*time.Second)
+		})
+
+		PatchConvey("Postgres 用建连超时", func() {
+			cfg := configMergeDefault(&Config{Driver: "postgres", DialTimeout: "800ms"})
+			c.So(pingTimeout(cfg), c.ShouldEqual, 800*time.Millisecond)
+		})
+
+		PatchConvey("无法推算时用兜底值", func() {
+			c.So(pingTimeout(&Config{}), c.ShouldEqual, defaultPingTimeout)
+		})
+
+		PatchConvey("总预算覆盖整轮重试", func() {
+			c.So(pingTotalBudget(&Config{Driver: "postgres", DialTimeout: "1s"}), c.ShouldEqual, 3*time.Second+2*time.Second)
+		})
+	})
+}
+
+func TestMaxIdleConnsPointer(t *testing.T) {
+	PatchConvey("TestMaxIdleConnsPointer", t, func() {
+		PatchConvey("未配置时取 MaxOpenConns", func() {
+			cfg := configMergeDefault(&Config{MaxOpenConns: 20})
+			c.So(cfg.maxIdleConns(), c.ShouldEqual, 20)
+		})
+
+		PatchConvey("显式配 0 表示不保留空闲连接", func() {
+			// 用值类型时 0 与「未配置」无法区分，会被悄悄改成 MaxOpenConns
+			cfg := configMergeDefault(&Config{MaxOpenConns: 20, MaxIdleConns: xutil.ToPtr(0)})
+			c.So(cfg.maxIdleConns(), c.ShouldEqual, 0)
 		})
 	})
 }

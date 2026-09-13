@@ -322,6 +322,10 @@
           "type": "string",
           "description": "最大重试等待时间，默认2s"
         },
+        "RetryOnlyIdempotent": {
+          "type": ["boolean", "string"],
+          "description": "是否只对幂等方法（GET/HEAD/OPTIONS/TRACE/PUT/DELETE）重试，默认 true。超时无法区分「请求没到服务端」和「服务端处理完了但响应丢了」，重发 POST 可能导致重复下单"
+        },
         "EnableMetric": {
           "type": ["boolean", "string"],
           "description": "是否启用出站请求 Prometheus 指标采集（http_client_requests_total / http_client_request_duration_seconds），默认 true"
@@ -498,7 +502,7 @@
         },
         "MaxIdleConns": {
           "type": ["integer", "string"],
-          "description": "最大空闲连接数，默认等于MaxOpenConns"
+          "description": "最大空闲连接数，默认等于MaxOpenConns；显式配 0 表示不保留任何空闲连接"
         },
         "MaxLifetime": {
           "type": "string",

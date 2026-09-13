@@ -871,13 +871,14 @@ func TestReinitKeepsWritesAlive(t *testing.T) {
 
 func TestRawLogNilCtx(t *testing.T) {
 	mockey.PatchConvey("TestRawLogNilCtx", t, func() {
-		// ctx 为 nil 时直接返回，不应 panic 也不应产生输出
+		// ctx 为 nil 是调用方的疏忽，但为此丢掉一整条（可能是 Error 级的）日志
+		// 代价太大，用 Background 兜底，日志照常输出
 		fileW := &mockWriter{}
 		handler.Store(&xHandler{fileWriter: fileW, level: slogLevelTrace})
 
 		//nolint:staticcheck // 有意传入 nil 验证兜底行为
-		RawLog(nil, InfoLevel, "不应输出")
-		c.So(fileW.written, c.ShouldBeEmpty)
+		RawLog(nil, InfoLevel, "仍应输出")
+		c.So(string(fileW.written), c.ShouldContainSubstring, "仍应输出")
 	})
 }
 
@@ -1104,6 +1105,49 @@ func TestConsoleFormatFallback(t *testing.T) {
 		mockey.PatchConvey("大小写不敏感且归一化", func() {
 			c.So(configMergeDefault(&Config{Console: ConsoleConfig{Format: "JSON"}}).Console.Format, c.ShouldEqual, FormatJSON)
 			c.So(configMergeDefault(&Config{Console: ConsoleConfig{Format: "TEXT"}}).Console.Format, c.ShouldEqual, FormatText)
+		})
+	})
+}
+
+// stuckWriteCloser 每次写入都阻塞，模拟磁盘满 / NFS 不响应
+type stuckWriteCloser struct {
+	release chan struct{}
+}
+
+func (s *stuckWriteCloser) Write(p []byte) (int, error) {
+	<-s.release
+	return len(p), nil
+}
+
+func (s *stuckWriteCloser) Close() error { return nil }
+
+func TestAsyncWriterCloseTimeout(t *testing.T) {
+	mockey.PatchConvey("TestAsyncWriterCloseTimeout", t, func() {
+		mockey.PatchConvey("底层写入卡住时 Close 不会永久阻塞", func() {
+			// xlog 是最后关闭的模块，卡在这里等于整个进程退不出去
+			bw := &stuckWriteCloser{release: make(chan struct{})}
+			defer close(bw.release)
+
+			aw := newAsyncWriter(bw, 8)
+			aw.drainTimeout = 50 * time.Millisecond
+			_, _ = aw.Write([]byte("stuck\n"))
+
+			done := make(chan error, 1)
+			go func() { done <- aw.Close() }()
+
+			select {
+			case err := <-done:
+				c.So(err, c.ShouldEqual, errAsyncWriterDrainTimeout)
+			case <-time.After(3 * time.Second):
+				t.Fatal("Close 没有在超时后返回")
+			}
+		})
+
+		mockey.PatchConvey("正常写完时不报超时", func() {
+			aw := newAsyncWriter(&mockWriteCloser{}, 8)
+			aw.drainTimeout = 2 * time.Second
+			_, _ = aw.Write([]byte("ok\n"))
+			c.So(aw.Close(), c.ShouldBeNil)
 		})
 	})
 }

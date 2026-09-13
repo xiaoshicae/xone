@@ -37,7 +37,7 @@ XGorm:
       client_connection_check_interval: "10000"
 
   MaxOpenConns: 50                   # 最大连接数 (默认: 50)
-  MaxIdleConns: 50                   # 最大空闲连接数 (默认: 等于 MaxOpenConns)
+  MaxIdleConns: 50                   # 最大空闲连接数 (默认: 等于 MaxOpenConns；显式配 0 表示不保留空闲连接)
   MaxLifetime: "5m"                  # 连接最长存活时间 (默认: 5m)
   MaxIdleTime: "5m"                  # 空闲连接最长存活时间 (默认: 等于 MaxLifetime)
   EnableLog: true                    # 是否开启日志 (默认: false)
@@ -156,7 +156,7 @@ func GetUser(ctx context.Context, id uint) (*User, error) {
 | Postgres.IdleInTxTimeout | string | 否 | 不限制 | PG 事务内空闲超时 |
 | Postgres.Params | map | 否 | nil | PG 任意 runtime param 直通 |
 | MaxOpenConns | int | 否 | 50 | 最大打开连接数 |
-| MaxIdleConns | int | 否 | MaxOpenConns | 最大空闲连接数 |
+| MaxIdleConns | int | 否 | MaxOpenConns | 最大空闲连接数，显式配 `0` 表示不保留空闲连接 |
 | MaxLifetime | string | 否 | 5m | 连接最大存活时间 |
 | MaxIdleTime | string | 否 | MaxLifetime | 空闲连接最大存活时间 |
 | EnableLog | bool | 否 | false | 是否启用 SQL 日志 |

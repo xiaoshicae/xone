@@ -41,9 +41,23 @@ type Config struct {
 	// optional default "2s"
 	RetryMaxWaitTime string `mapstructure:"RetryMaxWaitTime"`
 
+	// RetryOnlyIdempotent 是否只对幂等方法（GET/HEAD/OPTIONS/TRACE/PUT/DELETE）重试
+	//
+	// 默认开启。传输层超时无法区分「请求没到服务端」和「服务端处理完了但响应丢了」，
+	// 重发一个 POST 就可能变成重复下单、重复扣款。确认接口幂等（如带幂等键）
+	// 再关掉它
+	// optional default true
+	RetryOnlyIdempotent *bool `mapstructure:"RetryOnlyIdempotent"`
+
 	// EnableMetric 是否启用出站请求 Prometheus 指标采集
 	// optional default true
 	EnableMetric *bool `mapstructure:"EnableMetric"`
+}
+
+// retryOnlyIdempotentEnabled 返回是否只对幂等方法重试
+// nil 视为启用，与文档中的默认值一致，避免直接构造 Config 的调用方踩空指针
+func (c *Config) retryOnlyIdempotentEnabled() bool {
+	return c.RetryOnlyIdempotent == nil || *c.RetryOnlyIdempotent
 }
 
 func configMergeDefault(c *Config) *Config {
@@ -77,6 +91,9 @@ func configMergeDefault(c *Config) *Config {
 	}
 	if c.EnableMetric == nil {
 		c.EnableMetric = xutil.ToPtr(true)
+	}
+	if c.RetryOnlyIdempotent == nil {
+		c.RetryOnlyIdempotent = xutil.ToPtr(true)
 	}
 	return c
 }

@@ -1,5 +1,7 @@
 package xgorm
 
+import "github.com/xiaoshicae/xone/v2/xutil"
+
 const XGormConfigKey = "XGorm"
 
 // Driver 数据库驱动类型
@@ -37,8 +39,9 @@ type Config struct {
 	MaxOpenConns int `mapstructure:"MaxOpenConns"`
 
 	// MaxIdleConns 最大空闲连接数
+	// 指针类型以区分「未配置」与「显式配 0」：0 表示不保留任何空闲连接
 	// optional default 等于 MaxOpenConns
-	MaxIdleConns int `mapstructure:"MaxIdleConns"`
+	MaxIdleConns *int `mapstructure:"MaxIdleConns"`
 
 	// MaxLifetime 连接的最长存活时间
 	// optional default "5m"
@@ -123,8 +126,8 @@ func configMergeDefault(c *Config) *Config {
 	if c.MaxOpenConns <= 0 {
 		c.MaxOpenConns = 50
 	}
-	if c.MaxIdleConns == 0 {
-		c.MaxIdleConns = c.MaxOpenConns
+	if c.MaxIdleConns == nil {
+		c.MaxIdleConns = xutil.ToPtr(c.MaxOpenConns)
 	}
 	if c.MaxLifetime == "" {
 		c.MaxLifetime = "5m"
@@ -136,6 +139,14 @@ func configMergeDefault(c *Config) *Config {
 		c.SlowThreshold = "3s"
 	}
 	return c
+}
+
+// maxIdleConns 返回生效的最大空闲连接数
+func (c *Config) maxIdleConns() int {
+	if c.MaxIdleConns == nil {
+		return c.MaxOpenConns
+	}
+	return *c.MaxIdleConns
 }
 
 // GetDriver 获取驱动类型

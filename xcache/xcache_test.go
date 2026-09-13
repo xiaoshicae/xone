@@ -36,8 +36,10 @@ func withCleanGlobal(fn func()) {
 	cacheMu.Lock()
 	origMap := cacheMap
 	origGlobal := globalCache
+	origClosed := closed
 	cacheMap = make(map[string]*Cache)
 	globalCache = nil
+	closed = false // 关闭标志是进程级的，用例之间必须隔离
 	cacheMu.Unlock()
 
 	defer func() {
@@ -50,6 +52,7 @@ func withCleanGlobal(fn func()) {
 		}
 		cacheMap = origMap
 		globalCache = origGlobal
+		closed = origClosed
 		cacheMu.Unlock()
 	}()
 
@@ -618,6 +621,69 @@ func TestGenericFunctions(t *testing.T) {
 			c.So(Set("key", "val"), c.ShouldBeFalse)
 			c.So(SetWithTTL("key", "val", time.Second), c.ShouldBeFalse)
 			Del("key") // 不 panic 即通过
+		})
+	})
+}
+
+func TestGlobalAfterClose(t *testing.T) {
+	PatchConvey("TestGlobalAfterClose", t, func() {
+		// global() 是懒初始化的：关闭后若仍会重建，新实例再也不会被关闭。
+		// 用户的 BeforeStop hook 在 xcache 之后执行（同为默认 Order，按 LIFO 反序），
+		// 里面读一次缓存就会触发
+		withCleanGlobal(func() {
+			c.So(global(), c.ShouldNotBeNil)
+
+			err := closeXCache()
+			c.So(err, c.ShouldBeNil)
+			c.So(globalCache, c.ShouldBeNil)
+
+			// 关闭后不再重建
+			c.So(global(), c.ShouldBeNil)
+			c.So(globalCache, c.ShouldBeNil)
+
+			// 包级函数也应安全返回，而不是 panic
+			c.So(Set("k", "v"), c.ShouldBeFalse)
+			_, found := Get[string]("k")
+			c.So(found, c.ShouldBeFalse)
+			Del("k")
+		})
+	})
+}
+
+func TestInitXCacheResetsClosed(t *testing.T) {
+	PatchConvey("TestInitXCacheResetsClosed", t, func() {
+		withCleanGlobal(func() {
+			Mock(xconfig.ContainKey).Return(false).Build()
+			Mock(xutil.WarnIfEnableDebug).Return().Build()
+
+			cacheMu.Lock()
+			closed = true
+			cacheMu.Unlock()
+
+			c.So(initXCache(), c.ShouldBeNil)
+			// 重新初始化解除关闭状态，支持重复初始化
+			c.So(global(), c.ShouldNotBeNil)
+		})
+	})
+}
+
+func TestRemoveCaches(t *testing.T) {
+	PatchConvey("TestRemoveCaches", t, func() {
+		withCleanCacheMap(func() {
+			// 初始化失败回滚时，已关闭的实例必须从 map 中摘除
+			c1, err := newCache(configMergeDefault(nil))
+			c.So(err, c.ShouldBeNil)
+			defer c1.Close()
+
+			set("a", c1)
+			setDefault(c1)
+
+			removeCaches([]*Config{{Name: "a"}})
+
+			cacheMu.RLock()
+			size := len(cacheMap)
+			cacheMu.RUnlock()
+			c.So(size, c.ShouldEqual, 0)
 		})
 	})
 }

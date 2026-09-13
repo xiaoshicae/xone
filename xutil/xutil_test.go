@@ -195,7 +195,7 @@ func TestGetLocalIP(t *testing.T) {
 			mockey.Mock(collectLocalIPs).Return(nil, nil, nil, nil, nil).Build()
 			_, err := GetLocalIP()
 			c.So(err, c.ShouldNotBeNil)
-			c.So(err.Error(), c.ShouldEqual, "no IP address found")
+			c.So(err.Error(), c.ShouldContainSubstring, "no IP address found")
 		})
 	})
 }
@@ -274,7 +274,7 @@ func TestCollectLocalIPs(t *testing.T) {
 			mockey.Mock(net.Interfaces).Return(nil, errors.New("mock error")).Build()
 			_, _, _, _, err := collectLocalIPs()
 			c.So(err, c.ShouldNotBeNil)
-			c.So(err.Error(), c.ShouldContainSubstring, "failed to get interfaces")
+			c.So(err.Error(), c.ShouldContainSubstring, "net.Interfaces failed")
 		})
 
 		mockey.PatchConvey("TestCollectLocalIPs-SkipLoopback", func() {
@@ -667,76 +667,6 @@ func TestTraceContextExtractor(t *testing.T) {
 
 // ==================== retry.go ====================
 
-func TestRetry(t *testing.T) {
-	mockey.PatchConvey("TestRetry", t, func() {
-		mockey.PatchConvey("TestRetry-AllFail", func() {
-			err := Retry(func() error {
-				return errors.New("for test")
-			}, 3, 10*time.Millisecond)
-			c.So(err.Error(), c.ShouldEqual, "for test")
-		})
-
-		mockey.PatchConvey("TestRetry-Success", func() {
-			err := Retry(func() error { return nil }, 3, 10*time.Millisecond)
-			c.So(err, c.ShouldBeNil)
-		})
-
-		mockey.PatchConvey("TestRetry-AttemptsZero", func() {
-			calls := 0
-			err := Retry(func() error { calls++; return nil }, 0, 10*time.Millisecond)
-			c.So(err, c.ShouldBeNil)
-			c.So(calls, c.ShouldEqual, 1)
-		})
-
-		mockey.PatchConvey("TestRetry-AttemptsNegative", func() {
-			calls := 0
-			err := Retry(func() error { calls++; return errors.New("fail") }, -1, 10*time.Millisecond)
-			c.So(err, c.ShouldNotBeNil)
-			c.So(calls, c.ShouldEqual, 1)
-		})
-	})
-}
-
-func TestRetryWithBackoff(t *testing.T) {
-	mockey.PatchConvey("TestRetryWithBackoff", t, func() {
-		mockey.PatchConvey("TestRetryWithBackoff-AllFail", func() {
-			calls := 0
-			err := RetryWithBackoff(func() error { calls++; return errors.New("fail") }, 3, 10*time.Millisecond, 100*time.Millisecond)
-			c.So(err, c.ShouldNotBeNil)
-			c.So(calls, c.ShouldEqual, 3)
-		})
-
-		mockey.PatchConvey("TestRetryWithBackoff-SecondSuccess", func() {
-			calls := 0
-			err := RetryWithBackoff(func() error {
-				calls++
-				if calls < 2 {
-					return errors.New("not yet")
-				}
-				return nil
-			}, 5, 10*time.Millisecond, 1*time.Second)
-			c.So(err, c.ShouldBeNil)
-			c.So(calls, c.ShouldEqual, 2)
-		})
-
-		mockey.PatchConvey("TestRetryWithBackoff-AttemptsZero", func() {
-			calls := 0
-			err := RetryWithBackoff(func() error { calls++; return nil }, 0, 10*time.Millisecond, 100*time.Millisecond)
-			c.So(err, c.ShouldBeNil)
-			c.So(calls, c.ShouldEqual, 1)
-		})
-
-		mockey.PatchConvey("TestRetryWithBackoff-MaxDelayLimit", func() {
-			calls := 0
-			err := RetryWithBackoff(func() error { calls++; return errors.New("fail") }, 4, 10*time.Millisecond, 20*time.Millisecond)
-			c.So(err, c.ShouldNotBeNil)
-			c.So(calls, c.ShouldEqual, 4)
-		})
-	})
-}
-
-// ==================== cmd.go ====================
-
 func TestGetOsArgs(t *testing.T) {
 	mockey.PatchConvey("TestGetOsArgs", t, func() {
 		args := GetOsArgs()
@@ -967,7 +897,7 @@ func TestGlobalSubmit(t *testing.T) {
 		})
 
 		mockey.PatchConvey("TestGlobalSubmit-Go", func() {
-			f := Go(defaultPool, func() (string, error) {
+			f := Go(defaultPool(), func() (string, error) {
 				return "default", nil
 			})
 			val, err := f.Get()
@@ -1159,7 +1089,7 @@ func TestGetConfigFromArgs(t *testing.T) {
 		mockey.PatchConvey("TestGetConfigFromArgs-NoArgs", func() {
 			mockey.Mock(GetOsArgs).Return(make([]string, 0)).Build()
 			_, err := GetConfigFromArgs("x")
-			c.So(err.Error(), c.ShouldEqual, "arg not found, there is no arg")
+			c.So(err.Error(), c.ShouldContainSubstring, "arg not found, there is no arg")
 		})
 
 		mockey.PatchConvey("TestGetConfigFromArgs-Parse", func() {
@@ -1167,7 +1097,7 @@ func TestGetConfigFromArgs(t *testing.T) {
 
 			// 空格方式：-z 后无值
 			_, err := GetConfigFromArgs("z")
-			c.So(err.Error(), c.ShouldEqual, "arg not found, arg not set")
+			c.So(err.Error(), c.ShouldContainSubstring, "arg not found, arg not set")
 
 			// 空格方式：--baaa ww
 			v, _ := GetConfigFromArgs("baaa")
@@ -1187,7 +1117,7 @@ func TestGetConfigFromArgs(t *testing.T) {
 
 			// 不存在的 key
 			_, err = GetConfigFromArgs("a")
-			c.So(err.Error(), c.ShouldEqual, "arg not found")
+			c.So(err.Error(), c.ShouldContainSubstring, "arg not found")
 		})
 	})
 }

@@ -1,12 +1,16 @@
 package xutil
 
 import (
-	"fmt"
 	"net"
+
+	"github.com/xiaoshicae/xone/v2/xerror"
 )
 
 // GetLocalIP 获取本机 IP，优先外网 IPv4
 // 优先级：public IPv4 → public IPv6 → private IPv4 → private IPv6
+//
+// 每次调用都会遍历网卡（syscall），本函数刻意不缓存——机器的地址可能变化，
+// 是否缓存由调用方决定（如 xlog 用 sync.OnceValue 包了一层）。
 func GetLocalIP() (string, error) {
 	pub4, pub6, pri4, pri6, err := collectLocalIPs()
 	if err != nil {
@@ -24,7 +28,7 @@ func GetLocalIP() (string, error) {
 	if len(pri6) > 0 {
 		return pri6[0].String(), nil
 	}
-	return "", fmt.Errorf("no IP address found")
+	return "", xerror.Newf("xutil", "GetLocalIP", "no IP address found")
 }
 
 // GetLocalPublicIP 获取本机外网 IP，优先 IPv4
@@ -40,7 +44,7 @@ func GetLocalPublicIP() (string, error) {
 	if len(pub6) > 0 {
 		return pub6[0].String(), nil
 	}
-	return "", fmt.Errorf("no public IP address found")
+	return "", xerror.Newf("xutil", "GetLocalPublicIP", "no public IP address found")
 }
 
 // GetLocalPrivateIP 获取本机内网 IP，优先 IPv4
@@ -56,7 +60,7 @@ func GetLocalPrivateIP() (string, error) {
 	if len(pri6) > 0 {
 		return pri6[0].String(), nil
 	}
-	return "", fmt.Errorf("no private IP address found")
+	return "", xerror.Newf("xutil", "GetLocalPrivateIP", "no private IP address found")
 }
 
 // collectLocalIPs 遍历网卡，按类型和协议分 4 组收集 IP
@@ -64,7 +68,7 @@ func GetLocalPrivateIP() (string, error) {
 func collectLocalIPs() (public4, public6, private4, private6 []net.IP, err error) {
 	iFaces, err := net.Interfaces()
 	if err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("failed to get interfaces, error: %v", err)
+		return nil, nil, nil, nil, xerror.Newf("xutil", "collectLocalIPs", "net.Interfaces failed, err=[%v]", err)
 	}
 
 	for _, iface := range iFaces {
@@ -110,6 +114,10 @@ func collectLocalIPs() (public4, public6, private4, private6 []net.IP, err error
 	return
 }
 
+// isPrivateIP 判断是否为内网地址
+//
+// 也把 loopback 算作内网：collectLocalIPs 已在网卡与地址两层都跳过了它，
+// 这里是兜底——一旦上游过滤有变，把 127.0.0.1 归为内网也远好过当成公网 IP 报出去。
 func isPrivateIP(ip net.IP) bool {
 	if ip == nil {
 		return false

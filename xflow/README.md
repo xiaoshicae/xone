@@ -3,43 +3,48 @@
 ### 1. 模块简介
 
 XFlow 是 XOne 框架的流程编排模块，提供：
-- 按顺序执行多个处理器（Processor），支持 Request/Response/临时上下文 三层数据模型
+
+- 按顺序执行多个处理器（Processor），一个共享数据结构贯穿全程
 - 强依赖 / 弱依赖区分：强依赖失败中断流程并自动回滚，弱依赖失败跳过并继续
-- 已成功处理器逆序回滚，Process / Rollback 均捕获 panic
-- `ExecuteResult[Resp]` 自包含返回值，调用方无需回到原始变量取结果
-- 可选 Monitor 监控，零开销关闭
+- 已执行的处理器逆序回滚，Process / Rollback 均捕获 panic
+- **回滚不受调用方 context 取消影响**，补偿逻辑在请求超时后依然能执行
+- 可选 Monitor 监控，关闭时零开销
 
 ### 2. 核心概念
 
 | 概念 | 说明 |
 |------|------|
-| `FlowData[Req, Resp]` | 流程数据容器，包含 Request（入参）、Response（出参）和 Extra（临时数据） |
-| `Processor[Req, Resp]` | 处理器接口，定义 `Process` 和 `Rollback` 方法 |
-| `Flow[Req, Resp]` | 流程编排器，按序执行 Processor 列表 |
-| `ExecuteResult[Resp]` | 执行结果，携带 Response 数据和错误信息 |
+| `Flow[T]` | 流程编排器，按序执行 Processor 列表 |
+| `Processor[T]` | 处理器接口，定义 `Process` 和 `Rollback` |
+| `T` | 贯穿全程的共享数据，建议用指针（如 `*OrderData`） |
+| `ExecuteResult` | 执行结果（非泛型），只携带错误与回滚信息 |
 | `Dependency` | 依赖类型：`Strong`（强依赖）/ `Weak`（弱依赖） |
 | `Monitor` | 监控接口，观测每步执行和回滚耗时 |
 
-### 3. 三层数据模型
+### 3. 数据模型：一个结构体装下全部
 
-```
-┌─────────────────────────────────────────┐
-│           FlowData[Req, Resp]           │
-├─────────────┬───────────────┬───────────┤
-│  Request    │  Response     │  Extra    │
-│  (入参)     │  (出参)       │  (临时)   │
-│  语义不可变 │  Processor    │  Processor│
-│             │  逐步填充     │  间传递   │
-└─────────────┴───────────────┴───────────┘
+入参、出参与处理器间的中间数据都放进同一个结构体，由调用方持有：
+
+```go
+type OrderData struct {
+    // 入参
+    UserID    int
+    ProductID int
+
+    // 出参
+    OrderID string
+    Amount  int
+
+    // 处理器间的中间数据，就是普通字段
+    CouponID string
+}
 ```
 
-- **Request**：调用方传入的入参，语义上不可变
-- **Response**：Processor 逐步填充的出参，流程成功后通过 `result.Data` 返回
-- **Extra**：Processor 间传递的临时数据，支持类型安全存取
+这样处理器的方法签名里**只出现业务自己的类型**，不必重复框架的泛型类型。中间数据是编译期类型安全的普通字段，不需要 map 存取和类型断言。
+
+数据由调用方持有还带来一个好处：**流程失败时，此前处理器已写入的内容依然保留**，便于排查与补偿。
 
 ### 4. 使用示例
-
-#### 定义入参和出参
 
 ```go
 package main
@@ -47,151 +52,99 @@ package main
 import (
     "context"
     "fmt"
+
     "github.com/xiaoshicae/xone/v2/xflow"
 )
 
-// 入参
-type CreateOrderReq struct {
-    UserID    int
-    ProductID int
+type OrderData struct {
+    UserID   int
+    CouponID string
+    OrderID  string
 }
 
-// 出参
-type CreateOrderResp struct {
-    OrderID string
-    Total   float64
-}
-```
+// 扣券：Process 与 Rollback 成对放在同一个结构体中
+type DeductCoupon struct{}
 
-#### 定义处理器
+func (p *DeductCoupon) Name() string                 { return "扣券" }
+func (p *DeductCoupon) Dependency() xflow.Dependency { return xflow.Strong }
 
-```go
-// 类型安全的临时数据键
-var UserLevelKey = xflow.NewKey[string]("user_level")
-
-// ValidateProcessor 校验处理器
-type ValidateProcessor struct{}
-
-func (p *ValidateProcessor) Name() string                { return "validate" }
-func (p *ValidateProcessor) Dependency() xflow.Dependency { return xflow.Strong }
-
-func (p *ValidateProcessor) Process(ctx context.Context, data *xflow.FlowData[CreateOrderReq, CreateOrderResp]) error {
-    if data.Request.UserID == 0 {
-        return fmt.Errorf("invalid user")
-    }
-    // 设置临时数据供下游使用
-    xflow.SetExtra(data, UserLevelKey, "VIP")
+func (p *DeductCoupon) Process(ctx context.Context, d *OrderData) error {
+    d.CouponID = "coupon-001"
     return nil
 }
 
-func (p *ValidateProcessor) Rollback(ctx context.Context, data *xflow.FlowData[CreateOrderReq, CreateOrderResp]) error {
+func (p *DeductCoupon) Rollback(ctx context.Context, d *OrderData) error {
+    // 归还优惠券，需保证幂等
     return nil
 }
 
-// PayProcessor 支付处理器
-type PayProcessor struct{}
+// 发通知：弱依赖，失败不影响主流程
+type SendNotice struct{}
 
-func (p *PayProcessor) Name() string                { return "pay" }
-func (p *PayProcessor) Dependency() xflow.Dependency { return xflow.Strong }
+func (p *SendNotice) Name() string                 { return "发通知" }
+func (p *SendNotice) Dependency() xflow.Dependency { return xflow.Weak }
+func (p *SendNotice) Process(ctx context.Context, d *OrderData) error  { return nil }
+func (p *SendNotice) Rollback(ctx context.Context, d *OrderData) error { return nil }
 
-func (p *PayProcessor) Process(ctx context.Context, data *xflow.FlowData[CreateOrderReq, CreateOrderResp]) error {
-    // 读取上游临时数据
-    level, _ := xflow.GetExtra(data, UserLevelKey)
-    _ = level
-    // 填充出参
-    data.Response.OrderID = "ORD-123"
-    data.Response.Total = 99.9
-    return nil
-}
-
-func (p *PayProcessor) Rollback(ctx context.Context, data *xflow.FlowData[CreateOrderReq, CreateOrderResp]) error {
-    // 退款逻辑...
-    return nil
-}
-```
-
-#### 构建并执行流程
-
-```go
 func main() {
-    flow := xflow.New[CreateOrderReq, CreateOrderResp]("create-order",
-        &ValidateProcessor{},
-        &PayProcessor{},
-    )
+    flow := xflow.New("创建订单", &DeductCoupon{}, &SendNotice{})
 
-    result := flow.Execute(context.Background(), CreateOrderReq{UserID: 1, ProductID: 100})
+    data := &OrderData{UserID: 1}
+    result := flow.Execute(context.Background(), data)
 
-    if result.Success() {
-        fmt.Printf("订单创建成功: OrderID=%s, Total=%.2f\n", result.Data.OrderID, result.Data.Total)
-    } else {
-        fmt.Printf("订单创建失败: %v\n", result)
+    if !result.Success() {
+        fmt.Println(result) // flow failed: ..., rolled back
+        return
     }
+    fmt.Println(data.OrderID, result.HasSkippedErrors())
 }
 ```
 
-#### 监控
+### 5. 执行语义
 
-监控默认开启，使用 xlog 打印日志。可通过 YAML 配置禁用：
+**强依赖失败** → 中断流程，逆序回滚所有已执行的处理器（含失败的弱依赖）：
+
+```
+扣券(Strong) → 扣库存(Strong) → 扣款(Strong) → 发通知(Weak)
+                                   ↑ 失败
+回滚顺序：扣库存.Rollback() → 扣券.Rollback()
+```
+
+**弱依赖失败** → 记入 `SkippedErrors` 后继续执行，但同样纳入回滚范围（所以 Rollback 必须做幂等，不能假设 Process 完全成功）。
+
+**回滚自身失败** → 记入 `RollbackErrors`，不中断其余处理器的回滚。
+
+### 6. context 语义
+
+| 阶段 | 使用的 context |
+|------|----------------|
+| `Process` | 调用方传入的 ctx。ctx 被取消后不再启动新的处理器，已执行的部分照常回滚 |
+| `Rollback` | **剥离了取消与超时**的 ctx（`context.WithoutCancel`），只保留其中的 value |
+
+补偿逻辑（退款、还库存、解冻额度）最需要执行的时机恰恰是请求超时之后。沿用已取消的 context 会让每个补偿调用一进去就被拒绝，资源就真的漏掉了 —— 所以回滚改用独立的 context，由 `XFlow.RollbackTimeout` 单独限时。
+
+回滚预算耗尽时，未补偿的处理器会**逐个记入 `RollbackErrors`**，调用方据此知道哪些资源还悬着。
+
+### 7. 配置参数
 
 ```yaml
 XFlow:
-  DisableMonitor: true
+  EnableMonitor: true       # 是否开启流程监控 (optional, default true)
+  RollbackTimeout: "30s"    # 回滚全部处理器的总超时 (optional, default "30s")
 ```
 
-自定义全局 Monitor 实现：
+### 8. 监控
+
+默认 Monitor 用 xlog 打印每步执行与回滚。可替换为自定义实现：
 
 ```go
-xflow.SetDefaultMonitor(myMonitor)
+xflow.SetDefaultMonitor(myMonitor)  // 传 nil 等同于关闭监控
 ```
 
-### 5. 强依赖 vs 弱依赖
+各回调均被 panic 隔离 —— 监控实现出错只丢一次观测，不会打断业务流程。
 
-| 类型 | 失败行为 | 适用场景 |
-|------|----------|----------|
-| `Strong` | 中断流程，逆序回滚所有已成功的处理器 | 核心逻辑（支付、库存扣减） |
-| `Weak` | 记录错误，继续执行后续处理器 | 非关键逻辑（发通知、记日志） |
+### 9. 注意事项
 
-```
-[p1:Strong ✓] → [p2:Weak ✗ 跳过] → [p3:Strong ✓] → [p4:Strong ✗ 中断]
-                                                         ↓
-                                          回滚: p3 → p2 → p1（逆序）
-```
-
-### 6. 执行结果
-
-```go
-result := flow.Execute(ctx, req)
-
-result.Success()          // 是否成功（无强依赖失败）
-result.Data               // 自包含的 Response 数据（类型安全）
-result.Err                // 致命错误（强依赖失败）
-result.Rolled             // 是否触发了回滚
-result.IsRolled()         // 同上（ResultSummary 接口方法）
-result.SkippedErrors      // 弱依赖跳过的错误列表
-result.RollbackErrors     // 回滚过程中的错误列表
-result.HasSkippedErrors() // 是否存在弱依赖错误
-result.HasRollbackErrors()// 是否存在回滚错误
-```
-
-### 7. 临时数据传递
-
-Processor 间传递临时数据有两种方式：
-
-```go
-// 方式一：非类型安全（any 类型）
-data.Set("key", "value")
-v, ok := data.Get("key")
-
-// 方式二：类型安全（推荐）
-var LevelKey = xflow.NewKey[string]("level")
-xflow.SetExtra(data, LevelKey, "VIP")
-level, ok := xflow.GetExtra(data, LevelKey)  // level 自动推导为 string
-```
-
-### 8. 注意事项
-
-- `Process` 和 `Rollback` 中的 panic 会被自动捕获，转为错误返回
-- 弱依赖失败后也会加入回滚列表，后续强依赖失败时会一并回滚
-- `Monitor` 默认开启（使用 xlog 打印），可通过配置 `DisableMonitor: true` 关闭（零开销）
-- `Flow` 的字段赋值非并发安全，必须在 `Execute` 前完成
-- 流程失败时 `result.Data` 保持零值，成功时自动从 `FlowData.Response` 填充
+- `xflow.New` 传入 nil Processor 会直接 panic，不留到执行时才空指针
+- `Flow` 构建后字段不再变化，可被并发 `Execute`；共享数据 `T` 由每次调用各自传入，互不干扰
+- `Rollback` 必须幂等：弱依赖 Process 失败后仍会被回滚

@@ -196,9 +196,25 @@ func (p *DeductCouponProcessor) Rollback(ctx context.Context, data *OrderData) e
 
 ### 设计要点
 
+- **共享数据用指针类型**：`Flow[T]` 只有一个泛型参数，建议使用指针（如 `*OrderData`）。入参、出参与各 Processor 间的中间数据都放进这一个结构体，Processor 的方法签名里因此只出现业务自己的类型，不必重复框架的泛型类型
 - **Rollback 不能假设 Process 完全成功**：弱依赖 Process 失败后仍可能被回滚，Rollback 中应做幂等处理
 - **Rollback 失败不中断回滚流程**：单个 Rollback 出错会记录到 `RollbackErrors`，但不会阻止其余 Processor 回滚
-- **共享数据用指针类型**：`Flow[T]` 的泛型参数建议使用指针（如 `*OrderData`），确保各 Processor 间数据可共享修改
+- **流程失败时 data 中已写入的内容依然保留**：数据由调用方持有，便于排查与补偿
+
+### context 语义
+
+- **Process 使用调用方的 context**，`ctx` 被取消后不再启动新的 Processor，已执行的部分照常回滚
+- **Rollback 使用剥离了取消与超时的 context**（`context.WithoutCancel`），只保留其中的 value。
+  补偿逻辑（退款、还库存、解冻额度）最需要执行的时机恰恰是请求超时之后，沿用已取消的 context
+  会让每个补偿调用一进去就被拒绝，资源就真的漏掉了
+- **回滚由 `XFlow.RollbackTimeout` 单独限时**（默认 30s），预算耗尽时未补偿的 Processor 会逐个记入
+  `RollbackErrors`，调用方据此知道哪些资源还悬着
+
+### 其它约束
+
+- `xflow.New` 传入 nil Processor 直接 panic，不留到执行时才空指针
+- `Monitor` 的各回调均被 panic 隔离，监控实现出错只丢一次观测，不会打断业务流程
+- `Flow` 构建后字段不再变化，可被并发 `Execute`
 
 ## xserver 包
 

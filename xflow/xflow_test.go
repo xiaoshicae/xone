@@ -3,936 +3,601 @@ package xflow
 import (
 	"context"
 	"errors"
+	"fmt"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/xiaoshicae/xone/v2/xconfig"
+	"github.com/xiaoshicae/xone/v2/xutil"
+
 	. "github.com/bytedance/mockey"
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/xiaoshicae/xone/v2/xconfig"
 )
 
-// ==================== 测试用 Processor 实现 ====================
+// ==================== 测试夹具 ====================
 
-type mockProcessor[Req, Resp any] struct {
-	name       string
-	dependency Dependency
-	processFn  func(ctx context.Context, data *FlowData[Req, Resp]) error
-	rollbackFn func(ctx context.Context, data *FlowData[Req, Resp]) error
-}
-
-func (m *mockProcessor[Req, Resp]) Name() string           { return m.name }
-func (m *mockProcessor[Req, Resp]) Dependency() Dependency { return m.dependency }
-
-func (m *mockProcessor[Req, Resp]) Process(ctx context.Context, data *FlowData[Req, Resp]) error {
-	if m.processFn != nil {
-		return m.processFn(ctx, data)
-	}
-	return nil
-}
-
-func (m *mockProcessor[Req, Resp]) Rollback(ctx context.Context, data *FlowData[Req, Resp]) error {
-	if m.rollbackFn != nil {
-		return m.rollbackFn(ctx, data)
-	}
-	return nil
-}
-
-// ==================== 测试用 Monitor ====================
-
-type monitorCall struct {
-	method        string // "OnProcessDone" / "OnRollbackDone" / "OnFlowDone"
-	flowName      string
-	processorName string
-	dependency    Dependency
-	err           error
-	duration      time.Duration
-	result        ResultSummary
-}
-
-type testMonitor struct {
-	calls []monitorCall
-}
-
-func (m *testMonitor) OnProcessDone(_ context.Context, e *StepEvent) {
-	m.calls = append(m.calls, monitorCall{
-		method:        "OnProcessDone",
-		flowName:      e.FlowName,
-		processorName: e.ProcessorName,
-		dependency:    e.Dependency,
-		err:           e.Err,
-		duration:      e.Duration,
-	})
-}
-
-func (m *testMonitor) OnRollbackDone(_ context.Context, e *StepEvent) {
-	m.calls = append(m.calls, monitorCall{
-		method:        "OnRollbackDone",
-		flowName:      e.FlowName,
-		processorName: e.ProcessorName,
-		dependency:    e.Dependency,
-		err:           e.Err,
-		duration:      e.Duration,
-	})
-}
-
-func (m *testMonitor) OnFlowDone(_ context.Context, e *FlowEvent) {
-	m.calls = append(m.calls, monitorCall{
-		method:   "OnFlowDone",
-		flowName: e.FlowName,
-		result:   e.Result,
-		duration: e.Duration,
-	})
-}
-
-// processDoneCalls 返回所有 OnProcessDone 调用
-func (m *testMonitor) processDoneCalls() []monitorCall {
-	var result []monitorCall
-	for _, c := range m.calls {
-		if c.method == "OnProcessDone" {
-			result = append(result, c)
-		}
-	}
-	return result
-}
-
-// rollbackDoneCalls 返回所有 OnRollbackDone 调用
-func (m *testMonitor) rollbackDoneCalls() []monitorCall {
-	var result []monitorCall
-	for _, c := range m.calls {
-		if c.method == "OnRollbackDone" {
-			result = append(result, c)
-		}
-	}
-	return result
-}
-
-// flowDoneCalls 返回所有 OnFlowDone 调用
-func (m *testMonitor) flowDoneCalls() []monitorCall {
-	var result []monitorCall
-	for _, c := range m.calls {
-		if c.method == "OnFlowDone" {
-			result = append(result, c)
-		}
-	}
-	return result
-}
-
-// ==================== 测试用数据 ====================
-
-type testReq struct {
+// orderData 模拟业务共享数据：入参、出参与中间数据都是普通字段
+type orderData struct {
 	UserID int
-	Input  string
+	Amount int
+	Steps  []string
 }
 
-type testResp struct {
-	OrderID string
-	Total   float64
+// testProcessor 可编排行为的处理器
+type testProcessor struct {
+	name     string
+	dep      Dependency
+	process  func(context.Context, *orderData) error
+	rollback func(context.Context, *orderData) error
 }
 
-// ==================== FlowData 测试 ====================
+func (p *testProcessor) Name() string           { return p.name }
+func (p *testProcessor) Dependency() Dependency { return p.dep }
 
-func TestFlowData_SetGet(t *testing.T) {
-	PatchConvey("TestFlowData_SetGet", t, func() {
-		PatchConvey("基本存取", func() {
-			d := &FlowData[testReq, testResp]{Request: testReq{UserID: 1}}
-			d.Set("key1", "value1")
-			v, ok := d.Get("key1")
-			So(ok, ShouldBeTrue)
-			So(v, ShouldEqual, "value1")
-		})
-
-		PatchConvey("不存在的 key", func() {
-			d := &FlowData[testReq, testResp]{}
-			v, ok := d.Get("not-exist")
-			So(ok, ShouldBeFalse)
-			So(v, ShouldBeNil)
-		})
-
-		PatchConvey("惰性初始化", func() {
-			d := &FlowData[testReq, testResp]{}
-			// extra 为 nil 时 Get 不 panic
-			_, ok := d.Get("any")
-			So(ok, ShouldBeFalse)
-			// Set 触发初始化
-			d.Set("k", 42)
-			v, ok := d.Get("k")
-			So(ok, ShouldBeTrue)
-			So(v, ShouldEqual, 42)
-		})
-	})
+func (p *testProcessor) Process(ctx context.Context, d *orderData) error {
+	if p.process != nil {
+		return p.process(ctx, d)
+	}
+	d.Steps = append(d.Steps, "process:"+p.name)
+	return nil
 }
 
-func TestFlowData_TypedExtra(t *testing.T) {
-	PatchConvey("TestFlowData_TypedExtra", t, func() {
-		PatchConvey("类型安全存取", func() {
-			d := &FlowData[testReq, testResp]{}
-			key := NewKey[string]("level")
-			SetExtra(d, key, "VIP")
-			v, ok := GetExtra(d, key)
-			So(ok, ShouldBeTrue)
-			So(v, ShouldEqual, "VIP")
-		})
-
-		PatchConvey("类型不匹配返回 false", func() {
-			d := &FlowData[testReq, testResp]{}
-			d.Set("num", "not-a-number")
-			key := NewKey[int]("num")
-			v, ok := GetExtra(d, key)
-			So(ok, ShouldBeFalse)
-			So(v, ShouldEqual, 0)
-		})
-
-		PatchConvey("key 不存在返回零值", func() {
-			d := &FlowData[testReq, testResp]{}
-			key := NewKey[string]("missing")
-			v, ok := GetExtra(d, key)
-			So(ok, ShouldBeFalse)
-			So(v, ShouldBeEmpty)
-		})
-	})
+func (p *testProcessor) Rollback(ctx context.Context, d *orderData) error {
+	if p.rollback != nil {
+		return p.rollback(ctx, d)
+	}
+	d.Steps = append(d.Steps, "rollback:"+p.name)
+	return nil
 }
 
-// ==================== Dependency 测试 ====================
+// ok 构造一个正常执行的强依赖处理器
+func ok(name string) *testProcessor { return &testProcessor{name: name, dep: Strong} }
 
-func TestDependency_String(t *testing.T) {
-	PatchConvey("TestDependency_String", t, func() {
+// failing 构造一个执行失败的处理器
+func failing(name string, dep Dependency, err error) *testProcessor {
+	return &testProcessor{name: name, dep: dep, process: func(context.Context, *orderData) error { return err }}
+}
+
+// resetConfig 恢复默认运行时配置
+func resetConfig() { applyConfig(configMergeDefault(nil)) }
+
+// ==================== processor.go ====================
+
+func TestDependencyString(t *testing.T) {
+	PatchConvey("TestDependencyString", t, func() {
 		So(Strong.String(), ShouldEqual, "Strong")
 		So(Weak.String(), ShouldEqual, "Weak")
 		So(Dependency(99).String(), ShouldEqual, "Unknown")
 	})
 }
 
-// ==================== Monitor 测试 ====================
+// ==================== flow.go ====================
 
-func TestDefaultMonitor(t *testing.T) {
-	PatchConvey("TestDefaultMonitor-不 panic", t, func() {
-		m := &defaultMonitor{}
-		ctx := context.Background()
-		result := &ExecuteResult[testResp]{}
+func TestNew(t *testing.T) {
+	PatchConvey("TestNew", t, func() {
+		PatchConvey("保存名称与处理器顺序", func() {
+			a, b := ok("a"), ok("b")
+			f := New("order", a, b)
+			So(f.Name(), ShouldEqual, "order")
+			So(f.processors, ShouldResemble, []Processor[*orderData]{a, b})
+		})
 
-		se := &StepEvent{FlowName: "flow", ProcessorName: "proc", Dependency: Strong, Duration: time.Millisecond}
-		seErr := &StepEvent{FlowName: "flow", ProcessorName: "proc", Dependency: Strong, Err: errors.New("err"), Duration: time.Millisecond}
-		fe := &FlowEvent{FlowName: "flow", Result: result, Duration: time.Millisecond}
-		feErr := &FlowEvent{FlowName: "flow", Result: &ExecuteResult[testResp]{Err: errors.New("fail")}, Duration: time.Millisecond}
+		PatchConvey("无处理器也能构建", func() {
+			f := New[*orderData]("empty")
+			So(f.Name(), ShouldEqual, "empty")
+			So(f.processors, ShouldBeEmpty)
+		})
 
-		So(func() { m.OnProcessDone(ctx, se) }, ShouldNotPanic)
-		So(func() { m.OnProcessDone(ctx, seErr) }, ShouldNotPanic)
-		So(func() { m.OnRollbackDone(ctx, se) }, ShouldNotPanic)
-		So(func() { m.OnRollbackDone(ctx, seErr) }, ShouldNotPanic)
-		So(func() { m.OnFlowDone(ctx, fe) }, ShouldNotPanic)
-		So(func() { m.OnFlowDone(ctx, feErr) }, ShouldNotPanic)
+		PatchConvey("nil 处理器在构建期就 panic，而不是留到执行时空指针", func() {
+			So(func() { New[*orderData]("bad", nil) }, ShouldPanicWith,
+				"XOne xflow New failed, err=[processor at index 0 is nil, flow=[bad]]")
+			So(func() { New("bad", ok("a"), nil) }, ShouldPanicWith,
+				"XOne xflow New failed, err=[processor at index 1 is nil, flow=[bad]]")
+		})
 	})
 }
 
-func TestSetDefaultMonitor(t *testing.T) {
-	PatchConvey("TestSetDefaultMonitor-替换全局默认 Monitor", t, func() {
-		original := GetDefaultMonitor()
-		So(original, ShouldNotBeNil)
+func TestExecuteSuccess(t *testing.T) {
+	PatchConvey("TestExecuteSuccess", t, func() {
+		resetConfig()
 
-		custom := &testMonitor{}
-		SetDefaultMonitor(custom)
-		So(GetDefaultMonitor(), ShouldEqual, custom)
+		PatchConvey("按顺序执行，data 贯穿全程", func() {
+			d := &orderData{UserID: 7}
+			r := New("order",
+				&testProcessor{name: "扣券", dep: Strong, process: func(_ context.Context, d *orderData) error {
+					d.Amount -= 10
+					d.Steps = append(d.Steps, "扣券")
+					return nil
+				}},
+				&testProcessor{name: "扣款", dep: Strong, process: func(_ context.Context, d *orderData) error {
+					d.Amount -= 90
+					d.Steps = append(d.Steps, "扣款")
+					return nil
+				}},
+			).Execute(context.Background(), d)
 
-		// 恢复
-		SetDefaultMonitor(original)
-		So(GetDefaultMonitor(), ShouldEqual, original)
+			So(r.Success(), ShouldBeTrue)
+			So(r.IsRolled(), ShouldBeFalse)
+			So(d.Steps, ShouldResemble, []string{"扣券", "扣款"})
+			So(d.Amount, ShouldEqual, -100)
+			So(d.UserID, ShouldEqual, 7)
+		})
+
+		PatchConvey("ctx 为 nil 时回落到 Background", func() {
+			d := &orderData{}
+			//nolint:staticcheck // 显式验证 nil ctx 的兜底
+			r := New("f", ok("a")).Execute(nil, d)
+			So(r.Success(), ShouldBeTrue)
+			So(d.Steps, ShouldResemble, []string{"process:a"})
+		})
 	})
 }
 
-// ==================== StepError 测试 ====================
+func TestExecuteStrongFailure(t *testing.T) {
+	PatchConvey("TestExecuteStrongFailure", t, func() {
+		resetConfig()
+		boom := errors.New("余额不足")
+
+		PatchConvey("中断流程并逆序回滚已执行的处理器", func() {
+			d := &orderData{}
+			r := New("order", ok("扣券"), ok("扣库存"), failing("扣款", Strong, boom), ok("发通知")).
+				Execute(context.Background(), d)
+
+			So(r.Success(), ShouldBeFalse)
+			So(r.IsRolled(), ShouldBeTrue)
+			So(errors.Is(r.Err, boom), ShouldBeTrue)
+
+			var se *StepError
+			So(errors.As(r.Err, &se), ShouldBeTrue)
+			So(se.ProcessorName, ShouldEqual, "扣款")
+			So(se.Dependency, ShouldEqual, Strong)
+
+			// 失败处理器之后的不执行，之前的逆序回滚
+			So(d.Steps, ShouldResemble, []string{
+				"process:扣券", "process:扣库存", "rollback:扣库存", "rollback:扣券",
+			})
+		})
+
+		PatchConvey("流程失败时，此前写入 data 的内容依然保留", func() {
+			d := &orderData{}
+			New("order",
+				&testProcessor{name: "填充", dep: Strong, process: func(_ context.Context, d *orderData) error {
+					d.Amount = 42
+					return nil
+				}},
+				failing("失败", Strong, boom),
+			).Execute(context.Background(), d)
+
+			So(d.Amount, ShouldEqual, 42)
+		})
+
+		PatchConvey("回滚自身失败时汇总到 RollbackErrors，且不中断其余回滚", func() {
+			rollbackErr := errors.New("退券失败")
+			bad := &testProcessor{name: "扣券", dep: Strong,
+				rollback: func(context.Context, *orderData) error { return rollbackErr }}
+			d := &orderData{}
+			r := New("order", bad, ok("扣库存"), failing("扣款", Strong, boom)).Execute(context.Background(), d)
+
+			So(r.HasRollbackErrors(), ShouldBeTrue)
+			So(r.RollbackErrors, ShouldHaveLength, 1)
+			So(errors.Is(r.RollbackErrors[0], rollbackErr), ShouldBeTrue)
+			// 扣库存 的回滚仍然执行了
+			So(d.Steps, ShouldContain, "rollback:扣库存")
+		})
+	})
+}
+
+func TestExecuteWeakFailure(t *testing.T) {
+	PatchConvey("TestExecuteWeakFailure", t, func() {
+		resetConfig()
+		soft := errors.New("通知发送失败")
+
+		PatchConvey("弱依赖失败不中断流程，记入 SkippedErrors", func() {
+			d := &orderData{}
+			r := New("order", ok("扣券"), failing("发通知", Weak, soft), ok("落库")).
+				Execute(context.Background(), d)
+
+			So(r.Success(), ShouldBeTrue)
+			So(r.IsRolled(), ShouldBeFalse)
+			So(r.HasSkippedErrors(), ShouldBeTrue)
+			So(r.SkippedErrors, ShouldHaveLength, 1)
+			So(r.SkippedErrors[0].ProcessorName, ShouldEqual, "发通知")
+			So(r.SkippedErrors[0].Dependency, ShouldEqual, Weak)
+			So(d.Steps, ShouldResemble, []string{"process:扣券", "process:落库"})
+		})
+
+		PatchConvey("失败的弱依赖也纳入回滚范围", func() {
+			d := &orderData{}
+			New("order", ok("扣券"), failing("发通知", Weak, soft), failing("扣款", Strong, errors.New("boom"))).
+				Execute(context.Background(), d)
+
+			So(d.Steps, ShouldContain, "rollback:发通知")
+			So(d.Steps, ShouldContain, "rollback:扣券")
+		})
+	})
+}
+
+func TestExecutePanicRecovery(t *testing.T) {
+	PatchConvey("TestExecutePanicRecovery", t, func() {
+		resetConfig()
+
+		PatchConvey("Process panic 被捕获并转为错误", func() {
+			p := &testProcessor{name: "炸", dep: Strong,
+				process: func(context.Context, *orderData) error { panic("process 炸了") }}
+			r := New("f", p).Execute(context.Background(), &orderData{})
+
+			So(r.Success(), ShouldBeFalse)
+			So(r.Err.Error(), ShouldContainSubstring, "panic occurred, process 炸了")
+		})
+
+		PatchConvey("Rollback panic 被捕获并记入 RollbackErrors", func() {
+			p := &testProcessor{name: "炸", dep: Strong,
+				rollback: func(context.Context, *orderData) error { panic("rollback 炸了") }}
+			r := New("f", p, failing("失败", Strong, errors.New("boom"))).Execute(context.Background(), &orderData{})
+
+			So(r.RollbackErrors, ShouldHaveLength, 1)
+			So(r.RollbackErrors[0].Error(), ShouldContainSubstring, "panic occurred, rollback 炸了")
+		})
+	})
+}
+
+// ==================== context 语义 ====================
+
+func TestExecuteRespectsCancellation(t *testing.T) {
+	PatchConvey("TestExecuteRespectsCancellation", t, func() {
+		resetConfig()
+
+		PatchConvey("ctx 取消后不再启动新的处理器", func() {
+			d := &orderData{}
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+
+			r := New("f", ok("a"), ok("b"), ok("c")).Execute(ctx, d)
+
+			So(r.Success(), ShouldBeFalse)
+			So(errors.Is(r.Err, context.Canceled), ShouldBeTrue)
+			So(r.Err.Error(), ShouldContainSubstring, "canceled before processor=[a]")
+			So(d.Steps, ShouldBeEmpty)
+		})
+
+		PatchConvey("执行途中被取消时，已完成的部分仍会回滚", func() {
+			d := &orderData{}
+			ctx, cancel := context.WithCancel(context.Background())
+
+			first := &testProcessor{name: "扣券", dep: Strong, process: func(_ context.Context, d *orderData) error {
+				d.Steps = append(d.Steps, "process:扣券")
+				cancel() // 第一个处理器执行完后调用方放弃
+				return nil
+			}}
+
+			r := New("f", first, ok("扣款")).Execute(ctx, d)
+
+			So(r.IsRolled(), ShouldBeTrue)
+			So(errors.Is(r.Err, context.Canceled), ShouldBeTrue)
+			So(d.Steps, ShouldResemble, []string{"process:扣券", "rollback:扣券"})
+		})
+	})
+}
+
+func TestRollbackSurvivesDeadContext(t *testing.T) {
+	PatchConvey("TestRollbackSurvivesDeadContext", t, func() {
+		resetConfig()
+
+		PatchConvey("原 ctx 已超时，补偿逻辑依然能执行", func() {
+			var compensated []string
+			mk := func(name string) *testProcessor {
+				return &testProcessor{name: name, dep: Strong,
+					rollback: func(ctx context.Context, _ *orderData) error {
+						// 模拟真实补偿调用：尊重传入的 ctx
+						if err := ctx.Err(); err != nil {
+							return fmt.Errorf("补偿调用被拒: %w", err)
+						}
+						compensated = append(compensated, name)
+						return nil
+					}}
+			}
+			// 扣款耗时超过调用方预算：跑完时原 ctx 已经超时，随后触发回滚
+			slowFail := &testProcessor{name: "扣款", dep: Strong,
+				process: func(context.Context, *orderData) error {
+					time.Sleep(30 * time.Millisecond)
+					return errors.New("余额不足")
+				}}
+
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+			defer cancel()
+
+			r := New("order", mk("扣券"), mk("扣库存"), slowFail).Execute(ctx, &orderData{})
+
+			So(ctx.Err(), ShouldNotBeNil) // 确认原 ctx 确实已经死了
+			So(r.IsRolled(), ShouldBeTrue)
+			So(r.HasRollbackErrors(), ShouldBeFalse)
+			So(compensated, ShouldResemble, []string{"扣库存", "扣券"})
+		})
+
+		PatchConvey("回滚保留原 ctx 上的 value", func() {
+			type ctxKey struct{}
+			var got any
+
+			ctx, cancel := context.WithCancel(context.WithValue(context.Background(), ctxKey{}, "tenant-1"))
+			defer cancel()
+
+			first := &testProcessor{name: "扣券", dep: Strong,
+				process: func(context.Context, *orderData) error {
+					cancel() // 执行完第一步后调用方放弃
+					return nil
+				},
+				rollback: func(ctx context.Context, _ *orderData) error {
+					got = ctx.Value(ctxKey{})
+					return nil
+				}}
+
+			r := New("f", first, ok("扣款")).Execute(ctx, &orderData{})
+			So(r.IsRolled(), ShouldBeTrue)
+			So(got, ShouldEqual, "tenant-1")
+		})
+
+		PatchConvey("回滚预算耗尽时，未补偿的处理器逐个记入 RollbackErrors", func() {
+			applyConfig(configMergeDefault(&Config{RollbackTimeout: "30ms"}))
+			defer resetConfig()
+
+			slow := &testProcessor{name: "慢补偿", dep: Strong,
+				rollback: func(context.Context, *orderData) error {
+					time.Sleep(60 * time.Millisecond)
+					return nil
+				}}
+
+			r := New("order", ok("扣券"), slow, failing("扣款", Strong, errors.New("boom"))).
+				Execute(context.Background(), &orderData{})
+
+			So(r.RollbackErrors, ShouldHaveLength, 1)
+			So(r.RollbackErrors[0].ProcessorName, ShouldEqual, "扣券")
+			So(r.RollbackErrors[0].Error(), ShouldContainSubstring, "rollback budget exhausted")
+			So(errors.Is(r.RollbackErrors[0], context.DeadlineExceeded), ShouldBeTrue)
+		})
+	})
+}
+
+// ==================== 并发 ====================
+
+func TestExecuteConcurrent(t *testing.T) {
+	PatchConvey("TestExecuteConcurrent", t, func() {
+		resetConfig()
+		f := New("f", &testProcessor{name: "double", dep: Strong,
+			process: func(_ context.Context, d *orderData) error {
+				d.Amount = d.UserID * 2
+				return nil
+			}})
+
+		var wg sync.WaitGroup
+		results := make([]int, 50)
+		for i := 0; i < 50; i++ {
+			wg.Add(1)
+			go func(n int) {
+				defer wg.Done()
+				d := &orderData{UserID: n}
+				f.Execute(context.Background(), d)
+				results[n] = d.Amount
+			}(i)
+		}
+		wg.Wait()
+
+		for i, got := range results {
+			So(got, ShouldEqual, i*2)
+		}
+	})
+}
+
+// ==================== result.go ====================
 
 func TestStepError(t *testing.T) {
 	PatchConvey("TestStepError", t, func() {
-		PatchConvey("Error 格式化", func() {
-			se := &StepError{
-				ProcessorName: "validate",
-				Dependency:    Strong,
-				Err:           errors.New("invalid input"),
-			}
-			So(se.Error(), ShouldContainSubstring, "validate")
-			So(se.Error(), ShouldContainSubstring, "Strong")
-			So(se.Error(), ShouldContainSubstring, "invalid input")
+		inner := errors.New("boom")
+		se := &StepError{ProcessorName: "扣款", Dependency: Strong, Err: inner}
+		So(se.Error(), ShouldEqual, "processor=[扣款], dependency=[Strong], err=[boom]")
+		So(errors.Is(se, inner), ShouldBeTrue)
+		So(se.Unwrap(), ShouldEqual, inner)
+	})
+}
+
+func TestExecuteResultString(t *testing.T) {
+	PatchConvey("TestExecuteResultString", t, func() {
+		PatchConvey("成功时给出明确描述，而不是空串", func() {
+			r := &ExecuteResult{}
+			So(r.String(), ShouldEqual, "flow succeeded")
+			So(fmt.Sprint(r), ShouldEqual, "flow succeeded")
 		})
 
-		PatchConvey("Unwrap", func() {
-			original := errors.New("original error")
-			se := &StepError{
-				ProcessorName: "test",
-				Dependency:    Weak,
-				Err:           original,
-			}
-			So(se.Unwrap(), ShouldEqual, original)
-			So(errors.Is(se, original), ShouldBeTrue)
+		PatchConvey("成功但有弱依赖错误时带上数量", func() {
+			r := &ExecuteResult{SkippedErrors: []*StepError{{ProcessorName: "a"}}}
+			So(r.String(), ShouldEqual, "flow succeeded, skipped errors=[1]")
+		})
+
+		PatchConvey("失败时描述回滚情况", func() {
+			r := &ExecuteResult{Err: errors.New("boom")}
+			So(r.String(), ShouldEqual, "flow failed: boom")
+
+			r.Rolled = true
+			So(r.String(), ShouldEqual, "flow failed: boom, rolled back")
+
+			r.RollbackErrors = []*StepError{{ProcessorName: "a"}, {ProcessorName: "b"}}
+			So(r.String(), ShouldEqual, "flow failed: boom, rolled back, rollback errors=[2]")
 		})
 	})
 }
 
-// ==================== ExecuteResult 测试 ====================
+// ==================== monitor.go ====================
 
-func TestExecuteResult(t *testing.T) {
-	PatchConvey("TestExecuteResult", t, func() {
-		PatchConvey("Success", func() {
-			r := &ExecuteResult[testResp]{}
-			So(r.Success(), ShouldBeTrue)
-			So(r.IsRolled(), ShouldBeFalse)
-			So(r.String(), ShouldBeEmpty)
+// recordingMonitor 记录收到的事件
+type recordingMonitor struct {
+	mu       sync.Mutex
+	process  []string
+	rollback []string
+	flow     []string
+}
+
+func (m *recordingMonitor) OnProcessDone(_ context.Context, e *StepEvent) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.process = append(m.process, e.FlowName+"/"+e.ProcessorName)
+}
+
+func (m *recordingMonitor) OnRollbackDone(_ context.Context, e *StepEvent) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.rollback = append(m.rollback, e.FlowName+"/"+e.ProcessorName)
+}
+
+func (m *recordingMonitor) OnFlowDone(_ context.Context, e *FlowEvent) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.flow = append(m.flow, fmt.Sprintf("%s/%t", e.FlowName, e.Result.Success()))
+}
+
+// panicMonitor 每个回调都 panic
+type panicMonitor struct{}
+
+func (panicMonitor) OnProcessDone(context.Context, *StepEvent)  { panic("process 监控炸了") }
+func (panicMonitor) OnRollbackDone(context.Context, *StepEvent) { panic("rollback 监控炸了") }
+func (panicMonitor) OnFlowDone(context.Context, *FlowEvent)     { panic("flow 监控炸了") }
+
+func TestMonitor(t *testing.T) {
+	PatchConvey("TestMonitor", t, func() {
+		resetConfig()
+		old := GetDefaultMonitor()
+		defer SetDefaultMonitor(old)
+
+		PatchConvey("收到 process / rollback / flow 三类事件", func() {
+			m := &recordingMonitor{}
+			SetDefaultMonitor(m)
+
+			New("order", ok("扣券"), failing("扣款", Strong, errors.New("boom"))).
+				Execute(context.Background(), &orderData{})
+
+			So(m.process, ShouldResemble, []string{"order/扣券", "order/扣款"})
+			So(m.rollback, ShouldResemble, []string{"order/扣券"})
+			So(m.flow, ShouldResemble, []string{"order/false"})
 		})
 
-		PatchConvey("Success with Data", func() {
-			r := &ExecuteResult[testResp]{
-				Data: testResp{OrderID: "ORD-1", Total: 99.9},
-			}
-			So(r.Success(), ShouldBeTrue)
-			So(r.Data.OrderID, ShouldEqual, "ORD-1")
-			So(r.Data.Total, ShouldEqual, 99.9)
-		})
+		PatchConvey("监控实现 panic 不影响流程", func() {
+			SetDefaultMonitor(panicMonitor{})
+			d := &orderData{}
+			var r *ExecuteResult
+			So(func() {
+				r = New("f", ok("a"), failing("b", Strong, errors.New("boom"))).Execute(context.Background(), d)
+			}, ShouldNotPanic)
 
-		PatchConvey("Failed", func() {
-			r := &ExecuteResult[testResp]{
-				Err:    &StepError{ProcessorName: "p1", Err: errors.New("fail")},
-				Rolled: true,
-			}
-			So(r.Success(), ShouldBeFalse)
 			So(r.IsRolled(), ShouldBeTrue)
-			So(r.String(), ShouldContainSubstring, "flow failed")
-			So(r.String(), ShouldContainSubstring, "rolled back")
+			So(d.Steps, ShouldResemble, []string{"process:a", "rollback:a"})
 		})
 
-		PatchConvey("HasSkippedErrors", func() {
-			r := &ExecuteResult[testResp]{
-				SkippedErrors: []*StepError{{ProcessorName: "weak1", Err: errors.New("skip")}},
-			}
-			So(r.HasSkippedErrors(), ShouldBeTrue)
-			So(r.HasRollbackErrors(), ShouldBeFalse)
+		PatchConvey("SetDefaultMonitor(nil) 关闭监控", func() {
+			SetDefaultMonitor(nil)
+			So(GetDefaultMonitor(), ShouldBeNil)
+			So(resolveMonitor(), ShouldBeNil)
+			r := New("f", ok("a")).Execute(context.Background(), &orderData{})
+			So(r.Success(), ShouldBeTrue)
 		})
 
-		PatchConvey("HasRollbackErrors", func() {
-			r := &ExecuteResult[testResp]{
-				Err:            &StepError{ProcessorName: "p1", Err: errors.New("fail")},
-				Rolled:         true,
-				RollbackErrors: []*StepError{{ProcessorName: "p0", Err: errors.New("rollback fail")}},
-			}
-			So(r.HasRollbackErrors(), ShouldBeTrue)
-			So(r.String(), ShouldContainSubstring, "rollback errors=[1]")
-		})
+		PatchConvey("EnableMonitor=false 时不投递事件", func() {
+			m := &recordingMonitor{}
+			SetDefaultMonitor(m)
+			applyConfig(configMergeDefault(&Config{EnableMonitor: xutil.ToPtr(false)}))
+			defer resetConfig()
 
-		PatchConvey("ResultSummary 接口兼容", func() {
-			var summary ResultSummary = &ExecuteResult[testResp]{
-				Err:    errors.New("fail"),
-				Rolled: true,
-			}
-			So(summary.Success(), ShouldBeFalse)
-			So(summary.IsRolled(), ShouldBeTrue)
+			New("f", ok("a")).Execute(context.Background(), &orderData{})
+			So(m.process, ShouldBeEmpty)
+			So(m.flow, ShouldBeEmpty)
 		})
 	})
 }
 
-// ==================== Flow.Execute 测试 ====================
+func TestDefaultMonitor(t *testing.T) {
+	PatchConvey("TestDefaultMonitor", t, func() {
+		d := &defaultMonitor{}
+		ctx := context.Background()
 
-func TestFlow_Execute(t *testing.T) {
-	PatchConvey("TestFlow_Execute", t, func() {
-		Mock(GetConfig).Return(&Config{DisableMonitor: true}).Build()
-
-		PatchConvey("空流程", func() {
-			flow := &Flow[testReq, testResp]{Name: "empty"}
-			result := flow.Execute(context.Background(), testReq{})
-
-			So(result.Success(), ShouldBeTrue)
-			So(result.Rolled, ShouldBeFalse)
-			So(result.SkippedErrors, ShouldBeEmpty)
-		})
-
-		PatchConvey("全部成功-Response 填充", func() {
-			flow := &Flow[testReq, testResp]{
-				Name: "all-success",
-				Processors: []Processor[testReq, testResp]{
-					&mockProcessor[testReq, testResp]{
-						name:       "p1",
-						dependency: Strong,
-						processFn: func(ctx context.Context, data *FlowData[testReq, testResp]) error {
-							data.Response.OrderID = "ORD-123"
-							return nil
-						},
-					},
-					&mockProcessor[testReq, testResp]{
-						name:       "p2",
-						dependency: Strong,
-						processFn: func(ctx context.Context, data *FlowData[testReq, testResp]) error {
-							data.Response.Total = 99.9
-							return nil
-						},
-					},
-					&mockProcessor[testReq, testResp]{name: "p3", dependency: Weak},
-				},
-			}
-			result := flow.Execute(context.Background(), testReq{UserID: 1})
-
-			So(result.Success(), ShouldBeTrue)
-			So(result.Rolled, ShouldBeFalse)
-			So(result.HasSkippedErrors(), ShouldBeFalse)
-			So(result.Data.OrderID, ShouldEqual, "ORD-123")
-			So(result.Data.Total, ShouldEqual, 99.9)
-		})
-
-		PatchConvey("Request 传递验证", func() {
-			flow := &Flow[testReq, testResp]{
-				Name: "req-pass",
-				Processors: []Processor[testReq, testResp]{
-					&mockProcessor[testReq, testResp]{
-						name:       "reader",
-						dependency: Strong,
-						processFn: func(ctx context.Context, data *FlowData[testReq, testResp]) error {
-							if data.Request.UserID != 42 {
-								return errors.New("wrong user id")
-							}
-							data.Response.OrderID = "ORD-42"
-							return nil
-						},
-					},
-				},
-			}
-			result := flow.Execute(context.Background(), testReq{UserID: 42})
-
-			So(result.Success(), ShouldBeTrue)
-			So(result.Data.OrderID, ShouldEqual, "ORD-42")
-		})
-
-		PatchConvey("Extra 跨 Processor 传递", func() {
-			levelKey := NewKey[string]("level")
-
-			flow := &Flow[testReq, testResp]{
-				Name: "extra-pass",
-				Processors: []Processor[testReq, testResp]{
-					&mockProcessor[testReq, testResp]{
-						name:       "writer",
-						dependency: Strong,
-						processFn: func(ctx context.Context, data *FlowData[testReq, testResp]) error {
-							SetExtra(data, levelKey, "VIP")
-							return nil
-						},
-					},
-					&mockProcessor[testReq, testResp]{
-						name:       "reader",
-						dependency: Strong,
-						processFn: func(ctx context.Context, data *FlowData[testReq, testResp]) error {
-							level, ok := GetExtra(data, levelKey)
-							if !ok || level != "VIP" {
-								return errors.New("extra not passed")
-							}
-							data.Response.OrderID = "VIP-ORDER"
-							return nil
-						},
-					},
-				},
-			}
-			result := flow.Execute(context.Background(), testReq{UserID: 1})
-
-			So(result.Success(), ShouldBeTrue)
-			So(result.Data.OrderID, ShouldEqual, "VIP-ORDER")
-		})
-
-		PatchConvey("强依赖失败触发回滚", func() {
-			var rollbackOrder []string
-
-			flow := &Flow[testReq, testResp]{
-				Name: "strong-fail",
-				Processors: []Processor[testReq, testResp]{
-					&mockProcessor[testReq, testResp]{
-						name:       "p1",
-						dependency: Strong,
-						rollbackFn: func(ctx context.Context, data *FlowData[testReq, testResp]) error {
-							rollbackOrder = append(rollbackOrder, "p1")
-							return nil
-						},
-					},
-					&mockProcessor[testReq, testResp]{
-						name:       "p2",
-						dependency: Strong,
-						rollbackFn: func(ctx context.Context, data *FlowData[testReq, testResp]) error {
-							rollbackOrder = append(rollbackOrder, "p2")
-							return nil
-						},
-					},
-					&mockProcessor[testReq, testResp]{
-						name:       "p3",
-						dependency: Strong,
-						processFn: func(ctx context.Context, data *FlowData[testReq, testResp]) error {
-							return errors.New("p3 failed")
-						},
-					},
-				},
-			}
-			result := flow.Execute(context.Background(), testReq{})
-
-			So(result.Success(), ShouldBeFalse)
-			So(result.Rolled, ShouldBeTrue)
-			So(result.Err, ShouldNotBeNil)
-			// 失败时 Data 保持零值
-			So(result.Data.OrderID, ShouldBeEmpty)
-
-			// 验证回滚逆序：p2 → p1
-			So(rollbackOrder, ShouldResemble, []string{"p2", "p1"})
-
-			// 验证 Unwrap 到原始错误
-			var se *StepError
-			So(errors.As(result.Err, &se), ShouldBeTrue)
-			So(se.ProcessorName, ShouldEqual, "p3")
-			So(se.Err.Error(), ShouldEqual, "p3 failed")
-		})
-
-		PatchConvey("弱依赖跳过继续执行", func() {
-			var executed []string
-
-			flow := &Flow[testReq, testResp]{
-				Name: "weak-skip",
-				Processors: []Processor[testReq, testResp]{
-					&mockProcessor[testReq, testResp]{
-						name:       "p1",
-						dependency: Strong,
-						processFn: func(ctx context.Context, data *FlowData[testReq, testResp]) error {
-							executed = append(executed, "p1")
-							return nil
-						},
-					},
-					&mockProcessor[testReq, testResp]{
-						name:       "weak1",
-						dependency: Weak,
-						processFn: func(ctx context.Context, data *FlowData[testReq, testResp]) error {
-							executed = append(executed, "weak1")
-							return errors.New("weak error")
-						},
-					},
-					&mockProcessor[testReq, testResp]{
-						name:       "p3",
-						dependency: Strong,
-						processFn: func(ctx context.Context, data *FlowData[testReq, testResp]) error {
-							executed = append(executed, "p3")
-							return nil
-						},
-					},
-				},
-			}
-			result := flow.Execute(context.Background(), testReq{})
-
-			So(result.Success(), ShouldBeTrue)
-			So(result.HasSkippedErrors(), ShouldBeTrue)
-			So(len(result.SkippedErrors), ShouldEqual, 1)
-			So(result.SkippedErrors[0].ProcessorName, ShouldEqual, "weak1")
-
-			// p3 应继续执行
-			So(executed, ShouldResemble, []string{"p1", "weak1", "p3"})
-		})
-
-		PatchConvey("弱+强混合失败", func() {
-			var rollbackOrder []string
-
-			flow := &Flow[testReq, testResp]{
-				Name: "mixed-fail",
-				Processors: []Processor[testReq, testResp]{
-					&mockProcessor[testReq, testResp]{
-						name:       "p1",
-						dependency: Strong,
-						rollbackFn: func(ctx context.Context, data *FlowData[testReq, testResp]) error {
-							rollbackOrder = append(rollbackOrder, "p1")
-							return nil
-						},
-					},
-					&mockProcessor[testReq, testResp]{
-						name:       "weak1",
-						dependency: Weak,
-						processFn: func(ctx context.Context, data *FlowData[testReq, testResp]) error {
-							return errors.New("weak error")
-						},
-						rollbackFn: func(ctx context.Context, data *FlowData[testReq, testResp]) error {
-							rollbackOrder = append(rollbackOrder, "weak1")
-							return nil
-						},
-					},
-					&mockProcessor[testReq, testResp]{
-						name:       "p3",
-						dependency: Strong,
-						processFn: func(ctx context.Context, data *FlowData[testReq, testResp]) error {
-							return errors.New("strong error")
-						},
-					},
-				},
-			}
-			result := flow.Execute(context.Background(), testReq{})
-
-			So(result.Success(), ShouldBeFalse)
-			So(result.Rolled, ShouldBeTrue)
-			So(result.HasSkippedErrors(), ShouldBeTrue)
-			So(len(result.SkippedErrors), ShouldEqual, 1)
-
-			// 弱依赖失败后加入 succeeded，回滚时也会被回滚
-			So(rollbackOrder, ShouldResemble, []string{"weak1", "p1"})
-		})
-
-		PatchConvey("Process panic 被捕获", func() {
-			flow := &Flow[testReq, testResp]{
-				Name: "panic",
-				Processors: []Processor[testReq, testResp]{
-					&mockProcessor[testReq, testResp]{
-						name:       "panic-processor",
-						dependency: Strong,
-						processFn: func(ctx context.Context, data *FlowData[testReq, testResp]) error {
-							panic("unexpected panic")
-						},
-					},
-				},
-			}
-			result := flow.Execute(context.Background(), testReq{})
-
-			So(result.Success(), ShouldBeFalse)
-			var se *StepError
-			So(errors.As(result.Err, &se), ShouldBeTrue)
-			So(se.Err.Error(), ShouldContainSubstring, "panic")
-		})
-
-		PatchConvey("Rollback 失败不中断", func() {
-			var rollbackOrder []string
-
-			flow := &Flow[testReq, testResp]{
-				Name: "rollback-fail",
-				Processors: []Processor[testReq, testResp]{
-					&mockProcessor[testReq, testResp]{
-						name:       "p1",
-						dependency: Strong,
-						rollbackFn: func(ctx context.Context, data *FlowData[testReq, testResp]) error {
-							rollbackOrder = append(rollbackOrder, "p1")
-							return nil
-						},
-					},
-					&mockProcessor[testReq, testResp]{
-						name:       "p2",
-						dependency: Strong,
-						rollbackFn: func(ctx context.Context, data *FlowData[testReq, testResp]) error {
-							rollbackOrder = append(rollbackOrder, "p2")
-							return errors.New("rollback error")
-						},
-					},
-					&mockProcessor[testReq, testResp]{
-						name:       "p3",
-						dependency: Strong,
-						processFn: func(ctx context.Context, data *FlowData[testReq, testResp]) error {
-							return errors.New("p3 failed")
-						},
-					},
-				},
-			}
-			result := flow.Execute(context.Background(), testReq{})
-
-			So(result.Success(), ShouldBeFalse)
-			So(result.Rolled, ShouldBeTrue)
-			So(result.HasRollbackErrors(), ShouldBeTrue)
-			So(len(result.RollbackErrors), ShouldEqual, 1)
-			So(result.RollbackErrors[0].ProcessorName, ShouldEqual, "p2")
-
-			// p2 回滚失败不影响 p1 继续回滚
-			So(rollbackOrder, ShouldResemble, []string{"p2", "p1"})
-		})
-
-		PatchConvey("Rollback panic 被捕获", func() {
-			flow := &Flow[testReq, testResp]{
-				Name: "rollback-panic",
-				Processors: []Processor[testReq, testResp]{
-					&mockProcessor[testReq, testResp]{
-						name:       "p1",
-						dependency: Strong,
-						rollbackFn: func(ctx context.Context, data *FlowData[testReq, testResp]) error {
-							panic("rollback panic")
-						},
-					},
-					&mockProcessor[testReq, testResp]{
-						name:       "p2",
-						dependency: Strong,
-						processFn: func(ctx context.Context, data *FlowData[testReq, testResp]) error {
-							return errors.New("p2 failed")
-						},
-					},
-				},
-			}
-			result := flow.Execute(context.Background(), testReq{})
-
-			So(result.Success(), ShouldBeFalse)
-			So(result.Rolled, ShouldBeTrue)
-			So(result.HasRollbackErrors(), ShouldBeTrue)
-			So(result.RollbackErrors[0].Err.Error(), ShouldContainSubstring, "panic")
-		})
-
-		PatchConvey("nil ctx 自动填充 Background", func() {
-			flow := &Flow[testReq, testResp]{
-				Name: "nil-ctx",
-				Processors: []Processor[testReq, testResp]{
-					&mockProcessor[testReq, testResp]{name: "p1", dependency: Strong},
-				},
-			}
-			//nolint:staticcheck // 测试 nil ctx 处理
-			result := flow.Execute(nil, testReq{})
-
-			So(result.Success(), ShouldBeTrue)
-		})
-
-		PatchConvey("弱依赖失败后强依赖失败时弱依赖也回滚", func() {
-			var rollbackOrder []string
-
-			flow := &Flow[testReq, testResp]{
-				Name: "weak-rollback",
-				Processors: []Processor[testReq, testResp]{
-					&mockProcessor[testReq, testResp]{
-						name:       "strong1",
-						dependency: Strong,
-						rollbackFn: func(ctx context.Context, data *FlowData[testReq, testResp]) error {
-							rollbackOrder = append(rollbackOrder, "strong1")
-							return nil
-						},
-					},
-					&mockProcessor[testReq, testResp]{
-						name:       "weak1",
-						dependency: Weak,
-						processFn: func(ctx context.Context, data *FlowData[testReq, testResp]) error {
-							return errors.New("weak fail")
-						},
-						rollbackFn: func(ctx context.Context, data *FlowData[testReq, testResp]) error {
-							rollbackOrder = append(rollbackOrder, "weak1")
-							return nil
-						},
-					},
-					&mockProcessor[testReq, testResp]{
-						name:       "strong2",
-						dependency: Strong,
-						rollbackFn: func(ctx context.Context, data *FlowData[testReq, testResp]) error {
-							rollbackOrder = append(rollbackOrder, "strong2")
-							return nil
-						},
-					},
-					&mockProcessor[testReq, testResp]{
-						name:       "strong3",
-						dependency: Strong,
-						processFn: func(ctx context.Context, data *FlowData[testReq, testResp]) error {
-							return errors.New("strong fail")
-						},
-					},
-				},
-			}
-			result := flow.Execute(context.Background(), testReq{})
-
-			So(result.Success(), ShouldBeFalse)
-			So(result.Rolled, ShouldBeTrue)
-			// 回滚逆序：strong2 → weak1 → strong1
-			So(rollbackOrder, ShouldResemble, []string{"strong2", "weak1", "strong1"})
-		})
-
-		PatchConvey("弱依赖 Process panic 被跳过", func() {
-			flow := &Flow[testReq, testResp]{
-				Name: "weak-panic",
-				Processors: []Processor[testReq, testResp]{
-					&mockProcessor[testReq, testResp]{
-						name:       "weak-panic",
-						dependency: Weak,
-						processFn: func(ctx context.Context, data *FlowData[testReq, testResp]) error {
-							panic("weak panic")
-						},
-					},
-					&mockProcessor[testReq, testResp]{
-						name:       "p2",
-						dependency: Strong,
-					},
-				},
-			}
-			result := flow.Execute(context.Background(), testReq{})
-
-			So(result.Success(), ShouldBeTrue)
-			So(result.HasSkippedErrors(), ShouldBeTrue)
-			So(result.SkippedErrors[0].Err.Error(), ShouldContainSubstring, "panic")
-		})
-
-		PatchConvey("MonitorDisabled 不调用 Monitor", func() {
-			mon := &testMonitor{}
-			MockValue(&defaultMonitorInstance).To(mon)
-
-			flow := &Flow[testReq, testResp]{
-				Name: "no-monitor",
-				Processors: []Processor[testReq, testResp]{
-					&mockProcessor[testReq, testResp]{name: "p1", dependency: Strong},
-				},
-			}
-			result := flow.Execute(context.Background(), testReq{})
-
-			So(result.Success(), ShouldBeTrue)
-			// DisableMonitor=true 时 Monitor 不被调用
-			So(len(mon.calls), ShouldEqual, 0)
+		PatchConvey("成功与失败各走一条分支", func() {
+			So(func() {
+				d.OnProcessDone(ctx, &StepEvent{FlowName: "f", ProcessorName: "a"})
+				d.OnProcessDone(ctx, &StepEvent{FlowName: "f", ProcessorName: "a", Err: errors.New("boom")})
+				d.OnRollbackDone(ctx, &StepEvent{FlowName: "f", ProcessorName: "a"})
+				d.OnRollbackDone(ctx, &StepEvent{FlowName: "f", ProcessorName: "a", Err: errors.New("boom")})
+				d.OnFlowDone(ctx, &FlowEvent{FlowName: "f", Result: &ExecuteResult{}})
+				d.OnFlowDone(ctx, &FlowEvent{FlowName: "f", Result: &ExecuteResult{Err: errors.New("boom")}})
+			}, ShouldNotPanic)
 		})
 	})
 }
 
-// ==================== Monitor 集成测试 ====================
-
-func TestFlow_Execute_Monitor(t *testing.T) {
-	PatchConvey("TestFlow_Execute_Monitor", t, func() {
-		Mock(GetConfig).Return(&Config{DisableMonitor: false}).Build()
-		mon := &testMonitor{}
-		MockValue(&defaultMonitorInstance).To(mon)
-
-		PatchConvey("全部成功调用验证", func() {
-			flow := &Flow[testReq, testResp]{
-				Name: "with-monitor",
-				Processors: []Processor[testReq, testResp]{
-					&mockProcessor[testReq, testResp]{name: "p1", dependency: Strong},
-					&mockProcessor[testReq, testResp]{name: "p2", dependency: Weak},
-				},
-			}
-			result := flow.Execute(context.Background(), testReq{})
-
-			So(result.Success(), ShouldBeTrue)
-
-			// 验证 OnProcessDone 被调用 2 次
-			processCalls := mon.processDoneCalls()
-			So(len(processCalls), ShouldEqual, 2)
-			So(processCalls[0].processorName, ShouldEqual, "p1")
-			So(processCalls[0].err, ShouldBeNil)
-			So(processCalls[1].processorName, ShouldEqual, "p2")
-			So(processCalls[1].err, ShouldBeNil)
-
-			// 验证 OnFlowDone 被调用 1 次
-			flowCalls := mon.flowDoneCalls()
-			So(len(flowCalls), ShouldEqual, 1)
-			So(flowCalls[0].flowName, ShouldEqual, "with-monitor")
-			So(flowCalls[0].result.Success(), ShouldBeTrue)
-
-			// 无回滚调用
-			So(len(mon.rollbackDoneCalls()), ShouldEqual, 0)
-		})
-
-		PatchConvey("强依赖失败调用验证", func() {
-			flow := &Flow[testReq, testResp]{
-				Name: "monitor-fail",
-				Processors: []Processor[testReq, testResp]{
-					&mockProcessor[testReq, testResp]{
-						name:       "p1",
-						dependency: Strong,
-						rollbackFn: func(ctx context.Context, data *FlowData[testReq, testResp]) error { return nil },
-					},
-					&mockProcessor[testReq, testResp]{
-						name:       "p2",
-						dependency: Strong,
-						processFn: func(ctx context.Context, data *FlowData[testReq, testResp]) error {
-							return errors.New("p2 failed")
-						},
-					},
-				},
-			}
-			result := flow.Execute(context.Background(), testReq{})
-
-			So(result.Success(), ShouldBeFalse)
-
-			// OnProcessDone 调用 2 次：p1 成功 + p2 失败
-			processCalls := mon.processDoneCalls()
-			So(len(processCalls), ShouldEqual, 2)
-			So(processCalls[0].processorName, ShouldEqual, "p1")
-			So(processCalls[0].err, ShouldBeNil)
-			So(processCalls[1].processorName, ShouldEqual, "p2")
-			So(processCalls[1].err, ShouldNotBeNil)
-
-			// OnRollbackDone 调用 1 次：p1 回滚
-			rollbackCalls := mon.rollbackDoneCalls()
-			So(len(rollbackCalls), ShouldEqual, 1)
-			So(rollbackCalls[0].processorName, ShouldEqual, "p1")
-			So(rollbackCalls[0].err, ShouldBeNil)
-
-			// OnFlowDone 调用 1 次
-			flowCalls := mon.flowDoneCalls()
-			So(len(flowCalls), ShouldEqual, 1)
-			So(flowCalls[0].result.Success(), ShouldBeFalse)
-			So(flowCalls[0].result.IsRolled(), ShouldBeTrue)
-		})
-
-		PatchConvey("弱依赖跳过记录", func() {
-			flow := &Flow[testReq, testResp]{
-				Name: "monitor-weak",
-				Processors: []Processor[testReq, testResp]{
-					&mockProcessor[testReq, testResp]{name: "p1", dependency: Strong},
-					&mockProcessor[testReq, testResp]{
-						name:       "weak1",
-						dependency: Weak,
-						processFn: func(ctx context.Context, data *FlowData[testReq, testResp]) error {
-							return errors.New("weak error")
-						},
-					},
-					&mockProcessor[testReq, testResp]{name: "p3", dependency: Strong},
-				},
-			}
-			result := flow.Execute(context.Background(), testReq{})
-
-			So(result.Success(), ShouldBeTrue)
-
-			// OnProcessDone 调用 3 次
-			processCalls := mon.processDoneCalls()
-			So(len(processCalls), ShouldEqual, 3)
-
-			// weak1 的 err 不为 nil
-			So(processCalls[1].processorName, ShouldEqual, "weak1")
-			So(processCalls[1].dependency, ShouldEqual, Weak)
-			So(processCalls[1].err, ShouldNotBeNil)
-
-			// 无回滚调用
-			So(len(mon.rollbackDoneCalls()), ShouldEqual, 0)
-		})
-	})
-}
-
-// ==================== New 函数测试 ====================
-
-func TestNew(t *testing.T) {
-	PatchConvey("TestNew-函数式构建", t, func() {
-		Mock(GetConfig).Return(&Config{DisableMonitor: true}).Build()
-
-		p1 := &mockProcessor[testReq, testResp]{name: "p1", dependency: Strong}
-		p2 := &mockProcessor[testReq, testResp]{name: "p2", dependency: Weak}
-		flow := New("test-flow", p1, p2)
-
-		So(flow.Name, ShouldEqual, "test-flow")
-		So(len(flow.Processors), ShouldEqual, 2)
-		// 验证可正常执行
-		result := flow.Execute(context.Background(), testReq{})
-		So(result.Success(), ShouldBeTrue)
-	})
-}
-
-// ==================== Config 测试 ====================
-
-func TestGetConfig(t *testing.T) {
-	PatchConvey("TestGetConfig", t, func() {
-		PatchConvey("UnmarshalConfig 成功", func() {
-			c := GetConfig()
-			So(c, ShouldNotBeNil)
-			So(c.DisableMonitor, ShouldBeFalse)
-		})
-
-		PatchConvey("UnmarshalConfig 失败返回默认值", func() {
-			Mock(xconfig.UnmarshalConfig).To(func(key string, conf any) error {
-				return errors.New("unmarshal failed")
-			}).Build()
-			c := GetConfig()
-			So(c, ShouldNotBeNil)
-			So(c.DisableMonitor, ShouldBeFalse)
-		})
-	})
-}
+// ==================== config.go / xflow_init.go ====================
 
 func TestConfigMergeDefault(t *testing.T) {
 	PatchConvey("TestConfigMergeDefault", t, func() {
-		PatchConvey("nil 输入", func() {
+		PatchConvey("nil 入参给出全套默认值", func() {
 			c := configMergeDefault(nil)
-			So(c, ShouldNotBeNil)
-			So(c.DisableMonitor, ShouldBeFalse)
+			So(*c.EnableMonitor, ShouldBeTrue)
+			So(c.RollbackTimeout, ShouldEqual, defaultRollbackTimeoutStr)
 		})
 
-		PatchConvey("非 nil 输入", func() {
-			input := &Config{DisableMonitor: true}
-			c := configMergeDefault(input)
-			So(c, ShouldEqual, input)
-			So(c.DisableMonitor, ShouldBeTrue)
+		PatchConvey("显式关闭监控不被覆盖", func() {
+			c := configMergeDefault(&Config{EnableMonitor: xutil.ToPtr(false)})
+			So(*c.EnableMonitor, ShouldBeFalse)
+		})
+
+		PatchConvey("合法的回滚超时保留", func() {
+			c := configMergeDefault(&Config{RollbackTimeout: "1m"})
+			So(c.RollbackTimeout, ShouldEqual, "1m")
+		})
+
+		PatchConvey("非法回滚超时回落默认值并告警", func() {
+			var warned string
+			Mock(xutil.WarnIfEnableDebug).To(func(msg string, args ...any) { warned = msg }).Build()
+			c := configMergeDefault(&Config{RollbackTimeout: "not-a-duration"})
+			So(c.RollbackTimeout, ShouldEqual, defaultRollbackTimeoutStr)
+			So(warned, ShouldContainSubstring, "RollbackTimeout is invalid")
+		})
+
+		PatchConvey("未配置时不告警", func() {
+			var warned string
+			Mock(xutil.WarnIfEnableDebug).To(func(msg string, args ...any) { warned = msg }).Build()
+			configMergeDefault(&Config{})
+			So(warned, ShouldBeEmpty)
+		})
+	})
+}
+
+func TestInitXFlow(t *testing.T) {
+	PatchConvey("TestInitXFlow", t, func() {
+		defer resetConfig()
+
+		PatchConvey("读取配置并写入运行时变量", func() {
+			Mock(xconfig.UnmarshalConfig).To(func(key string, conf any) error {
+				So(key, ShouldEqual, XFlowConfigKey)
+				c := conf.(*Config)
+				c.EnableMonitor = xutil.ToPtr(false)
+				c.RollbackTimeout = "5s"
+				return nil
+			}).Build()
+
+			So(initXFlow(), ShouldBeNil)
+			So(monitorEnabled.Load(), ShouldBeFalse)
+			So(rollbackTimeout(), ShouldEqual, 5*time.Second)
+		})
+
+		PatchConvey("配置读取失败时返回 xerror", func() {
+			Mock(xconfig.UnmarshalConfig).Return(errors.New("bad config")).Build()
+			err := initXFlow()
+			So(err, ShouldNotBeNil)
+			So(err.Error(), ShouldContainSubstring, "getConfig failed")
+			So(err.Error(), ShouldContainSubstring, "bad config")
+		})
+
+		PatchConvey("无配置时使用默认值", func() {
+			Mock(xconfig.UnmarshalConfig).Return(nil).Build()
+			So(initXFlow(), ShouldBeNil)
+			So(monitorEnabled.Load(), ShouldBeTrue)
+			So(rollbackTimeout(), ShouldEqual, 30*time.Second)
 		})
 	})
 }

@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/xiaoshicae/xone/v2/internal/hookorder"
 	"github.com/xiaoshicae/xone/v2/xconfig"
 	"github.com/xiaoshicae/xone/v2/xerror"
 	"github.com/xiaoshicae/xone/v2/xhook"
@@ -55,11 +56,14 @@ func init() {
 	handler.Store(newHandler(configMergeDefault(nil), time.Local, os.Stdout, nil, slog.LevelInfo))
 	currentLevel.Store(uint32(InfoLevel))
 
-	xhook.BeforeStart(initXLog)
-	// 与 BeforeStart 一并注册，使关闭顺序由 import 顺序决定：
-	// 日志模块在 xconfig 之后最早注册，因而最后关闭，其他模块关闭时打的日志仍能落盘。
+	// 同一个保留层级表达「最早启动、最晚关闭」：其他模块初始化时日志已就绪，
+	// 关闭时日志仍未关闭，其关闭阶段打的日志依然能落盘。
+	// 不能依赖注册顺序——Go 按「拓扑序 + import path 字典序」执行 init，
+	// 不依赖 xlog 的用户包可能先于它注册，逆序后反而在它之后关闭。
 	// 未启用文件日志时 closeFileWriter 直接返回 nil，无条件注册是安全的。
-	xhook.BeforeStop(closeFileWriter)
+	logOrder := xhook.ReservedOrder(hookorder.Token{}, hookorder.Log)
+	xhook.BeforeStart(initXLog, logOrder)
+	xhook.BeforeStop(closeFileWriter, logOrder)
 }
 
 func initXLog() error {

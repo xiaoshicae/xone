@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/xiaoshicae/xone/v2/internal/hookorder"
+
 	. "github.com/bytedance/mockey"
 	. "github.com/smartystreets/goconvey/convey"
 )
@@ -453,6 +455,44 @@ func TestInvokeHookWithTimeout(t *testing.T) {
 // Order 表示资源层级（值越小越底层），启停必须对称——
 // BeforeStart 按 Order 升序，BeforeStop 按 Order 降序，
 // 使一个资源只需声明一个 Order 就能做到"先启动、后关闭"。
+// TestOrderReservedBand 回归防护：
+// 负值区为框架保留，业务 Hook 无法进入，
+// 因此不可能先于 xconfig 启动，也不可能晚于 xlog 关闭。
+func TestOrderReservedBand(t *testing.T) {
+	PatchConvey("TestOrderReservedBand", t, func() {
+		PatchConvey("负 Order 直接 panic", func() {
+			So(func() { Order(-1) }, ShouldPanicWith,
+				"XOne hook order can not be less than 0, negative order is reserved for the framework")
+			So(func() { Order(math.MinInt) }, ShouldPanicWith,
+				"XOne hook order can not be less than 0, negative order is reserved for the framework")
+		})
+
+		PatchConvey("0 与正数正常接受", func() {
+			So(func() { Order(0) }, ShouldNotPanic)
+			So(func() { Order(math.MaxInt) }, ShouldNotPanic)
+		})
+
+		PatchConvey("保留层级始终先启动、后关闭", func() {
+			resetHooks()
+			defer resetHooks()
+
+			tk := hookorder.Token{}
+			var startSeq, stopSeq []string
+			// 业务 Hook 取业务区最小值，仍排在保留层级之后
+			BeforeStart(func() error { startSeq = append(startSeq, "业务"); return nil }, Order(0))
+			BeforeStop(func() error { stopSeq = append(stopSeq, "业务"); return nil }, Order(0))
+			BeforeStart(func() error { startSeq = append(startSeq, "日志"); return nil }, ReservedOrder(tk, hookorder.Log))
+			BeforeStop(func() error { stopSeq = append(stopSeq, "日志"); return nil }, ReservedOrder(tk, hookorder.Log))
+			BeforeStart(func() error { startSeq = append(startSeq, "配置"); return nil }, ReservedOrder(tk, hookorder.Config))
+
+			So(InvokeBeforeStartHook(), ShouldBeNil)
+			So(InvokeBeforeStopHook(), ShouldBeNil)
+			So(startSeq, ShouldResemble, []string{"配置", "日志", "业务"})
+			So(stopSeq, ShouldResemble, []string{"业务", "日志"})
+		})
+	})
+}
+
 func TestBeforeStopOrderSemantics(t *testing.T) {
 	PatchConvey("TestBeforeStopOrderSemantics", t, func() {
 		PatchConvey("Order 小的后关闭", func() {

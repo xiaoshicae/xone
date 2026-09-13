@@ -9,6 +9,18 @@
 
 `Future` 提供类似 Java Future 的异步编程能力，支持泛型。
 
+两种启动方式，区别只在**执行载体**：
+
+| | 跑在哪 | 并发上限 | 队列满时 |
+|---|-------|---------|---------|
+| `Async(fn)` | 每次新起一个 goroutine | **无** | 不存在这回事 |
+| `AsyncWithPool(pool, fn)` | 复用池中的 worker | 池的 worker 数 | 阻塞调用方 |
+| `TryAsyncWithPool(pool, fn)` | 同上 | 同上 | 立即以 `ErrPoolFull` 完成 |
+
+少量、一次性的并行（比如并发调三个下游）用 `Async`；需要限流（处理一万个 item
+但只要十个并发）用 `AsyncWithPool` —— 循环里 `Async` 一万次就是一万个 goroutine，
+这正是后者存在的理由。
+
 ### 基本用法
 
 ```go
@@ -91,7 +103,7 @@ pool.TrySubmit(func() {
 })
 
 // 提交并获取 Future
-f := xutil.Go(pool, func() (Result, error) {
+f := xutil.AsyncWithPool(pool, func() (Result, error) {
     return fetchResult(), nil
 })
 result, err := f.Get()
@@ -108,7 +120,7 @@ futures := make([]*xutil.Future[string], len(urls))
 
 for i, url := range urls {
     u := url
-    futures[i] = xutil.Go(pool, func() (string, error) {
+    futures[i] = xutil.AsyncWithPool(pool, func() (string, error) {
         return fetch(u)
     })
 }
@@ -144,7 +156,8 @@ for _, f := range futures {
 | `NewPool(n) *Pool` | 创建 n 个 worker 的自定义任务池 |
 | `pool.Submit(fn) bool` | 提交任务，队列满时阻塞；nil / 池已关闭返回 false |
 | `pool.TrySubmit(fn) bool` | 提交任务，队列满 / nil / 池已关闭均返回 false，不阻塞 |
-| `Go[T](pool, fn) *Future[T]` | 提交任务，返回 Future；池已关闭时立即以 `ErrPoolClosed` 完成 |
+| `AsyncWithPool[T](pool, fn) *Future[T]` | 在池中执行任务，返回 Future；队列满时**阻塞**，池已关闭时立即以 `ErrPoolClosed` 完成 |
+| `TryAsyncWithPool[T](pool, fn) *Future[T]` | 同上但不阻塞，队列满时立即以 `ErrPoolFull` 完成 |
 | `pool.Shutdown()` | 优雅关闭，等待所有任务完成，多次调用安全 |
 
 关于任务池的三条保证：

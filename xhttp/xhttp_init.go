@@ -57,15 +57,22 @@ func initHttpClient() error {
 	}
 
 	// 根据是否启用 trace 选择 Transport
-	// 链路：client → HostAwareTransport（设置目标 host 到 ctx）→ otelhttp.Transport → baseTransport
-	// HostAwareTransport 使 HeaderPropagator 能按域名过滤透传 Header
+	// HostAwareTransport 把目标 host 写入 ctx，使 HeaderPropagator 能按域名过滤透传 Header
+	//
+	// trace 开启：client → HostAwareTransport → otelhttp.Transport → baseTransport
+	//   otelhttp 负责注入 trace 与透传 Header
+	// trace 关闭但配置了 Header 透传：client → HostAwareTransport → ForwardHeaderTransport → baseTransport
+	//   链路关闭不应让已配置的 Header 透传静默失效
 	var finalTransport http.RoundTripper = baseTransport
-	if xtrace.EnableTrace() {
+	switch {
+	case xtrace.EnableTrace():
 		opts := []otelhttp.Option{
 			otelhttp.WithSpanNameFormatter(spanNameFormatter),
 		}
 		otelTransport := otelhttp.NewTransport(baseTransport, opts...)
 		finalTransport = &xtrace.HostAwareTransport{Next: otelTransport}
+	case xtrace.EnableForwardHeader():
+		finalTransport = &xtrace.HostAwareTransport{Next: &xtrace.ForwardHeaderTransport{Next: baseTransport}}
 	}
 
 	rawHttpClient := &http.Client{

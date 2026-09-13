@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/xiaoshicae/xone/v2/xutil"
+
 	"go.opentelemetry.io/otel/propagation"
 )
 
@@ -38,17 +40,34 @@ type HeaderPropagator struct {
 // globalHeaders 会向所有域名透传，rules 按域名匹配后透传
 // header 名会被 http.CanonicalHeaderKey 规范化，域名会转为小写
 func NewHeaderPropagator(globalHeaders []string, rules []ForwardHeaderRule) *HeaderPropagator {
-	seen := make(map[string]struct{})
+	// 先收集受域名规则约束的 header：它们不能再走全局无条件注入，
+	// 否则一个误配就让 ForwardHeaderRules 的域名限制彻底失效。
+	restricted := make(map[string]struct{})
+	for _, r := range rules {
+		if len(r.Domains) == 0 {
+			continue
+		}
+		for _, h := range r.Headers {
+			if h != "" {
+				restricted[http.CanonicalHeaderKey(h)] = struct{}{}
+			}
+		}
+	}
 
-	// 规范化全局 header
+	// 规范化全局 header，剔除受规则约束的
 	normalizedGlobal := make([]string, 0, len(globalHeaders))
 	for _, h := range globalHeaders {
 		if h == "" {
 			continue
 		}
 		canonical := http.CanonicalHeaderKey(h)
+		if _, limited := restricted[canonical]; limited {
+			// 同一 header 既在全局列表又在域名规则中，以更严格的规则为准
+			xutil.WarnIfEnableDebug("XOne xtrace header=[%s] appears in both ForwardHeaders and ForwardHeaderRules, "+
+				"the domain rule wins and it will NOT be forwarded globally", canonical)
+			continue
+		}
 		normalizedGlobal = append(normalizedGlobal, canonical)
-		seen[canonical] = struct{}{}
 	}
 
 	// 规范化规则
@@ -72,9 +91,7 @@ func NewHeaderPropagator(globalHeaders []string, rules []ForwardHeaderRule) *Hea
 			if h == "" {
 				continue
 			}
-			canonical := http.CanonicalHeaderKey(h)
-			headers = append(headers, canonical)
-			seen[canonical] = struct{}{}
+			headers = append(headers, http.CanonicalHeaderKey(h))
 		}
 		if len(headers) == 0 {
 			continue
@@ -83,8 +100,8 @@ func NewHeaderPropagator(globalHeaders []string, rules []ForwardHeaderRule) *Hea
 	}
 
 	// 构建 allHeaders 去重列表，保持稳定顺序：全局 header 在前，规则 header 在后
-	allHeaders := make([]string, 0, len(seen))
-	added := make(map[string]struct{})
+	allHeaders := make([]string, 0, len(normalizedGlobal)+len(restricted))
+	added := make(map[string]struct{}, len(normalizedGlobal)+len(restricted))
 	for _, h := range normalizedGlobal {
 		if _, exists := added[h]; !exists {
 			added[h] = struct{}{}
@@ -125,7 +142,7 @@ func (p *HeaderPropagator) Extract(ctx context.Context, carrier propagation.Text
 		}
 		if merged == nil {
 			// 延迟初始化，只在有值时才创建 map
-			merged = make(map[string]string, len(p.allHeaders))
+			merged = make(map[string]string, len(p.allHeaders)+len(existing))
 			maps.Copy(merged, existing)
 		}
 		merged[h] = v

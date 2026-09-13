@@ -4,6 +4,9 @@ import "github.com/xiaoshicae/xone/v2/xutil"
 
 const (
 	XTraceConfigKey = "XTrace"
+
+	// defaultSampleRatio 默认采样率，全采样
+	defaultSampleRatio = 1.0
 )
 
 // ForwardHeaderRule 按域名透传的 Header 规则
@@ -17,13 +20,19 @@ type ForwardHeaderRule struct {
 }
 
 type Config struct {
-	// Enable Trace是否开启
+	// Enable Trace 是否开启
 	// optional default true
 	Enable *bool `mapstructure:"Enable"`
 
-	// Console 内容是否需要在控制台打印
+	// EnableConsole Trace 内容是否打印到标准输出，仅用于本地调试
+	// 关闭时不注册任何 SpanProcessor，Span 创建后直接丢弃，仅保留 TraceID/SpanID 与 Header 透传能力
 	// optional default false
-	Console bool `mapstructure:"Console"`
+	EnableConsole bool `mapstructure:"EnableConsole"`
+
+	// SampleRatio 采样率，取值 (0, 1]，>= 1 时全采样
+	// 需要完全关闭链路请用 Enable=false，本项不接受 0（0 视为未配置，回落到默认值）
+	// optional default 1.0
+	SampleRatio float64 `mapstructure:"SampleRatio"`
 
 	// ForwardHeaders 需要在链路中透传的自定义 HTTP Header 列表（全局，向所有域名透传）
 	// 配置后会自动注册 HeaderPropagator，从上游请求 Extract 并向下游请求 Inject
@@ -37,6 +46,11 @@ type Config struct {
 	ForwardHeaderRules []ForwardHeaderRule `mapstructure:"ForwardHeaderRules"`
 }
 
+// forwardEnabled 是否配置了 Header 透传
+func (c *Config) forwardEnabled() bool {
+	return len(c.ForwardHeaders) > 0 || len(c.ForwardHeaderRules) > 0
+}
+
 func configMergeDefault(c *Config) *Config {
 	if c == nil {
 		c = &Config{}
@@ -45,6 +59,10 @@ func configMergeDefault(c *Config) *Config {
 	// 未配置时默认开启，只有明确配置 Enable: false 才关闭
 	if c.Enable == nil {
 		c.Enable = xutil.ToPtr(true)
+	}
+	// 采样率非正数视为未配置：关闭链路请用 Enable=false
+	if c.SampleRatio <= 0 {
+		c.SampleRatio = defaultSampleRatio
 	}
 	return c
 }

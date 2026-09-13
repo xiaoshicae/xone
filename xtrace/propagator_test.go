@@ -362,19 +362,30 @@ func TestHeaderPropagator_Inject(t *testing.T) {
 			So(carrier2["X-Auth-B"], ShouldEqual, "bbb")
 		})
 
-		PatchConvey("SameHeaderInGlobalAndRule_DomainNotMatch", func() {
-			// 同一 header 同时出现在全局和规则中，即使域名不匹配，全局也应注入
+		PatchConvey("SameHeaderInGlobalAndRule_DomainRuleWins", func() {
+			// 同一 header 同时出现在全局和规则中属于误配：
+			// 以更严格的域名规则为准，否则 ForwardHeaderRules 的域名限制形同虚设
 			rules := []ForwardHeaderRule{
 				{Domains: []string{"api.internal.com"}, Headers: []string{"X-Request-Id"}},
 			}
 			p := NewHeaderPropagator([]string{"X-Request-Id"}, rules)
+			So(p.globalHeaders, ShouldBeEmpty)
+
 			vals := map[string]string{"X-Request-Id": "req-001"}
 			ctx := context.WithValue(context.Background(), forwardHeadersContextKey{}, vals)
-			ctx = WithTargetHost(ctx, "api.external.com")
+
+			// 域名不匹配：不注入
 			carrier := mapCarrier{}
-			p.Inject(ctx, carrier)
-			// 全局 header 不受域名限制，始终注入
-			So(carrier["X-Request-Id"], ShouldEqual, "req-001")
+			p.Inject(WithTargetHost(ctx, "api.external.com"), carrier)
+			So(carrier["X-Request-Id"], ShouldEqual, "")
+
+			// 域名匹配：注入
+			matched := mapCarrier{}
+			p.Inject(WithTargetHost(ctx, "api.internal.com"), matched)
+			So(matched["X-Request-Id"], ShouldEqual, "req-001")
+
+			// 仍在 Extract/Fields 覆盖范围内
+			So(p.Fields(), ShouldContain, "X-Request-Id")
 		})
 
 		PatchConvey("EmptyHostString", func() {
@@ -744,5 +755,27 @@ func TestHeaderPropagator_RoundTrip(t *testing.T) {
 func TestHeaderPropagator_ImplementsInterface(t *testing.T) {
 	PatchConvey("TestHeaderPropagator_ImplementsInterface", t, func() {
 		var _ propagation.TextMapPropagator = (*HeaderPropagator)(nil)
+	})
+}
+
+// TestNewHeaderPropagator_EmptyHeaderInRule 规则内的空 header 应被跳过，
+// 全部为空时整条规则丢弃
+func TestNewHeaderPropagator_EmptyHeaderInRule(t *testing.T) {
+	PatchConvey("TestNewHeaderPropagator_EmptyHeaderInRule", t, func() {
+		PatchConvey("部分为空只保留非空", func() {
+			p := NewHeaderPropagator(nil, []ForwardHeaderRule{
+				{Domains: []string{"a.com"}, Headers: []string{"", "X-Keep", ""}},
+			})
+			So(p.rules, ShouldHaveLength, 1)
+			So(p.rules[0].headers, ShouldResemble, []string{"X-Keep"})
+		})
+
+		PatchConvey("全部为空则整条规则丢弃", func() {
+			p := NewHeaderPropagator(nil, []ForwardHeaderRule{
+				{Domains: []string{"a.com"}, Headers: []string{"", ""}},
+			})
+			So(p.rules, ShouldBeEmpty)
+			So(p.allHeaders, ShouldBeEmpty)
+		})
 	})
 }

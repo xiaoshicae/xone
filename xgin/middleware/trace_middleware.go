@@ -15,7 +15,7 @@ const (
 	traceIdHeader = "X-Trace-Id"
 )
 
-func GinXTraceMiddleware() gin.HandlerFunc {
+func Trace() gin.HandlerFunc {
 	propagator := otel.GetTextMapPropagator()
 	return func(c *gin.Context) {
 		fullPath := c.FullPath()

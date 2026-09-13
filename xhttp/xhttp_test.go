@@ -165,7 +165,7 @@ func TestInitHttpClient(t *testing.T) {
 			RetryCount:          0,
 			EnableMetric:        xutil.ToPtr(false),
 		}, nil).Build()
-		mockey.Mock(xtrace.EnableTrace).Return(false).Build()
+		mockey.Mock(xtrace.TraceEnabled).Return(false).Build()
 
 		err := initHttpClient()
 		c.So(err, c.ShouldBeNil)
@@ -182,7 +182,7 @@ func TestInitHttpClient(t *testing.T) {
 			RetryCount:          0,
 			EnableMetric:        xutil.ToPtr(false),
 		}, nil).Build()
-		mockey.Mock(xtrace.EnableTrace).Return(true).Build()
+		mockey.Mock(xtrace.TraceEnabled).Return(true).Build()
 
 		err := initHttpClient()
 		c.So(err, c.ShouldBeNil)
@@ -201,7 +201,7 @@ func TestInitHttpClient(t *testing.T) {
 			RetryMaxWaitTime:    "2s",
 			EnableMetric:        xutil.ToPtr(false),
 		}, nil).Build()
-		mockey.Mock(xtrace.EnableTrace).Return(false).Build()
+		mockey.Mock(xtrace.TraceEnabled).Return(false).Build()
 
 		err := initHttpClient()
 		c.So(err, c.ShouldBeNil)
@@ -218,7 +218,7 @@ func TestInitHttpClient(t *testing.T) {
 			RetryCount:          0,
 			EnableMetric:        xutil.ToPtr(false),
 		}, nil).Build()
-		mockey.Mock(xtrace.EnableTrace).Return(false).Build()
+		mockey.Mock(xtrace.TraceEnabled).Return(false).Build()
 
 		err := initHttpClient()
 		c.So(err, c.ShouldBeNil)
@@ -249,7 +249,7 @@ func TestInitHttpClientDefaultTransportFallback(t *testing.T) {
 			IdleConnTimeout:     "90s",
 			EnableMetric:        xutil.ToPtr(false),
 		}, nil).Build()
-		mockey.Mock(xtrace.EnableTrace).Return(false).Build()
+		mockey.Mock(xtrace.TraceEnabled).Return(false).Build()
 
 		err := initHttpClient()
 		c.So(err, c.ShouldBeNil)
@@ -278,7 +278,7 @@ func TestDialTimeoutApplied(t *testing.T) {
 			RetryCount:          0,
 			EnableMetric:        xutil.ToPtr(false),
 		}, nil).Build()
-		mockey.Mock(xtrace.EnableTrace).Return(false).Build()
+		mockey.Mock(xtrace.TraceEnabled).Return(false).Build()
 
 		err := initHttpClient()
 		c.So(err, c.ShouldBeNil)
@@ -392,7 +392,7 @@ func TestInitHttpClient_WithMetric(t *testing.T) {
 			RetryCount:          0,
 			EnableMetric:        xutil.ToPtr(true),
 		}, nil).Build()
-		mockey.Mock(xtrace.EnableTrace).Return(false).Build()
+		mockey.Mock(xtrace.TraceEnabled).Return(false).Build()
 
 		err := initHttpClient()
 		c.So(err, c.ShouldBeNil)
@@ -719,8 +719,8 @@ func TestInitHttpClient_ForwardHeaderOnly(t *testing.T) {
 			IdleConnTimeout:     "90s",
 			EnableMetric:        xutil.ToPtr(false),
 		}, nil).Build()
-		mockey.Mock(xtrace.EnableTrace).Return(false).Build()
-		mockey.Mock(xtrace.EnableForwardHeader).Return(true).Build()
+		mockey.Mock(xtrace.TraceEnabled).Return(false).Build()
+		mockey.Mock(xtrace.ForwardHeaderEnabled).Return(true).Build()
 
 		c.So(initHttpClient(), c.ShouldBeNil)
 

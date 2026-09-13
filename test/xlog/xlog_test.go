@@ -10,7 +10,7 @@ import (
 
 func TestXLog(t *testing.T) {
 	t.Skip("真实环境测试，如果client能连通，可以注释掉该Skip进行测试")
-	if err := xserver.R(); err != nil {
+	if err := xserver.Init(); err != nil {
 		panic(err)
 	}
 

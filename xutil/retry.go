@@ -5,7 +5,11 @@ import (
 	"time"
 )
 
-// Retry 重试函数，attempts <= 0 时只执行一次
+// Retry 重试函数
+//
+// attempts 是总调用次数而非额外重试次数：Retry(fn, 3, d) 最多调用 fn 三次，
+// 失败两次后再试一次，不是四次。attempts <= 0 时按 1 处理，即只执行一次。
+// 每两次调用之间等待 sleep，最后一次失败后不再等待。
 func Retry(fn func() error, attempts int, sleep time.Duration) error {
 	return RetryWithContext(context.Background(), func(context.Context) error { return fn() }, attempts, sleep)
 }
@@ -19,7 +23,9 @@ func RetryWithContext(ctx context.Context, fn func(context.Context) error, attem
 }
 
 // RetryWithBackoff 指数退避重试
-// delay 从 initialDelay 开始，每次翻倍，不超过 maxDelay
+//
+// delay 从 initialDelay 开始，每次翻倍，不超过 maxDelay。
+// attempts 同 Retry，是总调用次数。
 func RetryWithBackoff(fn func() error, attempts int, initialDelay, maxDelay time.Duration) error {
 	return RetryWithBackoffContext(context.Background(),
 		func(context.Context) error { return fn() }, attempts, initialDelay, maxDelay)

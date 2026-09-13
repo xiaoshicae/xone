@@ -11,10 +11,10 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func TestGinXRecoverMiddlewareWithDefaultHandler(t *testing.T) {
+func TestRecoverWithDefaultHandler(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	r.Use(GinXRecoverMiddleware(nil))
+	r.Use(Recover(nil))
 
 	r.GET("/panic", func(c *gin.Context) {
 		panic("test panic")
@@ -29,7 +29,7 @@ func TestGinXRecoverMiddlewareWithDefaultHandler(t *testing.T) {
 	}
 }
 
-func TestGinXRecoverMiddlewareWithCustomHandler(t *testing.T) {
+func TestRecoverWithCustomHandler(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 
@@ -39,7 +39,7 @@ func TestGinXRecoverMiddlewareWithCustomHandler(t *testing.T) {
 		c.JSON(http.StatusOK, gin.H{"error": "recovered"})
 	}
 
-	r.Use(GinXRecoverMiddleware(customHandler))
+	r.Use(Recover(customHandler))
 
 	r.GET("/panic", func(c *gin.Context) {
 		panic("test panic")
@@ -57,10 +57,10 @@ func TestGinXRecoverMiddlewareWithCustomHandler(t *testing.T) {
 	}
 }
 
-func TestGinXRecoverMiddlewareNoPanic(t *testing.T) {
+func TestRecoverNoPanic(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	r.Use(GinXRecoverMiddleware(nil))
+	r.Use(Recover(nil))
 
 	r.GET("/normal", func(c *gin.Context) {
 		c.String(http.StatusOK, "ok")
@@ -78,10 +78,10 @@ func TestGinXRecoverMiddlewareNoPanic(t *testing.T) {
 	}
 }
 
-func TestGinXRecoverMiddlewareResponseAlreadyWritten(t *testing.T) {
+func TestRecoverResponseAlreadyWritten(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	r.Use(GinXRecoverMiddleware(nil))
+	r.Use(Recover(nil))
 
 	r.GET("/panic", func(c *gin.Context) {
 		c.String(http.StatusOK, "ok")
@@ -120,10 +120,10 @@ func TestStackFunction(t *testing.T) {
 	}
 }
 
-func TestGinXRecoverMiddlewarePanicWithError(t *testing.T) {
+func TestRecoverPanicWithError(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	r.Use(GinXRecoverMiddleware(nil))
+	r.Use(Recover(nil))
 
 	r.GET("/panic-error", func(c *gin.Context) {
 		panic(http.ErrAbortHandler)
@@ -138,10 +138,10 @@ func TestGinXRecoverMiddlewarePanicWithError(t *testing.T) {
 	}
 }
 
-func TestGinXRecoverMiddlewareBrokenPipe(t *testing.T) {
+func TestRecoverBrokenPipe(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	r.Use(GinXRecoverMiddleware(nil))
+	r.Use(Recover(nil))
 
 	r.GET("/broken-pipe", func(c *gin.Context) {
 		// 模拟 broken pipe 错误
@@ -163,10 +163,10 @@ func TestGinXRecoverMiddlewareBrokenPipe(t *testing.T) {
 	// status 默认 200 因为 httptest.NewRecorder 默认值
 }
 
-func TestGinXRecoverMiddlewareBrokenPipeNonError(t *testing.T) {
+func TestRecoverBrokenPipeNonError(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	r.Use(GinXRecoverMiddleware(nil))
+	r.Use(Recover(nil))
 
 	r.GET("/broken-pipe-str", func(c *gin.Context) {
 		// 模拟 broken pipe 但 panic 值不是 error 类型的 OpError

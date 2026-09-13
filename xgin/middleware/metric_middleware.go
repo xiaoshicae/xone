@@ -48,9 +48,9 @@ func initMetricCollectors() {
 	})
 }
 
-// GinXMetricMiddleware 返回 Gin HTTP 请求指标中间件
+// Metric 返回 Gin HTTP 请求指标中间件
 // 采集指标：http_requests_total（请求数量+状态码）、http_request_duration_seconds（请求耗时+状态码）
-func GinXMetricMiddleware() gin.HandlerFunc {
+func Metric() gin.HandlerFunc {
 	initMetricCollectors()
 
 	return func(c *gin.Context) {

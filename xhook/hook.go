@@ -34,6 +34,12 @@ var (
 	stopRegistry  = newRegistry("BeforeStop")
 )
 
+// beforeStartInvoked 标记 BeforeStart 是否已执行完毕
+//
+// 供依赖初始化结果的模块自检：未初始化时 xconfig 返回的是一份空配置而非错误，
+// 各模块拿到的全是默认值，服务能起来但哪个模块都没真正配置上。
+var beforeStartInvoked atomic.Bool
+
 // HookFunc Hook 函数类型定义
 type HookFunc func() error
 
@@ -132,16 +138,29 @@ func InvokeBeforeStartHook() error {
 	for _, h := range startRegistry.sortedHooks() {
 		if err := invokeHookWithTimeout(h, h.Options.Timeout); err != nil {
 			funcName := getInvokeFuncFullName(h.HookFunc)
-			if h.Options.MustInvokeSuccess {
+			if h.Options.MustSucceed {
 				xutil.ErrorIfEnableDebug("XOne invoke before start hook failed, func=[%v], err=[%v]", funcName, err)
 				return xerror.Newf("xhook", "BeforeStart", "func=[%v], err=[%v]", funcName, err)
 			}
-			xutil.WarnIfEnableDebug("XOne invoke before start hook failed, case MustInvokeSuccess=false, before start hook will continue to invoke, func=[%v], err=[%v]", funcName, err)
+			xutil.WarnIfEnableDebug("XOne invoke before start hook failed, case MustSucceed=false, before start hook will continue to invoke, func=[%v], err=[%v]", funcName, err)
 			continue
 		}
 		xutil.InfoIfEnableDebug("XOne invoke before start hook success, func=[%v]", getInvokeFuncFullName(h.HookFunc))
 	}
+	beforeStartInvoked.Store(true)
 	return nil
+}
+
+// BeforeStartInvoked 报告 BeforeStart Hook 是否已全部执行完毕
+//
+// 只有 InvokeBeforeStartHook 成功返回后才为 true；某个 MustSucceed=true
+// 的 Hook 失败导致提前返回时保持 false。
+//
+// 用于让「必须在初始化之后才能跑」的入口及早报错。xconfig 未初始化时
+// 读配置不报错、只返回空值，所以这类调用不会自己暴露出来——服务会带着
+// 一整套默认值正常启动，直到有人发现端口或数据库连的不是预期的那个。
+func BeforeStartInvoked() bool {
+	return beforeStartInvoked.Load()
 }
 
 // InvokeBeforeStopHook 执行所有 BeforeStop Hook

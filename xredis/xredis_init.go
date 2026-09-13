@@ -155,7 +155,7 @@ func newClient(c *Config) (*redis.Client, error) {
 	}
 
 	// OpenTelemetry 链路追踪集成
-	if xtrace.EnableTrace() {
+	if xtrace.TraceEnabled() {
 		if err := redisotel.InstrumentTracing(client); err != nil {
 			_ = client.Close()
 			return nil, xerror.Newf("xredis", "newClient", "instrument tracing failed, err=[%v]", err)

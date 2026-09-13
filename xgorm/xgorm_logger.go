@@ -24,7 +24,7 @@ var logLevelMapping = map[string]logger.LogLevel{
 
 func newGormLogger(c *Config) *gormLogger {
 	return &gormLogger{
-		logLevel:                  resolveLoglevel(xlog.XLogLevel()),
+		logLevel:                  resolveLoglevel(xlog.CurrentLevel().String()),
 		slowThreshold:             xutil.ToDuration(c.SlowThreshold),
 		ignoreRecordNotFoundError: c.IgnoreRecordNotFoundErrorLog,
 	}

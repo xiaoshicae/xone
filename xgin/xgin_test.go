@@ -15,6 +15,7 @@ import (
 	"github.com/xiaoshicae/xone/v2/xconfig"
 	"github.com/xiaoshicae/xone/v2/xgin/options"
 	"github.com/xiaoshicae/xone/v2/xgin/trans"
+	"github.com/xiaoshicae/xone/v2/xhook"
 	"github.com/xiaoshicae/xone/v2/xlog"
 	"github.com/xiaoshicae/xone/v2/xserver"
 	"github.com/xiaoshicae/xone/v2/xutil"
@@ -276,6 +277,10 @@ func TestWithRecoverFunc(t *testing.T) {
 
 func TestRunAndStop(t *testing.T) {
 	PatchConvey("TestRunAndStop", t, func() {
+		// Run 只是 xserver.Server 的实现，前置检查要求初始化已完成；
+		// 单测直接调 Run 验证其内部行为，这里替它把前置条件置为满足
+		Mock(xhook.BeforeStartInvoked).Return(true).Build()
+
 		Mock(getConfig).Return(&Config{Host: "127.0.0.1", Port: 0}, nil).Build()
 
 		g := New(
@@ -490,6 +495,10 @@ func TestBuildWithAllMiddlewares(t *testing.T) {
 
 func TestRunWithHttp2(t *testing.T) {
 	PatchConvey("TestRunWithHttp2", t, func() {
+		// Run 只是 xserver.Server 的实现，前置检查要求初始化已完成；
+		// 单测直接调 Run 验证其内部行为，这里替它把前置条件置为满足
+		Mock(xhook.BeforeStartInvoked).Return(true).Build()
+
 		Mock(getConfig).Return(&Config{Host: "127.0.0.1", Port: 0, UseH2C: true}, nil).Build()
 		Mock((*http.Server).ListenAndServe).Return(errors.New("for test")).Build()
 
@@ -509,6 +518,10 @@ func TestRunWithHttp2(t *testing.T) {
 
 func TestRunWithTLS(t *testing.T) {
 	PatchConvey("TestRunWithTLS", t, func() {
+		// Run 只是 xserver.Server 的实现，前置检查要求初始化已完成；
+		// 单测直接调 Run 验证其内部行为，这里替它把前置条件置为满足
+		Mock(xhook.BeforeStartInvoked).Return(true).Build()
+
 		Mock(getConfig).Return(&Config{
 			Host:     "127.0.0.1",
 			Port:     8443,
@@ -530,6 +543,10 @@ func TestRunWithTLS(t *testing.T) {
 
 func TestRunWithServerClosed(t *testing.T) {
 	PatchConvey("TestRunWithServerClosed", t, func() {
+		// Run 只是 xserver.Server 的实现，前置检查要求初始化已完成；
+		// 单测直接调 Run 验证其内部行为，这里替它把前置条件置为满足
+		Mock(xhook.BeforeStartInvoked).Return(true).Build()
+
 		Mock(getConfig).Return(&Config{Host: "127.0.0.1", Port: 0}, nil).Build()
 		Mock((*http.Server).ListenAndServe).Return(http.ErrServerClosed).Build()
 
@@ -608,7 +625,7 @@ func TestInjectSwaggerInfoWithUrlPrefix(t *testing.T) {
 		SwaggerTemplate:  "{}",
 	}
 
-	injectSwaggerInfo(spec, engine, options.WithSwaggerUrlPrefix("/api/v1"))
+	injectSwaggerInfo(spec, engine, options.SwaggerUrlPrefix("/api/v1"))
 
 	// 验证带前缀的 swagger 路由被注册
 	w := httptest.NewRecorder()
@@ -863,6 +880,10 @@ func TestBuildWithZHTranslationsError(t *testing.T) {
 
 func TestRunAutoBuilds(t *testing.T) {
 	PatchConvey("TestRunAutoBuilds", t, func() {
+		// Run 只是 xserver.Server 的实现，前置检查要求初始化已完成；
+		// 单测直接调 Run 验证其内部行为，这里替它把前置条件置为满足
+		Mock(xhook.BeforeStartInvoked).Return(true).Build()
+
 		Mock(getConfig).Return(&Config{Host: "127.0.0.1", Port: 0}, nil).Build()
 		Mock((*http.Server).ListenAndServe).Return(http.ErrServerClosed).Build()
 
@@ -880,6 +901,10 @@ func TestRunAutoBuilds(t *testing.T) {
 
 func TestRunWithSwaggerInfo(t *testing.T) {
 	PatchConvey("TestRunWithSwaggerInfo", t, func() {
+		// Run 只是 xserver.Server 的实现，前置检查要求初始化已完成；
+		// 单测直接调 Run 验证其内部行为，这里替它把前置条件置为满足
+		Mock(xhook.BeforeStartInvoked).Return(true).Build()
+
 		Mock(getConfig).Return(&Config{Host: "127.0.0.1", Port: 0}, nil).Build()
 		Mock(GetSwaggerConfig).Return(&SwaggerConfig{
 			Host:    "localhost",
@@ -943,6 +968,10 @@ func TestBuild_Concurrent(t *testing.T) {
 
 func TestRun_ConfigErrorFailFast(t *testing.T) {
 	PatchConvey("TestRun-ConfigErrorFailFast", t, func() {
+		// Run 只是 xserver.Server 的实现，前置检查要求初始化已完成；
+		// 单测直接调 Run 验证其内部行为，这里替它把前置条件置为满足
+		Mock(xhook.BeforeStartInvoked).Return(true).Build()
+
 		// 配置解析失败必须让服务起不来：静默回退默认端口会让服务起在
 		// 一个没人预期的端口上，而排查时配置文件看着是对的
 		Mock(getConfig).Return(nil, errors.New("unmarshal failed")).Build()
@@ -957,6 +986,10 @@ func TestRun_ConfigErrorFailFast(t *testing.T) {
 
 func TestRun_ServerTimeouts(t *testing.T) {
 	PatchConvey("TestRun-ServerTimeouts", t, func() {
+		// Run 只是 xserver.Server 的实现，前置检查要求初始化已完成；
+		// 单测直接调 Run 验证其内部行为，这里替它把前置条件置为满足
+		Mock(xhook.BeforeStartInvoked).Return(true).Build()
+
 		PatchConvey("超时来自配置", func() {
 			Mock(getConfig).Return(&Config{
 				Host:                "127.0.0.1",
@@ -994,6 +1027,10 @@ func TestRun_ServerTimeouts(t *testing.T) {
 
 func TestStopBeforeRun(t *testing.T) {
 	PatchConvey("TestStopBeforeRun", t, func() {
+		// Run 只是 xserver.Server 的实现，前置检查要求初始化已完成；
+		// 单测直接调 Run 验证其内部行为，这里替它把前置条件置为满足
+		Mock(xhook.BeforeStartInvoked).Return(true).Build()
+
 		// 退出信号早于 ListenAndServe 到达时，服务不应在"已停止"之后才起来
 		Mock(xutil.WarnIfEnableDebug).Return().Build()
 		listenCalled := false
@@ -1013,6 +1050,10 @@ func TestStopBeforeRun(t *testing.T) {
 
 func TestRun_Twice(t *testing.T) {
 	PatchConvey("TestRun-Twice", t, func() {
+		// Run 只是 xserver.Server 的实现，前置检查要求初始化已完成；
+		// 单测直接调 Run 验证其内部行为，这里替它把前置条件置为满足
+		Mock(xhook.BeforeStartInvoked).Return(true).Build()
+
 		// 第二次 Run 若照常覆盖 g.srv，前一个 server 会失去引用而无法 Stop
 		Mock(getConfig).Return(&Config{Host: "127.0.0.1", Port: 0}, nil).Build()
 		Mock((*http.Server).ListenAndServe).Return(http.ErrServerClosed).Build()
@@ -1056,6 +1097,10 @@ func TestMiddlewareOrder_PanicObserved(t *testing.T) {
 
 func TestRun_TLSConfigIncomplete(t *testing.T) {
 	PatchConvey("TestRun-TLS配置不完整", t, func() {
+		// Run 只是 xserver.Server 的实现，前置检查要求初始化已完成；
+		// 单测直接调 Run 验证其内部行为，这里替它把前置条件置为满足
+		Mock(xhook.BeforeStartInvoked).Return(true).Build()
+
 		// 只配一半会让服务以明文起来，而运维以为它是 HTTPS —— 必须直接失败
 		PatchConvey("只配 CertFile", func() {
 			Mock(getConfig).Return(&Config{Host: "127.0.0.1", Port: 0, CertFile: "/path/cert.pem"}, nil).Build()
@@ -1073,5 +1118,34 @@ func TestRun_TLSConfigIncomplete(t *testing.T) {
 			So(err, ShouldNotBeNil)
 			So(err.Error(), ShouldContainSubstring, "TLS config incomplete")
 		})
+	})
+}
+
+// TestRun_RequiresBeforeStartHooks 未初始化就直接调 Run 必须报错而不是把服务起起来
+//
+// Start() 和 Run() 是英文同义词但职责完全不同：Start 走完整生命周期，
+// Run 只是 xserver.Server 的实现。选错的代价原本是隐形的——xconfig 未初始化时
+// 读配置不报错、只返回零值，于是服务带着一整套默认值起在默认端口上，
+// 而日志、链路、数据库客户端一个都没配置
+func TestRun_RequiresBeforeStartHooks(t *testing.T) {
+	PatchConvey("TestRun-未初始化直接调Run", t, func() {
+		Mock(xhook.BeforeStartInvoked).Return(false).Build()
+
+		listenCalled := false
+		Mock((*http.Server).ListenAndServe).To(func(*http.Server) error {
+			listenCalled = true
+			return nil
+		}).Build()
+
+		g := New(
+			options.EnableLogMiddleware(false),
+			options.EnableTraceMiddleware(false),
+		)
+		err := g.Run()
+
+		So(err, ShouldNotBeNil)
+		So(err.Error(), ShouldContainSubstring, "BeforeStart")
+		So(err.Error(), ShouldContainSubstring, "Start()")
+		So(listenCalled, ShouldBeFalse) // 关键：没有真的去监听端口
 	})
 }

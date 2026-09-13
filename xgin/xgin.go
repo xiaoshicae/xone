@@ -17,6 +17,7 @@ import (
 	"github.com/xiaoshicae/xone/v2/xgin/options"
 	"github.com/xiaoshicae/xone/v2/xgin/swagger"
 	"github.com/xiaoshicae/xone/v2/xgin/trans"
+	"github.com/xiaoshicae/xone/v2/xhook"
 	"github.com/xiaoshicae/xone/v2/xserver"
 	"github.com/xiaoshicae/xone/v2/xutil"
 
@@ -122,13 +123,27 @@ func (g *XGin) Engine() *gin.Engine {
 	return g.engine
 }
 
-// Start 提供快捷启动方式
+// Start 启动服务：执行 BeforeStart Hook，运行服务，等待退出信号后执行 BeforeStop Hook
+//
+// 这是绝大多数场景应该调用的方法，等价于 xserver.Run(g)。
+// Run 只是 xserver.Server 接口的实现，不负责初始化，不要直接调用。
 func (g *XGin) Start() error {
 	return xserver.Run(g)
 }
 
-// Run 实现 xserver.Server 接口
+// Run 实现 xserver.Server 接口，由 xserver 在 BeforeStart Hook 之后调用
+//
+// 不要直接调用：它假设初始化已完成，自己不跑任何 Hook。直接调用会拿到一份
+// 空配置——xconfig 未初始化时读配置不报错、只返回零值——于是服务照常起在
+// 默认端口上，而日志、链路、数据库客户端一个都没配置。
+// 想启动服务请用 Start()，或 xserver.Run(g)。
 func (g *XGin) Run() error {
+	// 未初始化就起服务，错的是调用方式而不是配置，必须在监听之前说清楚
+	if !xhook.BeforeStartInvoked() {
+		return xerror.Newf("xgin", "run", "Run called before BeforeStart hooks were invoked, "+
+			"use Start() or xserver.Run(g) instead of calling Run() directly")
+	}
+
 	g.Build() // Build 内部已做幂等与加锁
 
 	// 从 xconfig 读取配置（此时 xconfig 已通过 BeforeStart hook 初始化）
@@ -262,25 +277,25 @@ func (g *XGin) registerMiddleware(do *options.Options) {
 	// 框架中间件自身 panic 不会拖垮进程。
 
 	// 提前注入一下 session 相关信息
-	g.engine.Use(middleware.GinXSessionMiddleware())
+	g.engine.Use(middleware.Session())
 
 	// 注册trace middleware，需要放在靠前的位置，保证traceid能提前生成，后续middleware和handler能正确获取到
 	if do.EnableTraceMiddleware {
-		g.engine.Use(middleware.GinXTraceMiddleware())
+		g.engine.Use(middleware.Trace())
 	}
 
 	// 注册log middleware
 	if do.EnableLogMiddleware {
-		g.engine.Use(middleware.LogMiddleware(middleware.WithSkipPaths(do.LogSkipPaths...)))
+		g.engine.Use(middleware.Log(middleware.WithSkipPaths(do.LogSkipPaths...)))
 	}
 
 	// 注册metric middleware
 	if do.EnableMetricMiddleware {
-		g.engine.Use(middleware.GinXMetricMiddleware())
+		g.engine.Use(middleware.Metric())
 	}
 
 	// 注册recover middleware，放在框架中间件最内层，见上方说明
-	g.engine.Use(middleware.GinXRecoverMiddleware(g.recoveryFunc))
+	g.engine.Use(middleware.Recover(g.recoveryFunc))
 
 	// 注册 metrics 端点
 	//

@@ -10,10 +10,10 @@ import (
 	"github.com/xiaoshicae/xone/v2/xlog"
 )
 
-func TestGinXSessionMiddleware(t *testing.T) {
+func TestSession(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	r.Use(GinXSessionMiddleware())
+	r.Use(Session())
 
 	var ctxReceived context.Context
 	r.GET("/test", func(c *gin.Context) {
@@ -35,10 +35,10 @@ func TestGinXSessionMiddleware(t *testing.T) {
 	}
 }
 
-func TestGinXSessionMiddlewareInjectsKVContainer(t *testing.T) {
+func TestSessionInjectsKVContainer(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	r.Use(GinXSessionMiddleware())
+	r.Use(Session())
 
 	var injected bool
 	var downstream map[string]any
@@ -64,10 +64,10 @@ func TestGinXSessionMiddlewareInjectsKVContainer(t *testing.T) {
 	}
 }
 
-func TestGinXSessionMiddlewareChain(t *testing.T) {
+func TestSessionChain(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	r.Use(GinXSessionMiddleware())
+	r.Use(Session())
 
 	// 测试中间件链
 	var middlewareCalled bool

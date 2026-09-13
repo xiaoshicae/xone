@@ -16,14 +16,14 @@ import (
 func TestXHttp(t *testing.T) {
 	t.Skip("集成测试，需手动运行")
 
-	if err := xserver.R(); err != nil {
+	if err := xserver.Init(); err != nil {
 		panic(err)
 	}
 
 	// 测试 RawClient 获取原生 http.Client
 	rawClient := xhttp.RawClient()
 	if rawClient == nil {
-		t.Fatal("RawClient should not be nil after xserver.R()")
+		t.Fatal("RawClient should not be nil after xserver.Init()")
 	}
 	t.Logf("RawClient Timeout: %v", rawClient.Timeout)
 
@@ -75,7 +75,7 @@ func (*MySpan) SpanContext() trace.SpanContext {
 func TestRawClient(t *testing.T) {
 	t.Skip("集成测试，需手动运行")
 
-	if err := xserver.R(); err != nil {
+	if err := xserver.Init(); err != nil {
 		panic(err)
 	}
 

@@ -257,8 +257,8 @@ func TestGetHandlerSimpleName(t *testing.T) {
 			expected: "Method",
 		},
 		{
-			input:    "github.com/xiaoshicae/xone/v2/xgin/middleware.LogMiddleware.func1",
-			expected: "LogMiddleware",
+			input:    "github.com/xiaoshicae/xone/v2/xgin/middleware.Log.func1",
+			expected: "Log",
 		},
 		{
 			input:    "main.main.func1",
@@ -492,7 +492,7 @@ func TestFilterMapSensitiveFieldsDeepNested(t *testing.T) {
 }
 
 func TestShouldSkipLog(t *testing.T) {
-	// 预处理 skipPaths（与 LogMiddleware 中的逻辑一致）
+	// 预处理 skipPaths（与 Log 中的逻辑一致）
 	exactSkip := map[string]bool{"/health": true, "/metrics": true}
 	prefixSkip := []string{"/api/v1/"}
 
@@ -531,12 +531,12 @@ func TestWithSkipPaths(t *testing.T) {
 	}
 }
 
-// ==================== LogMiddleware 集成测试 ====================
+// ==================== Log 集成测试 ====================
 
-func TestLogMiddleware_NormalRequest(t *testing.T) {
+func TestLog_NormalRequest(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	r.Use(LogMiddleware())
+	r.Use(Log())
 	r.GET("/test", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"message": "ok"})
 	})
@@ -550,10 +550,10 @@ func TestLogMiddleware_NormalRequest(t *testing.T) {
 	}
 }
 
-func TestLogMiddleware_WithBody(t *testing.T) {
+func TestLog_WithBody(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	r.Use(LogMiddleware())
+	r.Use(Log())
 	r.POST("/api/test", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
@@ -569,10 +569,10 @@ func TestLogMiddleware_WithBody(t *testing.T) {
 	}
 }
 
-func TestLogMiddleware_SkipPath(t *testing.T) {
+func TestLog_SkipPath(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	r.Use(LogMiddleware(WithSkipPaths("/health")))
+	r.Use(Log(WithSkipPaths("/health")))
 	r.GET("/health", func(c *gin.Context) {
 		c.String(http.StatusOK, "ok")
 	})
@@ -586,10 +586,10 @@ func TestLogMiddleware_SkipPath(t *testing.T) {
 	}
 }
 
-func TestLogMiddleware_NonTextResponse(t *testing.T) {
+func TestLog_NonTextResponse(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	r.Use(LogMiddleware())
+	r.Use(Log())
 	r.GET("/binary", func(c *gin.Context) {
 		c.Data(http.StatusOK, "application/octet-stream", []byte{0x00, 0x01, 0x02})
 	})
@@ -603,10 +603,10 @@ func TestLogMiddleware_NonTextResponse(t *testing.T) {
 	}
 }
 
-func TestLogMiddleware_NoRoute(t *testing.T) {
+func TestLog_NoRoute(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	r.Use(LogMiddleware())
+	r.Use(Log())
 
 	req := httptest.NewRequest("GET", "/not-found", nil)
 	w := httptest.NewRecorder()
@@ -952,13 +952,13 @@ func TestIsAnonymousFuncName(t *testing.T) {
 	}
 }
 
-// ==================== LogMiddleware 前缀跳过测试 ====================
+// ==================== Log 前缀跳过测试 ====================
 
-func TestLogMiddleware_PrefixSkipPath(t *testing.T) {
+func TestLog_PrefixSkipPath(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	// 使用以 "/" 结尾的路径，触发 prefixSkip 分支
-	r.Use(LogMiddleware(WithSkipPaths("/api/internal/")))
+	r.Use(Log(WithSkipPaths("/api/internal/")))
 	r.GET("/api/internal/health", func(c *gin.Context) {
 		c.String(http.StatusOK, "ok")
 	})

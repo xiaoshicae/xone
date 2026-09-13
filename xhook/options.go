@@ -41,10 +41,12 @@ func ReservedOrder(_ hookorder.Token, order int) Option {
 	}
 }
 
-// MustInvokeSuccess 设置 Hook 执行失败是否终止流程
-func MustInvokeSuccess(success bool) Option {
+// MustSucceed 设置 Hook 执行失败时是否终止流程，默认 true
+//
+//	xhook.BeforeStart(initFoo, xhook.MustSucceed(false)) // foo 起不来也继续启动
+func MustSucceed(must bool) Option {
 	return func(o *options) {
-		o.MustInvokeSuccess = success
+		o.MustSucceed = must
 	}
 }
 
@@ -61,15 +63,15 @@ func Timeout(d time.Duration) Option {
 type Option func(*options)
 
 type options struct {
-	Order             int
-	MustInvokeSuccess bool
-	Timeout           time.Duration // 单个 Hook 超时时间
+	Order       int
+	MustSucceed bool
+	Timeout     time.Duration // 单个 Hook 超时时间
 }
 
 func defaultOptions() *options {
 	return &options{
-		Order:             100,
-		MustInvokeSuccess: true,
-		Timeout:           defaultHookTimeout,
+		Order:       100,
+		MustSucceed: true,
+		Timeout:     defaultHookTimeout,
 	}
 }

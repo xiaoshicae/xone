@@ -140,11 +140,8 @@ func Logger() *slog.Logger {
 }
 
 // CurrentLevel 返回当前生效的日志级别
+//
+// 需要级别名称（如 "info"）时用 CurrentLevel().String()。
 func CurrentLevel() Level {
 	return Level(currentLevel.Load())
-}
-
-// XLogLevel 返回当前生效的日志级别名称，如 "info"
-func XLogLevel() string {
-	return CurrentLevel().String()
 }

@@ -33,10 +33,16 @@ func ObserveDuration(name string, d time.Duration, tags ...Tag) {
 //
 //	start := time.Now()
 //	defer func() { xmetric.ObserveDuration("handle_order", time.Since(start), xmetric.T("status", status)) }()
+//
+// 返回的函数重复调用只有首次生效，与 TrackInFlight 一致：两者签名相同、
+// 用法相同，一个幂等一个不幂等会是纯粹的记忆负担。而 defer 之外再显式调一次
+// （提前返回时想"先记一笔"）会多打一次观测，histogram 的 count 与 rate 都随之偏高。
 func Timer(name string, tags ...Tag) func() {
 	start := time.Now()
+
+	var once sync.Once
 	return func() {
-		ObserveDuration(name, time.Since(start), tags...)
+		once.Do(func() { ObserveDuration(name, time.Since(start), tags...) })
 	}
 }
 

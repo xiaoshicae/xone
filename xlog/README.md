@@ -122,9 +122,8 @@ func KVMap(m map[string]any) Option
 func CtxWithKV(ctx context.Context, kvs map[string]any) context.Context
 func KVFromCtx(ctx context.Context) map[string]any
 
-// 获取当前生效的日志级别
+// 获取当前生效的日志级别（级别名称用 CurrentLevel().String()）
 func CurrentLevel() Level
-func XLogLevel() string
 ```
 
 `args` 中的 `Option` 会被提取为 JSON 字段，其余参数用于 `msg` 的格式化占位符。

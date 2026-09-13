@@ -169,9 +169,9 @@ func TestInvokeBeforeStartHook(t *testing.T) {
 		f3 := func() error {
 			return nil
 		}
-		BeforeStart(f1, MustInvokeSuccess(false))
-		BeforeStart(f2, MustInvokeSuccess(false))
-		BeforeStart(f3, MustInvokeSuccess(false))
+		BeforeStart(f1, MustSucceed(false))
+		BeforeStart(f2, MustSucceed(false))
+		BeforeStart(f3, MustSucceed(false))
 		err := InvokeBeforeStartHook()
 		So(err, ShouldBeNil)
 	})
@@ -214,9 +214,9 @@ func TestInvokeBeforeStopHook(t *testing.T) {
 		f3 := func() error {
 			return nil
 		}
-		BeforeStop(f1, MustInvokeSuccess(false))
-		BeforeStop(f2, MustInvokeSuccess(false))
-		BeforeStop(f3, MustInvokeSuccess(false))
+		BeforeStop(f1, MustSucceed(false))
+		BeforeStop(f2, MustSucceed(false))
+		BeforeStop(f3, MustSucceed(false))
 		err := InvokeBeforeStopHook()
 		So(err.Error(), ShouldContainSubstring, "XOne xhook BeforeStop failed")
 		So(err.Error(), ShouldContainSubstring, "BeforeStop-Invoke-Err")
@@ -643,5 +643,38 @@ func TestBeforeStopDeadlineRaceWindow(t *testing.T) {
 		So(err, ShouldNotBeNil)
 		So(err.Error(), ShouldContainSubstring, "interrupted due to timeout")
 		So(invoked, ShouldBeFalse)
+	})
+}
+
+// TestBeforeStartInvoked 初始化是否完成必须可查询
+//
+// xconfig 未初始化时读配置不报错、只返回零值，所以"忘了跑 BeforeStart"
+// 不会自己暴露出来，需要一个显式入口供依赖初始化结果的模块自检
+func TestBeforeStartInvoked(t *testing.T) {
+	PatchConvey("TestBeforeStartInvoked", t, func() {
+		old := beforeStartInvoked.Load()
+		defer beforeStartInvoked.Store(old)
+
+		PatchConvey("未执行时为 false", func() {
+			beforeStartInvoked.Store(false)
+			So(BeforeStartInvoked(), ShouldBeFalse)
+		})
+
+		PatchConvey("执行成功后为 true", func() {
+			beforeStartInvoked.Store(false)
+			So(InvokeBeforeStartHook(), ShouldBeNil)
+			So(BeforeStartInvoked(), ShouldBeTrue)
+		})
+
+		PatchConvey("MustSucceed 的 Hook 失败时保持 false", func() {
+			beforeStartInvoked.Store(false)
+			Mock(invokeHookWithTimeout).Return(errors.New("init failed")).Build()
+			Mock((*registry).sortedHooks).Return([]hook{
+				{HookFunc: func() error { return nil }, Options: defaultOptions()},
+			}).Build()
+
+			So(InvokeBeforeStartHook(), ShouldNotBeNil)
+			So(BeforeStartInvoked(), ShouldBeFalse)
+		})
 	})
 }

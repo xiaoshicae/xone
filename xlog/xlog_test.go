@@ -214,26 +214,26 @@ func TestCtxWithKV(t *testing.T) {
 	})
 }
 
-func TestXLogLevel(t *testing.T) {
-	mockey.PatchConvey("TestXLogLevel", t, func() {
+func TestCurrentLevel(t *testing.T) {
+	mockey.PatchConvey("TestCurrentLevel", t, func() {
 		old := currentLevel.Load()
 		defer currentLevel.Store(old)
 
-		mockey.PatchConvey("TestXLogLevel-Default", func() {
+		mockey.PatchConvey("TestCurrentLevel-Default", func() {
 			currentLevel.Store(uint32(InfoLevel))
-			c.So(XLogLevel(), c.ShouldEqual, "info")
+			c.So(CurrentLevel().String(), c.ShouldEqual, "info")
 			c.So(CurrentLevel(), c.ShouldEqual, InfoLevel)
 		})
 
-		mockey.PatchConvey("TestXLogLevel-FromConfig", func() {
+		mockey.PatchConvey("TestCurrentLevel-FromConfig", func() {
 			// 级别来自初始化，而非运行时回查 xconfig
 			c.So(initXLogByConfig(&Config{Level: "debug"}), c.ShouldBeNil)
-			c.So(XLogLevel(), c.ShouldEqual, "debug")
+			c.So(CurrentLevel().String(), c.ShouldEqual, "debug")
 		})
 
-		mockey.PatchConvey("TestXLogLevel-UnknownFallbackInfo", func() {
+		mockey.PatchConvey("TestCurrentLevel-UnknownFallbackInfo", func() {
 			c.So(initXLogByConfig(&Config{Level: "not-a-level"}), c.ShouldBeNil)
-			c.So(XLogLevel(), c.ShouldEqual, "info")
+			c.So(CurrentLevel().String(), c.ShouldEqual, "info")
 		})
 	})
 }

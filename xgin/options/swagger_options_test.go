@@ -10,7 +10,7 @@ func TestDefaultSwaggerOptions(t *testing.T) {
 	}
 }
 
-func TestWithSwaggerUrlPrefix(t *testing.T) {
+func TestSwaggerUrlPrefix(t *testing.T) {
 	tests := []struct {
 		name     string
 		input    string
@@ -24,7 +24,7 @@ func TestWithSwaggerUrlPrefix(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			opts := DefaultSwaggerOptions()
-			opt := WithSwaggerUrlPrefix(tt.input)
+			opt := SwaggerUrlPrefix(tt.input)
 			opt(opts)
 
 			if opts.UrlPrefix != tt.expected {

@@ -160,9 +160,13 @@
           "type": ["boolean", "string"],
           "description": "Trace是否开启，默认true"
         },
-        "Console": {
+        "EnableConsole": {
           "type": ["boolean", "string"],
-          "description": "是否要在控制台打印trace内容，默认false"
+          "description": "是否要在控制台打印trace内容，仅用于本地调试，默认false"
+        },
+        "SampleRatio": {
+          "type": ["number", "string"],
+          "description": "采样率，取值(0,1]，>=1时全采样，默认1.0。完全关闭链路请用Enable=false"
         },
         "ForwardHeaders": {
           "type": "array",

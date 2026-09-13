@@ -182,19 +182,16 @@ defer span.End()
 ## 服务启动方式
 
 ```go
-// 方式一：XGin 快捷启动（推荐）
+// 方式一：XGin 启动（Web 服务）
 xgin.New(opts...).WithRouteRegister(registerRoutes).Build().Start()
 
-// 方式二：通过 xserver 启动，等价于方式一
-xserver.Run(xgin.New(opts...).Build())
-
-// 方式三：自定义 Server（实现 xserver.Server 接口）
+// 方式二：自定义 Server（实现 xserver.Server 接口）
 xserver.Run(myServer)
 
-// 方式四：无 HTTP 服务的常驻进程（consumer / job）
+// 方式三：无 HTTP 服务的常驻进程（consumer / job）
 xserver.RunBlocking()
 
-// 方式五：只初始化模块，不启动服务（调试用）
+// 方式四：只初始化模块，不启动服务（调试用）
 xserver.Init()
 ```
 

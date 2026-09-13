@@ -1,10 +1,12 @@
 package xcache
 
 import (
-	"context"
+	"fmt"
+	"maps"
+	"slices"
+	"strings"
 	"sync"
 
-	"github.com/xiaoshicae/xone/v2/xlog"
 	"github.com/xiaoshicae/xone/v2/xutil"
 )
 
@@ -25,19 +27,56 @@ var (
 	closed bool
 )
 
-// C 获取缓存实例，支持指定名称获取，name 为空则默认获取第一个缓存实例
+// C 获取具名缓存实例，name 为空则取默认实例
+//
+// 找不到时 panic。返回 nil 并不会让程序走得更远——*Cache 的任何方法在 nil 上
+// 都是空指针解引用，只是把同一个 panic 推迟到调用方第一次用它的时候，
+// 而那里的栈里只剩 "invalid memory address"，看不出根因是配置没配。
+// 这是启动期的配置问题，不是运行期需要处理的错误。
+//
+// 注意这和包级的 Get/Set 不同：后者操作的是全局缓存，未配置 XCache 时会懒初始化
+// 一个默认实例，因此不会 panic。C 取的是配置里写明的具名实例，要不到就是配置问题。
+//
+// 可选依赖（配了就用、没配就跳过）用 Has() 先判断。
 func C(name ...string) *Cache {
 	cache := get(name...)
-	if cache != nil {
-		return cache
+	if cache == nil {
+		panic(noCacheMsg(name...))
+	}
+	return cache
+}
+
+// Has 报告指定缓存实例是否已配置
+//
+// 供可选依赖使用：配了就用、没配就跳过，不必用 C 去触发 panic。
+func Has(name ...string) bool {
+	return get(name...) != nil
+}
+
+// noCacheMsg 拼装 panic 信息，带上已配置的缓存名称
+//
+// 只报"没找到"帮助有限：名字写错和整个 XCache 没配是两个不同的问题，
+// 列出实际配了哪些，两者一眼可分。
+func noCacheMsg(name ...string) string {
+	want := "default"
+	if len(name) > 0 {
+		want = name[0]
 	}
 
-	n := ""
-	if len(name) > 0 {
-		n = name[0]
+	configured := cacheNames()
+	if len(configured) == 0 {
+		return fmt.Sprintf("XOne xcache: no cache found for name=[%s], no cache configured at all, check the XCache section of your config", want)
 	}
-	xlog.Error(context.Background(), "no cache found for name: %s, maybe config not assigned", n)
-	return nil
+	return fmt.Sprintf("XOne xcache: no cache found for name=[%s], configured=[%s]", want, strings.Join(configured, " "))
+}
+
+// cacheNames 返回已配置的缓存名称，不含内部默认别名
+func cacheNames() []string {
+	cacheMu.RLock()
+	defer cacheMu.RUnlock()
+
+	names := slices.Sorted(maps.Keys(cacheMap))
+	return slices.DeleteFunc(names, func(n string) bool { return n == defaultCacheName })
 }
 
 // global 获取全局缓存实例，如果没有配置的缓存则懒初始化一个默认缓存

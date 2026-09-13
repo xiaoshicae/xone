@@ -98,16 +98,33 @@ func TestGetDriver(t *testing.T) {
 
 func TestC(t *testing.T) {
 	PatchConvey("TestC", t, func() {
-		PatchConvey("NotFound", func() {
-			c.So(C(), c.ShouldBeNil)
-			c.So(C("x"), c.ShouldBeNil)
+		clientMap = make(map[string]*gorm.DB) // 全局 map，先清空，不依赖用例执行顺序
+
+		PatchConvey("NotFound-panic而不是返回nil", func() {
+			// 返回 nil 只是把同一个 panic 推迟到调用方第一次用它的时候，
+			// 那里的栈里只剩 "invalid memory address"，看不出根因是配置没配
+			c.So(func() { C() }, c.ShouldPanic)
+			c.So(func() { C("x") }, c.ShouldPanic)
+		})
+
+		PatchConvey("NotFound-panic信息带上已配置的名字", func() {
+			set("primary", &gorm.DB{})
+			set("replica", &gorm.DB{})
+
+			c.So(func() { C("typo") }, c.ShouldPanicWith,
+				"XOne xgorm: no client found for name=[typo], configured=[primary replica]")
+		})
+
+		PatchConvey("NotFound-一个都没配时说清楚", func() {
+			c.So(func() { C("any") }, c.ShouldPanicWith,
+				"XOne xgorm: no client found for name=[any], no client configured at all, check the XGorm section of your config")
 		})
 
 		PatchConvey("Found", func() {
 			dbX := &gorm.DB{}
 			set("x", dbX)
 
-			c.So(C(), c.ShouldBeNil) // 未设置 default
+			c.So(func() { C() }, c.ShouldPanic) // 未设置 default
 			c.So(C("x") == dbX, c.ShouldBeTrue)
 
 			dbY := &gorm.DB{}
@@ -120,12 +137,41 @@ func TestC(t *testing.T) {
 	})
 }
 
+func TestHas(t *testing.T) {
+	PatchConvey("TestHas", t, func() {
+		clientMap = make(map[string]*gorm.DB)
+
+		// 可选依赖用 Has 判断，不必用 C 去触发 panic
+		c.So(Has("x"), c.ShouldBeFalse)
+		c.So(Has(), c.ShouldBeFalse)
+
+		set("x", &gorm.DB{})
+		c.So(Has("x"), c.ShouldBeTrue)
+		c.So(Has(), c.ShouldBeFalse) // 未设置 default
+
+		setDefault(&gorm.DB{})
+		c.So(Has(), c.ShouldBeTrue)
+	})
+}
+
+func TestClientNames(t *testing.T) {
+	PatchConvey("TestClientNames", t, func() {
+		clientMap = make(map[string]*gorm.DB)
+
+		c.So(clientNames(), c.ShouldBeEmpty)
+
+		set("b", &gorm.DB{})
+		set("a", &gorm.DB{})
+		setDefault(&gorm.DB{}) // 内部别名不应出现在提示里
+
+		c.So(clientNames(), c.ShouldResemble, []string{"a", "b"})
+	})
+}
+
 func TestCWithCtx(t *testing.T) {
 	PatchConvey("TestCWithCtx", t, func() {
-		PatchConvey("NilClient", func() {
-			Mock(C).Return(nil).Build()
-			client := CWithCtx(context.Background())
-			c.So(client, c.ShouldBeNil)
+		PatchConvey("NoClient-透传 C 的 panic", func() {
+			c.So(func() { CWithCtx(context.Background()) }, c.ShouldPanic)
 		})
 
 		PatchConvey("WithClient", func() {

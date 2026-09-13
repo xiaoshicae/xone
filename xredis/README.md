@@ -117,5 +117,25 @@ XRedis:
 多实例配置下每个实例都会常驻这么多连接 —— 配了 10 个 Redis 就是 50 条常驻连接，
 实例多时按需调小。
 
-`C()` 在未配置或已关闭时返回 `nil` 并打一条 Error 日志。go-redis 的方法都是指针接收者，
-对 `nil` 调用会 panic，因此不要在启动完成前调用它。
+### `C()` 找不到 client 时 panic
+
+`C()` 取不到 client 就直接 panic，信息里带上你要的名字和实际配了哪些：
+
+```
+XOne xredis: no client found for name=[typo], configured=[primary replica]
+```
+
+之前是返回 `nil` 加一条 Error 日志。但 go-redis 的方法都是指针接收者，对 `nil` 调用必然
+空指针解引用 —— 返回 `nil` 并不会让程序走得更远，只是把同一个 panic 推迟到调用方第一次
+用它的时候，而那里的栈里只剩 `invalid memory address`，看不出根因是配置没配。
+这是启动期的配置问题，不是运行期需要处理的错误。
+
+可选依赖（配了就用、没配就跳过）用 `Has()` 先判断：
+
+```go
+if xredis.Has("cache") {
+    xredis.C("cache").Set(ctx, k, v, 0)
+}
+```
+
+注意 `C()` 仍然不要在启动完成前调用 —— 那时 client 尚未注册，会 panic。

@@ -129,6 +129,27 @@ masterDB := xgorm.C("master")
 slaveDB := xgorm.C("slave")
 ```
 
+### `C()` 找不到客户端时 panic
+
+`C()` / `CWithCtx()` 取不到客户端就直接 panic，信息里带上你要的名字和实际配了哪些：
+
+```
+XOne xgorm: no client found for name=[maste], configured=[master slave]
+```
+
+之前是返回 `nil` 加一条 Error 日志。但 `*gorm.DB` 的任何方法在 `nil` 上都是空指针解引用 ——
+返回 `nil` 并不会让程序走得更远，只是把同一个 panic 推迟到调用方第一次用它的时候，
+而那里的栈里只剩 `invalid memory address`，看不出根因是配置没配。
+这是启动期的配置问题，不是运行期需要处理的错误。
+
+可选依赖（配了就用、没配就跳过）用 `Has()` 先判断：
+
+```go
+if xgorm.Has("analytics") {
+    xgorm.CWithCtx(ctx, "analytics").Create(&record)
+}
+```
+
 ### 带 Context 的客户端（推荐）
 
 使用 `CWithCtx` 可以确保 context 中的链路追踪信息传递到数据库操作中：

@@ -98,7 +98,48 @@ func TestC(t *testing.T) {
 		clear(clientMap)
 		clientMu.Unlock()
 
-		c.So(C(), c.ShouldBeNil)
+		// 返回 nil 只是把同一个 panic 推迟到调用方第一次用它的时候，
+		// 那里的栈里只剩 "invalid memory address"，看不出根因是配置没配
+		c.So(func() { C() }, c.ShouldPanicWith,
+			"XOne xredis: no client found for name=[default], no client configured at all, check the XRedis section of your config")
+	})
+
+	mockey.PatchConvey("TestC-NotFound-带上已配置的名字", t, func() {
+		clientMu.Lock()
+		clear(clientMap)
+		clientMu.Unlock()
+
+		rdb := redis.NewClient(&redis.Options{Addr: "localhost:6379"})
+		defer rdb.Close()
+		set("primary", rdb)
+		set("replica", rdb)
+		defer func() {
+			clientMu.Lock()
+			clear(clientMap)
+			clientMu.Unlock()
+		}()
+
+		c.So(func() { C("typo") }, c.ShouldPanicWith,
+			"XOne xredis: no client found for name=[typo], configured=[primary replica]")
+	})
+
+	mockey.PatchConvey("TestC-Has", t, func() {
+		clientMu.Lock()
+		clear(clientMap)
+		clientMu.Unlock()
+
+		// 可选依赖用 Has 判断，不必用 C 去触发 panic
+		c.So(Has(), c.ShouldBeFalse)
+
+		rdb := redis.NewClient(&redis.Options{Addr: "localhost:6379"})
+		defer rdb.Close()
+		setDefault(rdb)
+		c.So(Has(), c.ShouldBeTrue)
+		c.So(Has("nope"), c.ShouldBeFalse)
+
+		clientMu.Lock()
+		clear(clientMap)
+		clientMu.Unlock()
 	})
 
 	mockey.PatchConvey("TestC-Found", t, func() {
@@ -120,7 +161,7 @@ func TestC(t *testing.T) {
 
 		set("cache", rdb)
 		c.So(C("cache") == rdb, c.ShouldBeTrue)
-		c.So(C("nonexistent"), c.ShouldBeNil)
+		c.So(func() { C("nonexistent") }, c.ShouldPanic)
 
 		// 清理
 		clientMu.Lock()

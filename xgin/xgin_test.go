@@ -223,7 +223,7 @@ func TestMethodNotAllowed(t *testing.T) {
 
 func TestStopWithoutRun(t *testing.T) {
 	g := New()
-	err := g.Stop()
+	err := g.stop()
 	// srv 为 nil 时应静默返回 nil，避免信号在 Run 赋值 srv 前到达时报错
 	if err != nil {
 		t.Fatalf("Stop() should return nil when server not started, got: %v", err)
@@ -297,14 +297,14 @@ func TestRunAndStop(t *testing.T) {
 		// 在 goroutine 中运行
 		errCh := make(chan error, 1)
 		go func() {
-			errCh <- g.Run()
+			errCh <- g.run()
 		}()
 
 		// 等待服务器启动
 		time.Sleep(100 * time.Millisecond)
 
 		// 停止服务器
-		err := g.Stop()
+		err := g.stop()
 		So(err, ShouldBeNil)
 
 		// 检查 Run 返回值
@@ -507,7 +507,7 @@ func TestRunWithHttp2(t *testing.T) {
 			options.EnableTraceMiddleware(false),
 		)
 
-		err := g.Run()
+		err := g.run()
 		So(err, ShouldNotBeNil)
 		So(err.Error(), ShouldContainSubstring, "for test")
 		// h2c 模式下 handler 被 h2c.NewHandler 包装，不再设置 engine.UseH2C
@@ -535,7 +535,7 @@ func TestRunWithTLS(t *testing.T) {
 			options.EnableTraceMiddleware(false),
 		)
 
-		err := g.Run()
+		err := g.run()
 		So(err, ShouldNotBeNil)
 		So(err.Error(), ShouldContainSubstring, "for test tls")
 	})
@@ -555,7 +555,7 @@ func TestRunWithServerClosed(t *testing.T) {
 			options.EnableTraceMiddleware(false),
 		)
 
-		err := g.Run()
+		err := g.run()
 		So(err, ShouldBeNil)
 	})
 }
@@ -836,7 +836,7 @@ func TestStopShutdownError(t *testing.T) {
 		g := New()
 		g.srv = &http.Server{}
 
-		err := g.Stop()
+		err := g.stop()
 		So(err, ShouldNotBeNil)
 		So(err.Error(), ShouldContainSubstring, "shutdown failed")
 	})
@@ -893,7 +893,7 @@ func TestRunAutoBuilds(t *testing.T) {
 		)
 		So(g.build, ShouldBeFalse)
 
-		err := g.Run()
+		err := g.run()
 		So(err, ShouldBeNil)
 		So(g.build, ShouldBeTrue)
 	})
@@ -920,7 +920,7 @@ func TestRunWithSwaggerInfo(t *testing.T) {
 		spec := &swag.Spec{InfoInstanceName: "test-run", SwaggerTemplate: "{}"}
 		g.WithSwagger(spec)
 
-		err := g.Run()
+		err := g.run()
 		So(err, ShouldBeNil)
 	})
 }
@@ -977,7 +977,7 @@ func TestRun_ConfigErrorFailFast(t *testing.T) {
 		Mock(getConfig).Return(nil, errors.New("unmarshal failed")).Build()
 
 		g := New(options.EnableLogMiddleware(false), options.EnableTraceMiddleware(false))
-		err := g.Run()
+		err := g.run()
 		So(err, ShouldNotBeNil)
 		So(err.Error(), ShouldContainSubstring, "unmarshal failed")
 		So(g.srv, ShouldBeNil)
@@ -1003,7 +1003,7 @@ func TestRun_ServerTimeouts(t *testing.T) {
 			Mock((*http.Server).ListenAndServe).Return(http.ErrServerClosed).Build()
 
 			g := New(options.EnableLogMiddleware(false), options.EnableTraceMiddleware(false))
-			So(g.Run(), ShouldBeNil)
+			So(g.run(), ShouldBeNil)
 			So(g.srv.ReadHeaderTimeout, ShouldEqual, 3*time.Second)
 			So(g.srv.ReadTimeout, ShouldEqual, 20*time.Second)
 			So(g.srv.WriteTimeout, ShouldEqual, 25*time.Second)
@@ -1041,8 +1041,8 @@ func TestStopBeforeRun(t *testing.T) {
 		Mock(getConfig).Return(&Config{Host: "127.0.0.1", Port: 0}, nil).Build()
 
 		g := New(options.EnableLogMiddleware(false), options.EnableTraceMiddleware(false))
-		So(g.Stop(), ShouldBeNil)
-		So(g.Run(), ShouldBeNil)
+		So(g.stop(), ShouldBeNil)
+		So(g.run(), ShouldBeNil)
 		So(listenCalled, ShouldBeFalse)
 		So(g.srv, ShouldBeNil)
 	})
@@ -1059,9 +1059,9 @@ func TestRun_Twice(t *testing.T) {
 		Mock((*http.Server).ListenAndServe).Return(http.ErrServerClosed).Build()
 
 		g := New(options.EnableLogMiddleware(false), options.EnableTraceMiddleware(false))
-		So(g.Run(), ShouldBeNil)
+		So(g.run(), ShouldBeNil)
 
-		err := g.Run()
+		err := g.run()
 		So(err, ShouldNotBeNil)
 		So(err.Error(), ShouldContainSubstring, "already running")
 	})
@@ -1105,7 +1105,7 @@ func TestRun_TLSConfigIncomplete(t *testing.T) {
 		PatchConvey("只配 CertFile", func() {
 			Mock(getConfig).Return(&Config{Host: "127.0.0.1", Port: 0, CertFile: "/path/cert.pem"}, nil).Build()
 			g := New(options.EnableLogMiddleware(false), options.EnableTraceMiddleware(false))
-			err := g.Run()
+			err := g.run()
 			So(err, ShouldNotBeNil)
 			So(err.Error(), ShouldContainSubstring, "TLS config incomplete")
 			So(g.srv, ShouldBeNil)
@@ -1114,7 +1114,7 @@ func TestRun_TLSConfigIncomplete(t *testing.T) {
 		PatchConvey("只配 KeyFile", func() {
 			Mock(getConfig).Return(&Config{Host: "127.0.0.1", Port: 0, KeyFile: "/path/key.pem"}, nil).Build()
 			g := New(options.EnableLogMiddleware(false), options.EnableTraceMiddleware(false))
-			err := g.Run()
+			err := g.run()
 			So(err, ShouldNotBeNil)
 			So(err.Error(), ShouldContainSubstring, "TLS config incomplete")
 		})
@@ -1141,11 +1141,36 @@ func TestRun_RequiresBeforeStartHooks(t *testing.T) {
 			options.EnableLogMiddleware(false),
 			options.EnableTraceMiddleware(false),
 		)
-		err := g.Run()
+		err := g.run()
 
 		So(err, ShouldNotBeNil)
 		So(err.Error(), ShouldContainSubstring, "BeforeStart")
 		So(err.Error(), ShouldContainSubstring, "Start()")
 		So(listenCalled, ShouldBeFalse) // 关键：没有真的去监听端口
+	})
+}
+
+// TestGinServerAdapter ginServer 把 XGin 适配为 xserver.Server
+//
+// Run/Stop 不再挂在 XGin 上，正是为了让「跳过初始化直接起服务」不再是
+// 一次方法调用的距离；这里验证适配器确实转发到内部实现
+func TestGinServerAdapter(t *testing.T) {
+	PatchConvey("TestGinServerAdapter", t, func() {
+		Mock(xhook.BeforeStartInvoked).Return(true).Build()
+		Mock(getConfig).Return(&Config{Host: "127.0.0.1", Port: 0}, nil).Build()
+		Mock((*http.Server).ListenAndServe).Return(http.ErrServerClosed).Build()
+		Mock((*http.Server).Shutdown).Return(nil).Build()
+
+		g := New(
+			options.EnableLogMiddleware(false),
+			options.EnableTraceMiddleware(false),
+		)
+		s := &ginServer{g: g}
+
+		// 实现了 xserver.Server 接口
+		var _ xserver.Server = s
+
+		So(s.Run(), ShouldBeNil)
+		So(s.Stop(), ShouldBeNil)
 	})
 }

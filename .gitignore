@@ -20,5 +20,9 @@ cover.html
 # cov
 coverage.out
 
+# go test 编译产物（go test -c / 中断的测试运行会留下 <pkg>.test）
+*.test
+*.prof
+
 # claude local
 .claude/CLAUDE.local.md

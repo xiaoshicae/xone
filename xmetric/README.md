@@ -10,7 +10,7 @@ XMetric:
   ConstLabels:                    # 全局常量标签，自动附加到所有指标上（可选）
     env: "prod"
     cluster: "cn-east"
-  HttpDurationBuckets: [...]      # HTTP 入站/出站请求耗时桶边界（ms），默认 [1,5,10,25,50,100,250,500,1000,2500,5000,10000]
+  HttpDurationBuckets: [...]      # HTTP 入站/出站请求耗时桶边界（秒），默认 [0.001,0.005,0.01,0.025,0.05,0.1,0.25,0.5,1,2.5,5,10]
   HistogramObserveBuckets: [...]  # HistogramObserve() API 业务指标桶边界（秒），默认 prometheus.DefBuckets
   EnableGoMetrics: true           # Go runtime 指标，默认 true
   EnableProcessMetrics: true      # 进程指标，默认 true
@@ -26,6 +26,7 @@ XMetric:
 | 一共发生了多少次 | **Counter** | `CounterInc` |
 | 一共累计了多少量 | **Counter** | `CounterAdd` |
 | 当前值是多少 | **Gauge** | `GaugeSet` / `GaugeInc` / `GaugeDec` |
+| **当前有多少个正在进行中** | **Gauge** | **`TrackInFlight`** |
 | **某件事花了多久** | **Histogram** | **`ObserveDuration` / `Timer`** |
 | 其它数值的分布、要算 P99 | **Histogram** | `HistogramObserve` |
 
@@ -46,9 +47,8 @@ defer xmetric.Timer("handle_order")()
 两者都会自动给指标名补上 `_seconds` 后缀，并按秒记录 —— 和默认桶
 （`prometheus.DefBuckets`，覆盖 5ms ~ 10s）对齐。
 
-> ⚠️ **直接用 `HistogramObserve` 记耗时时要注意单位。** 它的默认桶单位是**秒**，
-> 而 `HttpDurationBuckets`（HTTP 入站/出站指标）的单位是**毫秒** —— 这两个配置
-> 单位不同。若按毫秒往 `HistogramObserve` 传值：
+> ⚠️ **直接用 `HistogramObserve` 记耗时时要注意单位。** 它的默认桶（`prometheus.DefBuckets`）
+> 覆盖 5ms ~ 10s，单位是**秒**。若按毫秒传值：
 >
 > ```go
 > xmetric.HistogramObserve("api_latency", 250)  // 以为是 250ms，实际被当成 250s
@@ -65,6 +65,19 @@ defer func() {
     xmetric.ObserveDuration("handle_order", time.Since(start), xmetric.T("status", status))
 }()
 ```
+
+### 进行中数量：用 TrackInFlight，别手动配对 Inc/Dec
+
+```go
+func HandleOrder(c *gin.Context) {
+    defer xmetric.TrackInFlight("active_requests", xmetric.T("api", "/order"))()
+    // ...
+}
+```
+
+`GaugeInc` / `GaugeDec` 必须成对出现，而早返回和 panic 路径上极容易漏掉 Dec ——
+**漏一次计数就永久偏高，而且不会有任何报错**。交给 `defer` 才是天然正确的。
+返回的函数重复调用只有首次生效，不会把计数减穿。
 
 ### Counter — 累计计数，只增不减
 
@@ -135,10 +148,10 @@ xmetric.GaugeDec("ws_connections", xmetric.T("app", "chat"))   // 断开连接
 | 数据大小 | 请求体大小、响应体大小 |
 
 ```go
-// 接口耗时（毫秒）
-xmetric.HistogramObserve("db_query_duration_ms", 12.5, xmetric.T("table", "orders"))
-xmetric.HistogramObserve("redis_call_duration_ms", 0.8, xmetric.T("cmd", "GET"))
-xmetric.HistogramObserve("third_api_duration_ms", 230, xmetric.T("api", "sms"))
+// 接口耗时：优先用 ObserveDuration，单位与类型都不用自己定
+xmetric.ObserveDuration("db_query", time.Since(start), xmetric.T("table", "orders"))
+xmetric.ObserveDuration("redis_call", time.Since(start), xmetric.T("cmd", "GET"))
+xmetric.ObserveDuration("third_api", time.Since(start), xmetric.T("api", "sms"))
 
 // 数据大小（字节）
 xmetric.HistogramObserve("response_size_bytes", 4096, xmetric.T("endpoint", "/api/users"))
@@ -146,8 +159,8 @@ xmetric.HistogramObserve("response_size_bytes", 4096, xmetric.T("endpoint", "/ap
 
 常用 PromQL：
 ```promql
-histogram_quantile(0.99, rate(myapp_db_query_duration_ms_bucket[5m]))   # P99 延迟
-histogram_quantile(0.50, rate(myapp_redis_call_duration_ms_bucket[5m])) # P50 中位数
+histogram_quantile(0.99, rate(myapp_db_query_seconds_bucket[5m]))   # P99 延迟
+histogram_quantile(0.50, rate(myapp_redis_call_seconds_bucket[5m])) # P50 中位数
 ```
 
 ## 指标命名约定
@@ -158,6 +171,7 @@ Prometheus 约定指标名自带单位与语义，Grafana 面板和告警规则�
 |------|------|------|
 | 累计计数 | `_total` | `order_created_total`、`payment_failed_total` |
 | 耗时（秒） | `_seconds` | `db_query_seconds`（`ObserveDuration` 自动补） |
+| | | 框架自带的 HTTP 指标同样以秒记录：`http_request_duration_seconds` |
 | 字节数 | `_bytes` | `response_size_bytes` |
 | 当前数量 | 无后缀 | `ws_connections`、`queue_pending` |
 
@@ -218,7 +232,7 @@ gx := xgin.New(options.EnableMetricMiddleware(false)).Build()
 
 采集指标：
 - `http_requests_total{method, path, status}` — 请求数量
-- `http_request_duration_ms{method, path, status}` — 请求耗时（毫秒）
+- `http_request_duration_seconds{method, path, status}` — 请求耗时（秒）
 
 ## HTTP 出站请求指标
 
@@ -226,7 +240,7 @@ xhttp 模块默认启用出站请求 Prometheus 指标采集，自动记录所�
 
 采集指标：
 - `http_client_requests_total{method, host, status}` — 出站请求总数
-- `http_client_request_duration_ms{method, host, status}` — 出站请求耗时（毫秒）
+- `http_client_request_duration_seconds{method, host, status}` — 出站请求耗时（秒）
 
 标签说明：
 - `method` — HTTP 方法（GET、POST 等）
@@ -245,7 +259,7 @@ XHttp:
 ```promql
 rate(myapp_http_client_requests_total[5m])                              # 出站请求速率
 rate(myapp_http_client_requests_total{status=~"5.."}[5m])               # 5xx 错误速率
-histogram_quantile(0.99, rate(myapp_http_client_request_duration_ms_bucket[5m]))  # P99 耗时
+histogram_quantile(0.99, rate(myapp_http_client_request_duration_seconds_bucket[5m]))  # P99 耗时
 ```
 
 ## 自定义指标注册

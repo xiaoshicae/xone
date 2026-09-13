@@ -126,7 +126,7 @@ func TestGinXMetricMiddleware_RecordsMetrics(t *testing.T) {
 		}
 
 		// 验证 histogram（共 3 次请求）
-		histFamily := findFamily(metrics, "http_request_duration_ms")
+		histFamily := findFamily(metrics, "http_request_duration_seconds")
 		So(histFamily, ShouldNotBeNil)
 		var totalCount uint64
 		for _, m := range histFamily.Metric {
@@ -251,7 +251,7 @@ func TestGinXMetricMiddleware_WithNamespace(t *testing.T) {
 		counterFamily := findFamily(metrics, "myapp_http_requests_total")
 		So(counterFamily, ShouldNotBeNil)
 
-		histFamily := findFamily(metrics, "myapp_http_request_duration_ms")
+		histFamily := findFamily(metrics, "myapp_http_request_duration_seconds")
 		So(histFamily, ShouldNotBeNil)
 	})
 }
@@ -296,7 +296,7 @@ func TestGinXMetricMiddleware_PathTemplate(t *testing.T) {
 
 func TestGinXMetricMiddleware_DurationBuckets(t *testing.T) {
 	PatchConvey("TestGinXMetricMiddleware-耗时桶边界正确", t, func() {
-		expected := []float64{1, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000}
+		expected := []float64{0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10}
 		So(xmetric.GetHttpDurationBuckets(), ShouldResemble, expected)
 	})
 }

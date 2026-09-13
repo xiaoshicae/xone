@@ -102,7 +102,7 @@ func main() {
 默认启用 Prometheus 出站请求指标采集（需配合 xmetric 模块），自动记录所有 HTTP 客户端请求：
 
 - `http_client_requests_total{method, host, status}` — 请求总数
-- `http_client_request_duration_ms{method, host, status}` — 请求耗时（毫秒）
+- `http_client_request_duration_seconds{method, host, status}` — 请求耗时（秒）
 
 关闭方式：
 

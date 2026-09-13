@@ -31,8 +31,8 @@ func initMetricCollectors() {
 
 		histogram := prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Namespace:   ns,
-			Name:        "http_request_duration_ms",
-			Help:        "HTTP 请求耗时分布（毫秒）",
+			Name:        "http_request_duration_seconds",
+			Help:        "HTTP 请求耗时分布（秒）",
 			Buckets:     xmetric.GetHttpDurationBuckets(),
 			ConstLabels: cl,
 		}, []string{"method", "path", "status"})
@@ -49,7 +49,7 @@ func initMetricCollectors() {
 }
 
 // GinXMetricMiddleware 返回 Gin HTTP 请求指标中间件
-// 采集指标：http_requests_total（请求数量+状态码）、http_request_duration_ms（请求耗时+状态码）
+// 采集指标：http_requests_total（请求数量+状态码）、http_request_duration_seconds（请求耗时+状态码）
 func GinXMetricMiddleware() gin.HandlerFunc {
 	initMetricCollectors()
 
@@ -64,9 +64,8 @@ func GinXMetricMiddleware() gin.HandlerFunc {
 			path = "unknown"
 		}
 		method := c.Request.Method
-		durationMs := float64(time.Since(start).Milliseconds())
-
 		requestsTotal.WithLabelValues(method, path, status).Inc()
-		requestDuration.WithLabelValues(method, path, status).Observe(durationMs)
+		// 用 Seconds() 而非 Milliseconds()：后者是整数截断，0.4ms 的请求会被记成 0
+		requestDuration.WithLabelValues(method, path, status).Observe(time.Since(start).Seconds())
 	}
 }

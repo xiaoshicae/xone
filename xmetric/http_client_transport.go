@@ -20,7 +20,7 @@ var httpClientLabels = []string{"method", "host", "status"}
 func httpClientCollectors() (*prometheus.CounterVec, *prometheus.HistogramVec) {
 	const (
 		counterName   = "http_client_requests_total"
-		histogramName = "http_client_request_duration_ms"
+		histogramName = "http_client_request_duration_seconds"
 	)
 
 	counter := getOrCreateCollector(buildCacheKey(kindCounter, counterName, httpClientLabels), counterName,
@@ -38,7 +38,7 @@ func httpClientCollectors() (*prometheus.CounterVec, *prometheus.HistogramVec) {
 			return prometheus.NewHistogramVec(prometheus.HistogramOpts{
 				Namespace:   getNamespace(),
 				Name:        histogramName,
-				Help:        "HTTP 出站请求耗时分布（毫秒）",
+				Help:        "HTTP 出站请求耗时分布（秒）",
 				Buckets:     getHttpDurationBuckets(),
 				ConstLabels: getConstLabels(),
 			}, httpClientLabels)
@@ -70,15 +70,17 @@ func (t *HTTPClientMetricTransport) RoundTrip(req *http.Request) (*http.Response
 	if resp != nil {
 		status = strconv.Itoa(resp.StatusCode)
 	}
-	durationMs := float64(time.Since(start).Milliseconds())
-	RecordHTTPClientMetric(req.Method, req.URL.Host, status, durationMs, req)
+	RecordHTTPClientMetric(req.Method, req.URL.Host, status, time.Since(start), req)
 
 	return resp, err
 }
 
 // RecordHTTPClientMetric 记录 HTTP 出站请求指标
-// 调用方决定记录时机（如 Resty OnSuccess/OnError 只记录最终结果）
-func RecordHTTPClientMetric(method, host, status string, durationMs float64, req *http.Request) {
+//
+// 调用方决定记录时机（如 Resty OnSuccess/OnError 只记录最终结果）。
+// 入参是 time.Duration 而非数值：由本函数统一换算成秒，调用方不必关心单位，
+// 也避免了 .Milliseconds() 那样的整数截断——0.4ms 的请求会被记成 0。
+func RecordHTTPClientMetric(method, host, status string, duration time.Duration, req *http.Request) {
 	counterVec, histogramVec := httpClientCollectors()
 
 	var exemplar prometheus.Labels
@@ -89,7 +91,7 @@ func RecordHTTPClientMetric(method, host, status string, durationMs float64, req
 	histogram := histogramVec.WithLabelValues(method, host, status)
 
 	addWithExemplar(counter, exemplar)
-	observeWithExemplar(histogram, durationMs, exemplar)
+	observeWithExemplar(histogram, duration.Seconds(), exemplar)
 }
 
 // addWithExemplar 计数 +1，可用时附带 exemplar

@@ -293,7 +293,13 @@ xmetric.CounterInc("order_created_total", xmetric.T("channel", "wechat"))
 xmetric.GaugeSet("ws_connections", 42, xmetric.T("app", "chat"))
 
 // Histogram 分布
-xmetric.HistogramObserve("db_query_duration_ms", 12.5, xmetric.T("table", "orders"))
+xmetric.HistogramObserve("payload_size_bytes", 1024, xmetric.T("api", "upload"))
+
+// 耗时观测（自动补 _seconds 后缀，按秒记录）
+xmetric.ObserveDuration("db_query_duration", elapsed, xmetric.T("table", "orders"))
+
+// 并发数追踪（Gauge 自增，返回的函数自减）
+defer xmetric.TrackInFlight("http_requests_in_flight", xmetric.T("api", "users"))()
 
 // /metrics 端点由 xgin 自动注册（默认路径 /metrics，可通过 options.MetricsPath 自定义）
 ```
@@ -441,19 +447,19 @@ XMetric:
   Namespace: "myapp"             # 指标命名空间前缀
   ConstLabels:                   # 全局常量标签（区分环境等）
     env: "prod"
-  HttpDurationBuckets:           # HTTP 入站/出站请求耗时桶边界（毫秒，默认 [1,5,10,25,50,100,250,500,1000,2500,5000,10000]）
+  HttpDurationBuckets:           # HTTP 入站/出站请求耗时桶边界（秒，默认 [0.001,0.005,0.01,0.025,0.05,0.1,0.25,0.5,1,2.5,5,10]）
+    - 0.001
+    - 0.005
+    - 0.01
+    - 0.025
+    - 0.05
+    - 0.1
+    - 0.25
+    - 0.5
     - 1
+    - 2.5
     - 5
     - 10
-    - 25
-    - 50
-    - 100
-    - 250
-    - 500
-    - 1000
-    - 2500
-    - 5000
-    - 10000
   HistogramObserveBuckets:       # HistogramObserve() 业务指标桶边界（秒，默认 prometheus.DefBuckets）
     - 0.005
     - 0.01
@@ -486,6 +492,7 @@ XGorm:
 
 ## 更新日志
 
+- **v2.24.0** (2026-09-13) - refactor(xmetric)!: put every duration metric on seconds, so the framework no longer contradicts its own advice. v2.23.0 added ObserveDuration precisely because HistogramObserve's second-based buckets made millisecond values useless, yet the two metrics the framework itself exports, http_request_duration_ms and http_client_request_duration_ms, were still milliseconds — a service scraping both got one histogram in seconds and one in milliseconds with no way to tell from the name which was which, and Prometheus' own convention is base units. They become http_request_duration_seconds and http_client_request_duration_seconds, and XMetric.HttpDurationBuckets defaults drop by a factor of 1000. The conversion also fixes a real loss of precision: the inbound middleware and RecordHTTPClientMetric took a float64 of milliseconds produced by Duration.Milliseconds(), which truncates, so every request faster than 1ms was recorded as exactly 0 and the first three buckets were unreachable; RecordHTTPClientMetric now takes a time.Duration and converts once, at the histogram. Add TrackInFlight, which increments a gauge and returns the decrement as a function: GaugeInc and GaugeDec have to be paired by hand across early returns and panic paths, and a single missed Dec leaves the gauge permanently high with nothing to indicate it, whereas defer TrackInFlight(name)() cannot be unpaired and the returned function is idempotent (BREAKING: both HTTP duration metrics are renamed and now report seconds — existing Grafana dashboards, recording rules and alert thresholds built on the _ms names must be updated; HttpDurationBuckets values configured in YAML must be divided by 1000; RecordHTTPClientMetric takes a time.Duration instead of a float64 of milliseconds)
 - **v2.23.0** (2026-09-13) - fix(xutil)!: the concurrency primitives in the base layer could take the process down three ways. Submitting to a pool while another goroutine shut it down panicked with "send on closed channel" — the close landed between Submit's context check and its send, and a send on a closed channel is ready in a select rather than skipped; sending and closing are now mutually exclusive under an RWMutex, and Submit reports whether the task was accepted. A panic inside Async, Go or any submitted task killed the process and the worker with it, while xflow, xhook, xlog and xmetric all isolate theirs; panics now become errors on the Future, or a log line for fire-and-forget tasks. And Go on a closed pool returned a Future whose channel was never closed, so every Get on it blocked forever — it completes with ErrPoolClosed instead. The default pool is now created on first use: importing xutil, which every module does, started 100 worker goroutines in every service whether or not it ever submitted anything. RetryWithBackoff doubled its delay before clamping it, so an int64 nanosecond overflow after about twenty doublings turned it negative and disabled backoff entirely; add RetryWithContext and RetryWithBackoffContext so an initialization retry cannot hold shutdown for attempts×sleep. Also stop matching an argument's value as if it were a key in GetConfigFromArgs, and replace the last fmt.Errorf calls with xerror (BREAKING: Submit returns bool; Future gains GetWithContext)
 - **v2.22.0** (2026-09-13) - fix(xmetric): a metric name registered twice under different types silently stopped being exported — the second collector failed its type assertion, stayed out of the registry, and went on accepting values nothing would ever scrape, without a word in the logs; the conflict is now reported. GetConfig and GetHttpDurationBuckets handed out the module's own config pointer and backing array, so any caller could corrupt global state by writing to what it received, and now return copies. Re-initialization panicked outright on MustRegister for the Go and process collectors, and when it did not, the collector cache and the outbound-HTTP sync.Once kept the first Namespace and buckets forever; registration is safe now and closing clears the cache. Add ObserveDuration and Timer, which take a time.Duration and settle both the type and the unit: HistogramObserve defaults to second-based buckets while the HTTP metrics are milliseconds, so timing values passed as milliseconds landed entirely in the +Inf bucket and quantiles were quietly useless. Also fold the three near-identical getOrCreate functions into one generic, log rather than swallow a rejected exemplar, and give the README a decision table, naming conventions and the unit warning
 - **v2.21.0** (2026-09-13) - refactor(xflow)!: collapse Flow[Req, Resp] to Flow[T] and fix four defects the old shape hid. Every processor method had to repeat *xflow.FlowData[OrderReq, OrderResp]; one type parameter holding the caller's own struct leaves only business types in those signatures, and deletes FlowData, Key, NewKey, SetExtra and GetExtra along with their runtime type assertions — intermediate data is now a plain field, checked at compile time. Rollback ran on the caller's context, so a request timeout meant every compensation was rejected the moment it started and the resources it was meant to release leaked; it now runs on context.WithoutCancel bounded by a new XFlow.RollbackTimeout, and processors left uncompensated when that budget runs out are reported individually. A nil processor crashed with a bare nil dereference at execution time because Name() sat outside the recover, and now panics at New; a panicking Monitor took the whole flow down with it and is now isolated like xlog's observers; and a canceled context no longer runs the remaining processors. Configuration moves from a sync.Once read — which froze whatever it saw, so a setting loaded later never took effect — to a BeforeStart hook, with DisableMonitor replaced by EnableMonitor (BREAKING: Req/Resp merge into one struct, the extra-data API is gone, ExecuteResult is no longer generic, and XFlow.DisableMonitor becomes XFlow.EnableMonitor)

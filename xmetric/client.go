@@ -91,7 +91,7 @@ func getConstLabels() prometheus.Labels {
 	return result
 }
 
-// GetHttpDurationBuckets 获取 HTTP 请求耗时桶边界（毫秒），供 xgin middleware 等外部包使用
+// GetHttpDurationBuckets 获取 HTTP 请求耗时桶边界（秒），供 xgin middleware 等外部包使用
 //
 // 返回副本：调用方直接把它交给 prometheus.HistogramOpts，
 // 若返回内部切片，任何越界写入都会污染全局配置。

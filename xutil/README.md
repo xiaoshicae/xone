@@ -1,6 +1,6 @@
 # xutil
 
-工具函数包，提供通用工具函数、异步任务（Future）和任务池（Pool）。
+工具函数包，提供通用工具函数、异步任务（Future）、任务池（Pool）和重试（Retry）。
 
 > **零第三方依赖**：本包只用标准库。它几乎会被所有模块编进去，任何第三方依赖都会
 > 转嫁给全部使用者，因此需要上层能力时一律走扩展点注入，见下方「链路标识」。
@@ -118,8 +118,9 @@ for _, f := range futures {
 
 | 方法 | 说明 |
 |------|------|
-| `Async(fn) *Future[T]` | 启动异步任务 |
+| `Async(fn) *Future[T]` | 启动异步任务；任务中的 panic 会转成 error 由 `Get` 返回 |
 | `Get() (T, error)` | 阻塞等待结果 |
+| `GetWithContext(ctx) (T, error)` | 等待结果，ctx 结束时返回 `ctx.Err()` |
 | `GetWithTimeout(d) (T, error)` | 超时等待，超时返回 `context.DeadlineExceeded` |
 | `IsDone() bool` | 非阻塞检查是否完成 |
 
@@ -127,11 +128,29 @@ for _, f := range futures {
 
 | 方法 | 说明 |
 |------|------|
-| `Submit(fn)` | 向全局任务池提交任务 |
+| `Submit(fn) bool` | 向全局任务池提交任务，返回是否提交成功 |
 | `NewPool(n) *Pool` | 创建 n 个 worker 的自定义任务池 |
-| `pool.Submit(fn)` | 向自定义任务池提交任务 |
-| `Go[T](pool, fn) *Future[T]` | 提交任务，返回 Future |
-| `pool.Shutdown()` | 优雅关闭，等待所有任务完成 |
+| `pool.Submit(fn) bool` | 向自定义任务池提交任务；任务为 nil 或池已关闭时返回 false |
+| `Go[T](pool, fn) *Future[T]` | 提交任务，返回 Future；池已关闭时立即以 `ErrPoolClosed` 完成 |
+| `pool.Shutdown()` | 优雅关闭，等待所有任务完成，多次调用安全 |
+
+关于任务池的三条保证：
+
+- **任务里的 panic 被隔离**：转成日志记录，既不崩进程，也不会杀死 worker
+- **并发 Submit 与 Shutdown 是安全的**：发送与关闭互斥，不会出现 send on closed channel
+- **全局池是惰性创建的**：只 import xutil 而不调用 `Submit` 时不会启动任何 worker goroutine
+
+### Retry
+
+| 方法 | 说明 |
+|------|------|
+| `Retry(fn, attempts, sleep)` | 固定间隔重试 |
+| `RetryWithContext(ctx, fn, attempts, sleep)` | 可取消版本，ctx 结束时立即停止 |
+| `RetryWithBackoff(fn, attempts, initial, max)` | 指数退避重试 |
+| `RetryWithBackoffContext(ctx, fn, attempts, initial, max)` | 可取消的指数退避 |
+
+重试常出现在初始化路径上，`attempts × sleep` 可能长达数十秒。服务关闭时不该被它硬拖住，
+因此涉及外部依赖的重试建议用带 ctx 的版本。
 
 ## 链路标识
 

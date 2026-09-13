@@ -109,6 +109,7 @@ func (r *CallerResolver) Caller(callDepth int) *runtime.Frame {
 		return nil
 	}
 
+	// depth > 0 保证循环至少执行一次，last 必然被赋值
 	var last *callerCacheEntry
 	for i := 0; i < depth; i++ {
 		entry := r.entryFor(pcs[i])
@@ -117,10 +118,7 @@ func (r *CallerResolver) Caller(callDepth int) *runtime.Frame {
 		}
 		last = entry
 	}
-
-	if last == nil {
-		return nil
-	}
+	// 全部栈帧都被忽略，返回最后一帧兜底，避免调用方拿到 nil
 	return &runtime.Frame{File: last.file, Line: last.line}
 }
 

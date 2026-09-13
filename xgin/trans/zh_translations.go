@@ -17,7 +17,7 @@ func RegisterZHTranslations() error {
 	transMu.Lock()
 	defer transMu.Unlock()
 
-	// 已注册成功，直接返回
+	// 已注册成功，直接返回（持写锁读取，与 getTrans 的读锁互斥）
 	if trans != nil {
 		return nil
 	}

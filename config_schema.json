@@ -52,6 +52,26 @@
           "type": "string",
           "description": "TLS 私钥路径，需与 CertFile 同时配置"
         },
+        "ReadHeaderTimeout": {
+          "type": "string",
+          "description": "读取请求头的超时时间，默认 10s。不设置则慢客户端可以一直占着连接不放"
+        },
+        "ReadTimeout": {
+          "type": "string",
+          "description": "读取整个请求（含 body）的超时时间，默认不限制。限制它会打断大文件上传等长时间请求"
+        },
+        "WriteTimeout": {
+          "type": "string",
+          "description": "写响应的超时时间，默认不限制。限制它会打断 SSE、长轮询、大文件下载"
+        },
+        "IdleTimeout": {
+          "type": "string",
+          "description": "keep-alive 连接的空闲超时时间，默认 60s"
+        },
+        "GracefulStopTimeout": {
+          "type": "string",
+          "description": "优雅退出超时，默认 25s。应小于部署环境的进程终止宽限期（如 K8s terminationGracePeriodSeconds）"
+        },
         "Swagger": {
           "type": "object",
           "description": "swagger相关配置",

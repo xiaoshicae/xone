@@ -3,6 +3,7 @@ package xserver
 import (
 	"errors"
 	"os"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -244,5 +245,114 @@ func TestBlockingServerStopBeforeRun(t *testing.T) {
 		case <-time.After(time.Second):
 			t.Fatal("Run did not complete after Stop")
 		}
+	})
+}
+
+// ==================== 启动失败回滚 / Run 返回后调用 Stop ====================
+
+// stopRecordServer 记录 Stop 是否被调用，以及被调用的次数
+type stopRecordServer struct {
+	runErr    error
+	stopTimes int32
+	quit      chan struct{}
+}
+
+func (s *stopRecordServer) Run() error {
+	if s.quit != nil {
+		<-s.quit
+	}
+	return s.runErr
+}
+
+func (s *stopRecordServer) Stop() error {
+	atomic.AddInt32(&s.stopTimes, 1)
+	if s.quit != nil {
+		close(s.quit)
+	}
+	return nil
+}
+
+func TestRunInternal_StartHookFailRollback(t *testing.T) {
+	PatchConvey("TestRunInternal-StartHookFailRollback", t, func() {
+		PatchConvey("BeforeStart 失败时执行 BeforeStop 回滚", func() {
+			// hook 正序执行，失败点之前的模块都已初始化完成，不回滚它们就不会被关闭
+			stopCalled := false
+			Mock(xhook.InvokeBeforeStartHook).Return(errors.New("hook failed")).Build()
+			Mock(xhook.InvokeBeforeStopHook).To(func() error {
+				stopCalled = true
+				return nil
+			}).Build()
+
+			err := run(normalServer{})
+			So(err, ShouldNotBeNil)
+			So(err.Error(), ShouldContainSubstring, "hook failed")
+			So(stopCalled, ShouldBeTrue)
+		})
+
+		PatchConvey("回滚本身出错时两个错误都返回", func() {
+			Mock(xutil.ErrorIfEnableDebug).Return().Build()
+			Mock(xhook.InvokeBeforeStartHook).Return(errors.New("start failed")).Build()
+			Mock(xhook.InvokeBeforeStopHook).Return(errors.New("rollback failed")).Build()
+
+			err := run(normalServer{})
+			So(err, ShouldNotBeNil)
+			So(err.Error(), ShouldContainSubstring, "start failed")
+			So(err.Error(), ShouldContainSubstring, "rollback failed")
+		})
+	})
+}
+
+func TestRunWithServer_RunReturnInvokesStop(t *testing.T) {
+	PatchConvey("TestRunWithServer-RunReturnInvokesStop", t, func() {
+		PatchConvey("Run 正常返回也调用 Stop", func() {
+			// Server 接口约定清理逻辑放在 Stop 中，只在收到退出信号时才调用，
+			// 会让端口占用等场景下用户的清理逻辑永远不执行
+			Mock(xutil.InfoIfEnableDebug).Return().Build()
+			s := &stopRecordServer{}
+			So(runWithServer(s), ShouldBeNil)
+			So(atomic.LoadInt32(&s.stopTimes), ShouldEqual, 1)
+		})
+
+		PatchConvey("Run 报错时也调用 Stop", func() {
+			s := &stopRecordServer{runErr: errors.New("bind failed")}
+			err := runWithServer(s)
+			So(err, ShouldNotBeNil)
+			So(err.Error(), ShouldContainSubstring, "bind failed")
+			So(atomic.LoadInt32(&s.stopTimes), ShouldEqual, 1)
+		})
+
+		PatchConvey("退出信号触发的 Stop 只执行一次", func() {
+			// 信号触发 Stop，Stop 让 Run 返回，Run 返回不应再触发第二次 Stop
+			MockValue(&quitSignals).To([]os.Signal{syscall.SIGUSR1})
+			Mock(xutil.InfoIfEnableDebug).Return().Build()
+
+			s := &stopRecordServer{quit: make(chan struct{})}
+			go func() {
+				time.Sleep(50 * time.Millisecond)
+				_ = syscall.Kill(syscall.Getpid(), syscall.SIGUSR1)
+			}()
+
+			So(runWithServer(s), ShouldBeNil)
+			So(atomic.LoadInt32(&s.stopTimes), ShouldEqual, 1)
+		})
+	})
+}
+
+func TestWaitRunExitTimeout(t *testing.T) {
+	PatchConvey("TestWaitRunExitTimeout", t, func() {
+		origin := getWaitRunExitTimeout()
+		defer SetWaitRunExitTimeout(origin)
+
+		PatchConvey("正数生效", func() {
+			SetWaitRunExitTimeout(5 * time.Second)
+			So(getWaitRunExitTimeout(), ShouldEqual, 5*time.Second)
+		})
+
+		PatchConvey("非正数忽略", func() {
+			SetWaitRunExitTimeout(7 * time.Second)
+			SetWaitRunExitTimeout(0)
+			SetWaitRunExitTimeout(-1)
+			So(getWaitRunExitTimeout(), ShouldEqual, 7*time.Second)
+		})
 	})
 }

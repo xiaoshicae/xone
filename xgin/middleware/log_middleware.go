@@ -201,44 +201,48 @@ func LogMiddleware(opts ...LogOption) gin.HandlerFunc {
 		rbw.captureBody = true
 		c.Writer = rbw
 
+		// 用 defer 收尾：即使 panic 穿过本中间件（如用户自定义的 RecoveryFunc 自身
+		// panic），访问日志仍会写出，c.Writer 也一定会被还原、rbw 一定会归还 pool
+		defer func() {
+			elapsed := time.Since(begin)
+
+			// 如果 body 未预读，则从读取过程中捕获的 buffer 获取（拷贝一份，避免引用被后续修改）
+			if bodyBytes == nil && bodyBuf != nil {
+				bodyBytes = append([]byte(nil), bodyBuf.Bytes()...)
+			}
+
+			requestInfo := ParseRequestInfoWithBody(c.Request, bodyBytes)
+			requestInfo["process_latency"] = elapsed.Milliseconds()
+			requestInfo["process_latency_human"] = formatElapsed(elapsed)
+			requestInfo["response_header"] = ToJsonString(filterSensitiveHeaders(c.Writer.Header()))
+			requestInfo["response_status"] = c.Writer.Status()
+
+			// 捕获响应 body（仅文本类型且 <= 4KB）
+			respContentType := c.Writer.Header().Get("Content-Type")
+			if isTextContentType(respContentType) && rbw.body.Len() > 0 && rbw.body.Len() <= maxResponseBodyCapture {
+				requestInfo["response_body"] = rbw.body.String()
+			}
+
+			// 恢复原始 writer（防止外层中间件访问已归还的 rbw），然后归还 pool
+			c.Writer = origWriter
+			rbw.ResponseWriter = nil
+			rbwPool.Put(rbw)
+
+			// 构建日志描述：METHOD 路由 (HandlerName)
+			route := c.FullPath()
+			if route == "" {
+				route = c.Request.URL.Path
+			}
+			desc := c.Request.Method + " " + route
+			if handlerName := GetHandlerSimpleName(c.HandlerName()); handlerName != "" {
+				desc += " (" + handlerName + ")"
+			}
+			// 走 xlog 而非全局 logrus，确保请求日志与业务日志使用同一套输出配置
+			xlog.Info(c.Request.Context(), "[XGin-LogMiddleware] %s request processed.", desc, xlog.KVMap(requestInfo))
+		}()
+
 		// 继续处理
 		c.Next()
-
-		elapsed := time.Since(begin)
-
-		// 如果 body 未预读，则从读取过程中捕获的 buffer 获取（拷贝一份，避免引用被后续修改）
-		if bodyBytes == nil && bodyBuf != nil {
-			bodyBytes = append([]byte(nil), bodyBuf.Bytes()...)
-		}
-
-		requestInfo := ParseRequestInfoWithBody(c.Request, bodyBytes)
-		requestInfo["process_latency"] = elapsed.Milliseconds()
-		requestInfo["process_latency_human"] = formatElapsed(elapsed)
-		requestInfo["response_header"] = ToJsonString(filterSensitiveHeaders(c.Writer.Header()))
-		requestInfo["response_status"] = c.Writer.Status()
-
-		// 捕获响应 body（仅文本类型且 <= 4KB）
-		respContentType := c.Writer.Header().Get("Content-Type")
-		if isTextContentType(respContentType) && rbw.body.Len() > 0 && rbw.body.Len() <= maxResponseBodyCapture {
-			requestInfo["response_body"] = rbw.body.String()
-		}
-
-		// 恢复原始 writer（防止外层中间件访问已归还的 rbw），然后归还 pool
-		c.Writer = origWriter
-		rbw.ResponseWriter = nil
-		rbwPool.Put(rbw)
-
-		// 构建日志描述：METHOD 路由 (HandlerName)
-		route := c.FullPath()
-		if route == "" {
-			route = c.Request.URL.Path
-		}
-		desc := c.Request.Method + " " + route
-		if handlerName := GetHandlerSimpleName(c.HandlerName()); handlerName != "" {
-			desc += " (" + handlerName + ")"
-		}
-		// 走 xlog 而非全局 logrus，确保请求日志与业务日志使用同一套输出配置
-		xlog.Info(c.Request.Context(), "[XGin-LogMiddleware] %s request processed.", desc, xlog.KVMap(requestInfo))
 	}
 }
 
@@ -375,6 +379,11 @@ func ToJsonString(v any) string {
 	return string(s)
 }
 
+// GetTraceIDFromCtx 从 ctx 获取 TraceID
+//
+// Deprecated: 新代码请用 xutil.GetTraceIDFromCtx。
+// 此处保留直接读取 otel 的实现而非转发：xutil 的提取逻辑由 xtrace 在 init 时注入，
+// 未 import xtrace 时会返回空串，转发过去会让本函数的行为随 import 变化
 func GetTraceIDFromCtx(ctx context.Context) string {
 	span := trace.SpanFromContext(ctx)
 	if span != nil && span.SpanContext().IsValid() {

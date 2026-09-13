@@ -342,3 +342,35 @@ func TestInitMetricCollectors_Idempotent(t *testing.T) {
 		So(first, ShouldEqual, second) // sync.Once 保证同一实例
 	})
 }
+
+func TestGinXMetricMiddleware_PanicStillRecorded(t *testing.T) {
+	PatchConvey("TestGinXMetricMiddleware-panic穿过时仍记录", t, func() {
+		// 收尾逻辑放在 defer 里，即使 panic 穿过本中间件（如用户自定义的
+		// RecoveryFunc 自身 panic），请求也不会在错误率指标里凭空消失
+		resetMetricMiddlewareState()
+		Mock(xmetric.GetConfig).Return(&xmetric.Config{}).Build()
+		Mock(xmetric.SafeRegister).To(func(c prometheus.Collector) prometheus.Collector {
+			return c
+		}).Build()
+
+		gin.SetMode(gin.TestMode)
+		r := gin.New()
+		r.Use(GinXMetricMiddleware())
+		r.GET("/boom", func(c *gin.Context) { panic("boom") })
+
+		func() {
+			defer func() { _ = recover() }() // 模拟 metric 之外的兜底 recover
+			r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", "/boom", nil))
+		}()
+
+		reg := prometheus.NewRegistry()
+		So(reg.Register(requestsTotal), ShouldBeNil)
+		got, err := reg.Gather()
+		So(err, ShouldBeNil)
+
+		family := findFamily(got, "http_requests_total")
+		So(family, ShouldNotBeNil)
+		So(len(family.Metric), ShouldEqual, 1)
+		So(labelValue(family.Metric[0], "path"), ShouldEqual, "/boom")
+	})
+}

@@ -1,10 +1,12 @@
 package xgin
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -13,6 +15,7 @@ import (
 	"github.com/xiaoshicae/xone/v2/xconfig"
 	"github.com/xiaoshicae/xone/v2/xgin/options"
 	"github.com/xiaoshicae/xone/v2/xgin/trans"
+	"github.com/xiaoshicae/xone/v2/xlog"
 	"github.com/xiaoshicae/xone/v2/xserver"
 	"github.com/xiaoshicae/xone/v2/xutil"
 
@@ -273,7 +276,7 @@ func TestWithRecoverFunc(t *testing.T) {
 
 func TestRunAndStop(t *testing.T) {
 	PatchConvey("TestRunAndStop", t, func() {
-		Mock(GetConfig).Return(&Config{Host: "127.0.0.1", Port: 0}).Build()
+		Mock(getConfig).Return(&Config{Host: "127.0.0.1", Port: 0}, nil).Build()
 
 		g := New(
 			options.EnableLogMiddleware(false),
@@ -487,7 +490,7 @@ func TestBuildWithAllMiddlewares(t *testing.T) {
 
 func TestRunWithHttp2(t *testing.T) {
 	PatchConvey("TestRunWithHttp2", t, func() {
-		Mock(GetConfig).Return(&Config{Host: "127.0.0.1", Port: 0, UseH2C: true}).Build()
+		Mock(getConfig).Return(&Config{Host: "127.0.0.1", Port: 0, UseH2C: true}, nil).Build()
 		Mock((*http.Server).ListenAndServe).Return(errors.New("for test")).Build()
 
 		g := New(
@@ -497,7 +500,7 @@ func TestRunWithHttp2(t *testing.T) {
 
 		err := g.Run()
 		So(err, ShouldNotBeNil)
-		So(err.Error(), ShouldEqual, "for test")
+		So(err.Error(), ShouldContainSubstring, "for test")
 		// h2c 模式下 handler 被 h2c.NewHandler 包装，不再设置 engine.UseH2C
 		So(g.srv, ShouldNotBeNil)
 		So(g.srv.Handler, ShouldNotBeNil)
@@ -506,12 +509,12 @@ func TestRunWithHttp2(t *testing.T) {
 
 func TestRunWithTLS(t *testing.T) {
 	PatchConvey("TestRunWithTLS", t, func() {
-		Mock(GetConfig).Return(&Config{
+		Mock(getConfig).Return(&Config{
 			Host:     "127.0.0.1",
 			Port:     8443,
 			CertFile: "/path/to/cert.pem",
 			KeyFile:  "/path/to/key.pem",
-		}).Build()
+		}, nil).Build()
 		Mock((*http.Server).ListenAndServeTLS).Return(errors.New("for test tls")).Build()
 
 		g := New(
@@ -521,13 +524,13 @@ func TestRunWithTLS(t *testing.T) {
 
 		err := g.Run()
 		So(err, ShouldNotBeNil)
-		So(err.Error(), ShouldEqual, "for test tls")
+		So(err.Error(), ShouldContainSubstring, "for test tls")
 	})
 }
 
 func TestRunWithServerClosed(t *testing.T) {
 	PatchConvey("TestRunWithServerClosed", t, func() {
-		Mock(GetConfig).Return(&Config{Host: "127.0.0.1", Port: 0}).Build()
+		Mock(getConfig).Return(&Config{Host: "127.0.0.1", Port: 0}, nil).Build()
 		Mock((*http.Server).ListenAndServe).Return(http.ErrServerClosed).Build()
 
 		g := New(
@@ -818,7 +821,7 @@ func TestStopShutdownError(t *testing.T) {
 
 		err := g.Stop()
 		So(err, ShouldNotBeNil)
-		So(err.Error(), ShouldEqual, "shutdown failed")
+		So(err.Error(), ShouldContainSubstring, "shutdown failed")
 	})
 }
 
@@ -860,7 +863,7 @@ func TestBuildWithZHTranslationsError(t *testing.T) {
 
 func TestRunAutoBuilds(t *testing.T) {
 	PatchConvey("TestRunAutoBuilds", t, func() {
-		Mock(GetConfig).Return(&Config{Host: "127.0.0.1", Port: 0}).Build()
+		Mock(getConfig).Return(&Config{Host: "127.0.0.1", Port: 0}, nil).Build()
 		Mock((*http.Server).ListenAndServe).Return(http.ErrServerClosed).Build()
 
 		g := New(
@@ -877,7 +880,7 @@ func TestRunAutoBuilds(t *testing.T) {
 
 func TestRunWithSwaggerInfo(t *testing.T) {
 	PatchConvey("TestRunWithSwaggerInfo", t, func() {
-		Mock(GetConfig).Return(&Config{Host: "127.0.0.1", Port: 0}).Build()
+		Mock(getConfig).Return(&Config{Host: "127.0.0.1", Port: 0}, nil).Build()
 		Mock(GetSwaggerConfig).Return(&SwaggerConfig{
 			Host:    "localhost",
 			Schemes: []string{"https"},
@@ -905,5 +908,148 @@ func TestPrintBanner_LongBanner(t *testing.T) {
 		MockValue(&bannerTxt).To("\nL1\nL2\nL3\nL4\nL5\nL6\nL7\nL8\nL9")
 
 		PrintBanner() // 不应 panic
+	})
+}
+
+// ==================== 并发 Build / 启动期配置 / 超时 / 停止时序 ====================
+
+func TestBuild_Concurrent(t *testing.T) {
+	PatchConvey("TestBuild-Concurrent", t, func() {
+		// Build 会向 engine 注册中间件，并发调用若不加锁会重复注册：
+		// 同一中间件被 Use 多次意味着每个请求打多条重复日志、指标被重复计数
+		g := New(options.EnableTraceMiddleware(false)).
+			WithRouteRegister(func(e *gin.Engine) {
+				e.GET("/c", func(c *gin.Context) { c.String(http.StatusOK, "ok") })
+			})
+
+		var wg sync.WaitGroup
+		for i := 0; i < 8; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				_ = g.Engine()
+			}()
+		}
+		wg.Wait()
+
+		So(g.build, ShouldBeTrue)
+		// 路由被注册多次会让 gin 在第二次注册同一路径时 panic，能走到这里即说明只注册了一次
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, "/c", nil)
+		g.engine.ServeHTTP(w, req)
+		So(w.Code, ShouldEqual, http.StatusOK)
+	})
+}
+
+func TestRun_ConfigErrorFailFast(t *testing.T) {
+	PatchConvey("TestRun-ConfigErrorFailFast", t, func() {
+		// 配置解析失败必须让服务起不来：静默回退默认端口会让服务起在
+		// 一个没人预期的端口上，而排查时配置文件看着是对的
+		Mock(getConfig).Return(nil, errors.New("unmarshal failed")).Build()
+
+		g := New(options.EnableLogMiddleware(false), options.EnableTraceMiddleware(false))
+		err := g.Run()
+		So(err, ShouldNotBeNil)
+		So(err.Error(), ShouldContainSubstring, "unmarshal failed")
+		So(g.srv, ShouldBeNil)
+	})
+}
+
+func TestRun_ServerTimeouts(t *testing.T) {
+	PatchConvey("TestRun-ServerTimeouts", t, func() {
+		PatchConvey("超时来自配置", func() {
+			Mock(getConfig).Return(&Config{
+				Host:                "127.0.0.1",
+				Port:                0,
+				ReadHeaderTimeout:   "3s",
+				ReadTimeout:         "20s",
+				WriteTimeout:        "25s",
+				IdleTimeout:         "90s",
+				GracefulStopTimeout: "8s",
+			}, nil).Build()
+			Mock((*http.Server).ListenAndServe).Return(http.ErrServerClosed).Build()
+
+			g := New(options.EnableLogMiddleware(false), options.EnableTraceMiddleware(false))
+			So(g.Run(), ShouldBeNil)
+			So(g.srv.ReadHeaderTimeout, ShouldEqual, 3*time.Second)
+			So(g.srv.ReadTimeout, ShouldEqual, 20*time.Second)
+			So(g.srv.WriteTimeout, ShouldEqual, 25*time.Second)
+			So(g.srv.IdleTimeout, ShouldEqual, 90*time.Second)
+			So(g.stopTimeout, ShouldEqual, 8*time.Second)
+		})
+
+		PatchConvey("默认值兜住 slowloris", func() {
+			// 零值是"永不超时"，慢客户端可以一直占着连接
+			c := configMergeDefault(nil)
+			So(xutil.ToDuration(c.ReadHeaderTimeout), ShouldBeGreaterThan, 0)
+			So(xutil.ToDuration(c.IdleTimeout), ShouldBeGreaterThan, 0)
+			// Read/WriteTimeout 默认不限制，避免打断大文件上传与 SSE
+			So(xutil.ToDuration(c.ReadTimeout), ShouldEqual, 0)
+			So(xutil.ToDuration(c.WriteTimeout), ShouldEqual, 0)
+			// 优雅退出应小于 K8s terminationGracePeriodSeconds 默认的 30s
+			So(xutil.ToDuration(c.GracefulStopTimeout), ShouldBeLessThan, 30*time.Second)
+		})
+	})
+}
+
+func TestStopBeforeRun(t *testing.T) {
+	PatchConvey("TestStopBeforeRun", t, func() {
+		// 退出信号早于 ListenAndServe 到达时，服务不应在"已停止"之后才起来
+		Mock(xutil.WarnIfEnableDebug).Return().Build()
+		listenCalled := false
+		Mock((*http.Server).ListenAndServe).To(func(_ *http.Server) error {
+			listenCalled = true
+			return nil
+		}).Build()
+		Mock(getConfig).Return(&Config{Host: "127.0.0.1", Port: 0}, nil).Build()
+
+		g := New(options.EnableLogMiddleware(false), options.EnableTraceMiddleware(false))
+		So(g.Stop(), ShouldBeNil)
+		So(g.Run(), ShouldBeNil)
+		So(listenCalled, ShouldBeFalse)
+		So(g.srv, ShouldBeNil)
+	})
+}
+
+func TestRun_Twice(t *testing.T) {
+	PatchConvey("TestRun-Twice", t, func() {
+		// 第二次 Run 若照常覆盖 g.srv，前一个 server 会失去引用而无法 Stop
+		Mock(getConfig).Return(&Config{Host: "127.0.0.1", Port: 0}, nil).Build()
+		Mock((*http.Server).ListenAndServe).Return(http.ErrServerClosed).Build()
+
+		g := New(options.EnableLogMiddleware(false), options.EnableTraceMiddleware(false))
+		So(g.Run(), ShouldBeNil)
+
+		err := g.Run()
+		So(err, ShouldNotBeNil)
+		So(err.Error(), ShouldContainSubstring, "already running")
+	})
+}
+
+func TestMiddlewareOrder_PanicObserved(t *testing.T) {
+	PatchConvey("TestMiddlewareOrder-PanicObserved", t, func() {
+		// recover 必须是框架中间件最内层的一个：若它在 log / metric 之外，
+		// handler panic 的请求既不写访问日志也不计入指标，
+		// 而 panic 导致的 500 恰恰是最需要计入错误率的那一类
+		accessLogged, panicLogged := 0, 0
+		Mock(xlog.Info).To(func(_ context.Context, _ string, _ ...any) {
+			accessLogged++
+		}).Build()
+		Mock(xlog.Error).To(func(_ context.Context, _ string, _ ...any) {
+			panicLogged++
+		}).Build()
+
+		g := New(options.EnableTraceMiddleware(false)).
+			WithRouteRegister(func(e *gin.Engine) {
+				e.GET("/panic", func(c *gin.Context) { panic("boom") })
+			}).Build()
+
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, "/panic", nil)
+		g.engine.ServeHTTP(w, req)
+
+		So(w.Code, ShouldEqual, http.StatusInternalServerError)
+		So(panicLogged, ShouldEqual, 1)  // recover 中间件的 panic 日志
+		So(accessLogged, ShouldEqual, 1) // log 中间件的访问日志：修复前这里是 0
 	})
 }

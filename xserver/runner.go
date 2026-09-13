@@ -15,18 +15,28 @@ import (
 	"github.com/xiaoshicae/xone/v2/xutil"
 )
 
+// defaultWaitRunExitTimeout Stop 后等待 Run goroutine 退出的默认超时
+const defaultWaitRunExitTimeout = 30 * time.Second
+
 var (
-	defaultWaitRunExitTimeout = 30 * time.Second
-	waitRunExitMu             sync.RWMutex
+	waitRunExitTimeout = defaultWaitRunExitTimeout
+	waitRunExitMu      sync.RWMutex
 )
 
 // SetWaitRunExitTimeout 设置 Stop 后等待 Run goroutine 退出的超时时间（线程安全）
+// timeout <= 0 时不生效，保持原值
 func SetWaitRunExitTimeout(timeout time.Duration) {
 	if timeout > 0 {
 		waitRunExitMu.Lock()
-		defaultWaitRunExitTimeout = timeout
+		waitRunExitTimeout = timeout
 		waitRunExitMu.Unlock()
 	}
+}
+
+func getWaitRunExitTimeout() time.Duration {
+	waitRunExitMu.RLock()
+	defer waitRunExitMu.RUnlock()
+	return waitRunExitTimeout
 }
 
 // Run 启动Server，会以阻塞方式启动，且等待退出信号
@@ -40,13 +50,24 @@ func RunBlocking() error {
 }
 
 // R 调用before start hook，建议用于调试
+//
+// 注意：R 不执行 BeforeStop hook，各模块初始化后保持可用状态，
+// 调用方可以继续使用 xgorm.C()、xhttp.C() 等客户端。
+// 代价是日志写入器不会 flush，进程退出前若要确保日志落盘，请改用 Run。
 func R() error {
 	return run(nil)
 }
 
 func run(server Server) error {
 	if err := xhook.InvokeBeforeStartHook(); err != nil {
-		return err
+		// 启动失败同样要执行 BeforeStop：hook 按 xconfig → xlog → xtrace → ... 正序执行，
+		// 失败点之前的模块都已初始化完成。不回滚意味着日志写入器不 flush、
+		// trace provider 不 shutdown、连接池不关闭——而"启动为什么失败"这条日志恰恰最需要落盘
+		stopErr := xhook.InvokeBeforeStopHook()
+		if stopErr != nil {
+			xutil.ErrorIfEnableDebug("XOne rollback after BeforeStart failure got error, err=[%v]", stopErr)
+		}
+		return errors.Join(err, stopErr)
 	}
 
 	if server != nil {
@@ -65,31 +86,47 @@ func runWithServer(s Server) error {
 	signal.Notify(quit, quitSignals...)
 	defer signal.Stop(quit)
 
-	go func() {
-		safeInvokeServerRun(s, serverRunErrChan)
-	}()
+	// Run 自行返回与收到退出信号可能同时发生，用 Once 保证 Stop 只执行一次
+	var (
+		stopOnce sync.Once
+		stopErr  error
+	)
+	stop := func() error {
+		stopOnce.Do(func() { stopErr = safeInvokeServerStop(s) })
+		return stopErr
+	}
+
+	go safeInvokeServerRun(s, serverRunErrChan)
 
 	select {
-	case err := <-serverRunErrChan: // 接收到服务运行失败消息，或者正常退出指令时
-		if err != nil {
-			return err // safeInvokeServerRun 已返回 xerror
+	case runErr := <-serverRunErrChan: // 服务运行失败，或 Run 自行返回
+		// 这条路径上同样要调用 Stop：Server 接口约定清理逻辑放在 Stop 中，
+		// 只在收到退出信号时才调用，会让端口占用等场景下的资源永远不被释放
+		sErr := stop()
+		if runErr == nil {
+			xutil.InfoIfEnableDebug("XOne Run server stopped")
 		}
-		xutil.InfoIfEnableDebug("XOne Run server stopped")
-		return nil
+		return errors.Join(runErr, sErr)
+
 	case <-quit: // 接收到退出信号后，执行Server.Stop()
 		xutil.InfoIfEnableDebug("********** XOne Stop server begin **********")
-		stopErr := safeInvokeServerStop(s)
+		sErr := stop()
+
 		// 等待 Run goroutine 退出，避免 goroutine 泄漏
-		waitRunExitMu.RLock()
-		waitTimeout := defaultWaitRunExitTimeout
-		waitRunExitMu.RUnlock()
+		waitTimeout := getWaitRunExitTimeout()
 		select {
-		case <-serverRunErrChan:
+		case runErr := <-serverRunErrChan:
+			// Run 在 Stop 之后返回的错误不能丢：优雅退出失败时这往往是唯一线索
+			if runErr != nil {
+				xutil.ErrorIfEnableDebug("XOne Run returned error after Stop, err=[%v]", runErr)
+				sErr = errors.Join(sErr, runErr)
+			}
 		case <-time.After(waitTimeout):
 			xutil.WarnIfEnableDebug("XOne Run goroutine did not exit within %v after Stop", waitTimeout)
 		}
-		if stopErr != nil {
-			return stopErr
+
+		if sErr != nil {
+			return sErr
 		}
 		xutil.InfoIfEnableDebug("********** XOne Stop server success **********")
 		return nil

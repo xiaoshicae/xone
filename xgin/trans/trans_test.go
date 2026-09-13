@@ -3,6 +3,7 @@ package trans
 import (
 	"errors"
 	"sort"
+	"sync"
 	"testing"
 
 	"github.com/gin-gonic/gin/binding"
@@ -324,5 +325,28 @@ func TestRegisterZHTranslations_RegisterDefaultTranslationsFail(t *testing.T) {
 		err := RegisterZHTranslations()
 		So(err, ShouldNotBeNil)
 		So(err.Error(), ShouldEqual, "register failed")
+	})
+}
+
+func TestToZHErr_ConcurrentWithRegister(t *testing.T) {
+	PatchConvey("TestToZHErr-并发注册与读取", t, func() {
+		// RegisterZHTranslations 是公开 API，调用时机由使用者决定。
+		// 只锁写侧时 -race 能直接测出 trans 的数据竞争
+		var wg sync.WaitGroup
+		for i := 0; i < 4; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				_ = RegisterZHTranslations()
+			}()
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				_ = ToZHErr(errors.New("boom"))
+				_ = ToZHErrMsg(errors.New("boom"))
+			}()
+		}
+		wg.Wait()
+		So(getTrans(), ShouldNotBeNil)
 	})
 }

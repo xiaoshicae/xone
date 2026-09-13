@@ -11,9 +11,20 @@ import (
 )
 
 var (
-	transMu sync.Mutex
+	// transMu 保护 trans 的读写
+	//
+	// 只锁写侧是不够的：ToZHErr 在请求期读 trans，RegisterZHTranslations 是公开 API，
+	// 调用时机由使用者决定，两者并发时 -race 能直接测出数据竞争
+	transMu sync.RWMutex
 	trans   ut.Translator
 )
+
+// getTrans 读取当前翻译器（线程安全）
+func getTrans() ut.Translator {
+	transMu.RLock()
+	defer transMu.RUnlock()
+	return trans
+}
 
 // ToZHErrMsg 翻译错误信息字符串
 func ToZHErrMsg(err error) string {
@@ -30,7 +41,8 @@ func ToZHErr(err error) error {
 	}
 
 	// 没有初始化，说明没有启用
-	if trans == nil {
+	t := getTrans()
+	if t == nil {
 		return err
 	}
 
@@ -41,7 +53,7 @@ func ToZHErr(err error) error {
 
 	result := make(map[string][]string)
 	for _, e := range ves {
-		result[e.Field()] = append(result[e.Field()], e.Translate(trans))
+		result[e.Field()] = append(result[e.Field()], e.Translate(t))
 	}
 
 	kvs := make([]VErrKV, 0)

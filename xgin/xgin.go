@@ -125,23 +125,31 @@ func (g *XGin) Engine() *gin.Engine {
 
 // Start 启动服务：执行 BeforeStart Hook，运行服务，等待退出信号后执行 BeforeStop Hook
 //
-// 这是绝大多数场景应该调用的方法，等价于 xserver.Run(g)。
-// Run 只是 xserver.Server 接口的实现，不负责初始化，不要直接调用。
+// 这是启动 XGin 的唯一方式。服务本身的启停（xserver.Server 接口）由内部的
+// ginServer 实现，不对外暴露：它不跑任何 Hook，只有在初始化完成之后调用才成立，
+// 而它曾经叫 Run——与 Start 是英文同义词，选错的代价却是隐形的，
+// 服务会带着一份空配置起在默认端口上，日志、链路、数据库客户端一个都没配置。
 func (g *XGin) Start() error {
-	return xserver.Run(g)
+	return xserver.Run(&ginServer{g: g})
 }
 
-// Run 实现 xserver.Server 接口，由 xserver 在 BeforeStart Hook 之后调用
+// ginServer 把 XGin 适配为 xserver.Server
 //
-// 不要直接调用：它假设初始化已完成，自己不跑任何 Hook。直接调用会拿到一份
-// 空配置——xconfig 未初始化时读配置不报错、只返回零值——于是服务照常起在
-// 默认端口上，而日志、链路、数据库客户端一个都没配置。
-// 想启动服务请用 Start()，或 xserver.Run(g)。
-func (g *XGin) Run() error {
-	// 未初始化就起服务，错的是调用方式而不是配置，必须在监听之前说清楚
+// 独立成一个不导出的类型，而不是直接在 XGin 上挂 Run/Stop：
+// 后者会让「跳过初始化直接起服务」重新变成一次方法调用的距离。
+type ginServer struct {
+	g *XGin
+}
+
+func (s *ginServer) Run() error  { return s.g.run() }
+func (s *ginServer) Stop() error { return s.g.stop() }
+
+// run 启动 http server，由 xserver 在 BeforeStart Hook 之后调用
+func (g *XGin) run() error {
+	// 前置条件断言。公开 API 上已经没有入口能绕过初始化，
+	// 这里兜住的是日后新增调用路径时的疏漏——代价只是一次原子读
 	if !xhook.BeforeStartInvoked() {
-		return xerror.Newf("xgin", "run", "Run called before BeforeStart hooks were invoked, "+
-			"use Start() or xserver.Run(g) instead of calling Run() directly")
+		return xerror.Newf("xgin", "run", "server started before BeforeStart hooks were invoked, use Start()")
 	}
 
 	g.Build() // Build 内部已做幂等与加锁
@@ -202,8 +210,8 @@ func (g *XGin) Run() error {
 	return xerror.New("xgin", "run", err)
 }
 
-// Stop 实现 xserver.Server 接口
-func (g *XGin) Stop() error {
+// stop 优雅关闭 http server，由 xserver 在收到退出信号后调用
+func (g *XGin) stop() error {
 	g.srvMu.Lock()
 	g.stopped = true // 先置标志：Run 若尚未开始监听，到达时会直接返回
 	srv := g.srv

@@ -245,10 +245,9 @@ gx := xgin.New(
     WithSwagger(docs.SwaggerInfo, options.SwaggerUrlPrefix("/api")).
     Build()
 
-// 启动方式一：通过 xserver.Run（推荐，gx 实现了 xserver.Server 接口）
-xserver.Run(gx)
-
-// 启动方式二：快捷启动（内部调用 xserver.Run）
+// 启动（唯一入口，内部走 xserver.Run）
+// 服务本身的启停由内部类型实现 xserver.Server，不挂在 XGin 上：
+// 那会让「跳过 BeforeStart 直接起服务」重新变成一次方法调用的距离
 gx.Start()
 
 // 获取原始 gin.Engine（自动调用 Build）

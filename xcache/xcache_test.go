@@ -194,17 +194,42 @@ func TestCacheOperations(t *testing.T) {
 
 func TestC(t *testing.T) {
 	PatchConvey("TestC", t, func() {
-		PatchConvey("NotConfigured", func() {
+		PatchConvey("NotConfigured-panic而不是返回nil", func() {
 			withCleanCacheMap(func() {
-				cache := C()
-				c.So(cache, c.ShouldBeNil)
+				// 返回 nil 只是把同一个 panic 推迟到调用方第一次用它的时候，
+				// 那里的栈里只剩 "invalid memory address"，看不出根因是配置没配
+				c.So(func() { C() }, c.ShouldPanicWith,
+					"XOne xcache: no cache found for name=[default], no cache configured at all, check the XCache section of your config")
 			})
 		})
 
-		PatchConvey("NotFoundByName", func() {
+		PatchConvey("NotFoundByName-panic信息带上已配置的名字", func() {
 			withCleanCacheMap(func() {
-				cache := C("nonexistent")
-				c.So(cache, c.ShouldBeNil)
+				testCache, err := newCache(configMergeDefault(nil))
+				c.So(err, c.ShouldBeNil)
+				defer testCache.Close()
+
+				set("hot", testCache)
+				set("cold", testCache)
+				setDefault(testCache) // 内部别名不应出现在提示里
+
+				c.So(func() { C("typo") }, c.ShouldPanicWith,
+					"XOne xcache: no cache found for name=[typo], configured=[cold hot]")
+			})
+		})
+
+		PatchConvey("Has-可选依赖用它判断", func() {
+			withCleanCacheMap(func() {
+				c.So(Has(), c.ShouldBeFalse)
+				c.So(Has("nope"), c.ShouldBeFalse)
+
+				testCache, err := newCache(configMergeDefault(nil))
+				c.So(err, c.ShouldBeNil)
+				defer testCache.Close()
+
+				set("myCache", testCache)
+				c.So(Has("myCache"), c.ShouldBeTrue)
+				c.So(Has(), c.ShouldBeFalse) // 未设置 default
 			})
 		})
 

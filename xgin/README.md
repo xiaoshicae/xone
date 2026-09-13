@@ -7,13 +7,13 @@
 * 支持 HTTP/2 (H2C) 和 TLS (HTTPS)
 * 集成 [Swagger](https://github.com/swaggo/gin-swagger) 文档
 * 支持中文验证错误翻译
-* 实现 `xserver.Server` 接口，通过 `Start()` 或 `xserver.Run()` 启动
+* 通过 `Start()` 启动，走完整生命周期（BeforeStart Hook → 服务 → 退出信号 → BeforeStop Hook）
 
-> **`Start()` 而不是 `Run()`。** 两者是英文同义词但职责完全不同：`Start()` 走完整生命周期
-> （BeforeStart Hook → 服务 → 退出信号 → BeforeStop Hook），`Run()` 只是 `xserver.Server`
-> 接口的实现，由 `xserver` 在初始化之后调用，自己不跑任何 Hook。直接调 `Run()` 会被拒绝并
-> 报错——否则它会拿到一份空配置（xconfig 未初始化时读配置不报错、只返回零值），
-> 于是服务照常起在默认端口上，而日志、链路、数据库客户端一个都没配置。
+> **`Start()` 是唯一的启动入口。** 服务本身的启停（`xserver.Server` 接口）由内部类型实现，
+> 不对外暴露。它曾经是 `XGin` 上的公开方法 `Run()`——和 `Start()` 是英文同义词，
+> 职责却完全不同：它不跑任何 Hook，只有在初始化完成之后调用才成立。选错的代价是隐形的：
+> xconfig 未初始化时读配置不报错、只返回零值，于是服务照常起在默认端口上，
+> 而日志、链路、数据库客户端一个都没配置。现在公开 API 上没有这个入口了。
 
 ### 2. 配置参数
 
@@ -98,7 +98,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/xiaoshicae/xone/v2/xgin"
 	"github.com/xiaoshicae/xone/v2/xgin/options"
-	"github.com/xiaoshicae/xone/v2/xserver"
 	"your-project/docs" // swag init 生成的文档
 )
 
@@ -113,7 +112,7 @@ func main() {
 		WithRecoverFunc(customRecoverFunc).
 		Build()
 
-	xserver.Run(gx)
+	gx.Start()
 }
 
 func registerRoutes(e *gin.Engine) {
@@ -149,7 +148,7 @@ XGin:
 | `.WithSwagger(spec, opts...)` | 注入 Swagger 文档                  |
 | `.WithRecoverFunc(f)`         | 自定义 panic 恢复处理                 |
 | `.Build()`                    | 构建 XGin 实例                     |
-| `.Start()`                    | 快捷启动（等价于 `xserver.Run(gx)`）    |
+| `.Start()`                    | 启动服务（唯一的启动入口）                  |
 | `.Engine()`                   | 获取底层 `*gin.Engine`（自动触发 Build） |
 
 ### 5. 内置中间件

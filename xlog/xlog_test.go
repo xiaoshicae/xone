@@ -1213,3 +1213,31 @@ func TestFileConfigFileMode(t *testing.T) {
 		c.So(FileConfig{Perm: "0"}.FileMode(), c.ShouldEqual, os.FileMode(defaultLogFilePerm))
 	})
 }
+
+func TestAsyncWriterWaitDrainNoTimeout(t *testing.T) {
+	mockey.PatchConvey("TestAsyncWriterWaitDrainNoTimeout", t, func() {
+		// drainTimeout <= 0 表示不限时，退回无限等待
+		aw := newAsyncWriter(&mockWriteCloser{}, 4)
+		aw.drainTimeout = 0
+		_, _ = aw.Write([]byte("x\n"))
+		c.So(aw.Close(), c.ShouldBeNil)
+	})
+}
+
+func TestRotateWriterWriteAfterFileGone(t *testing.T) {
+	mockey.PatchConvey("TestRotateWriterWriteAfterFileGone", t, func() {
+		// 轮转持续失败且此前没有可用句柄时，写入要报错而不是对 nil 解引用
+		w := &rotateWriter{
+			base:   "/nonexistent-dir/app.log",
+			layout: rotateLayoutDay,
+			rotate: 24 * time.Hour,
+			clock:  time.Now,
+			perm:   defaultLogFilePerm,
+		}
+		mockey.Mock(xutil.WarnIfEnableDebug).Return().Build()
+
+		n, err := w.Write([]byte("x"))
+		c.So(n, c.ShouldEqual, 0)
+		c.So(err, c.ShouldEqual, os.ErrClosed)
+	})
+}

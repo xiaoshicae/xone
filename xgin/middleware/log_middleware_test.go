@@ -1021,3 +1021,80 @@ func TestFilterJSONBody_FastPath(t *testing.T) {
 		t.Errorf("fast path should return body as-is, got %s", result)
 	}
 }
+
+func TestBodyCapture(t *testing.T) {
+	PatchConvey("TestBodyCapture", t, func() {
+		PatchConvey("超出上限的部分被截断", func() {
+			// 一次读进来的数据比剩余配额多时，只留下配额内的部分
+			buf := &bytes.Buffer{}
+			bc := &bodyCapture{
+				rc:    io.NopCloser(strings.NewReader("0123456789")),
+				buf:   buf,
+				limit: 4,
+			}
+			p := make([]byte, 10)
+			n, err := bc.Read(p)
+			So(err, ShouldBeNil)
+			So(n, ShouldEqual, 10)
+			So(buf.String(), ShouldEqual, "0123") // 只捕获了 limit 内的
+		})
+
+		PatchConvey("已达上限后不再捕获", func() {
+			buf := bytes.NewBufferString("abcd")
+			bc := &bodyCapture{
+				rc:    io.NopCloser(strings.NewReader("xyz")),
+				buf:   buf,
+				limit: 4,
+			}
+			p := make([]byte, 3)
+			_, _ = bc.Read(p)
+			So(buf.String(), ShouldEqual, "abcd")
+		})
+
+		PatchConvey("Close 透传到底层", func() {
+			closed := false
+			bc := &bodyCapture{rc: &closeRecorder{closed: &closed}}
+			So(bc.Close(), ShouldBeNil)
+			So(closed, ShouldBeTrue)
+		})
+	})
+}
+
+// closeRecorder 记录 Close 是否被调用
+type closeRecorder struct {
+	closed *bool
+}
+
+func (c *closeRecorder) Read([]byte) (int, error) { return 0, io.EOF }
+func (c *closeRecorder) Close() error             { *c.closed = true; return nil }
+
+func TestGetSensitiveFieldMapLazyInit(t *testing.T) {
+	PatchConvey("TestGetSensitiveFieldMapLazyInit", t, func() {
+		// 缓存未构建时走写锁下的懒初始化
+		sensitiveMu.Lock()
+		origMap, origBytes := cachedFieldMap, cachedFieldBytes
+		cachedFieldMap, cachedFieldBytes = nil, nil
+		sensitiveMu.Unlock()
+		defer func() {
+			sensitiveMu.Lock()
+			cachedFieldMap, cachedFieldBytes = origMap, origBytes
+			sensitiveMu.Unlock()
+		}()
+
+		m := getSensitiveFieldMap()
+		So(m, ShouldNotBeNil)
+		So(m["password"], ShouldBeTrue)
+
+		// 第二次走读锁快路径
+		So(getSensitiveFieldMap(), ShouldNotBeNil)
+	})
+}
+
+func TestFilterJSONBodyMalformed(t *testing.T) {
+	PatchConvey("TestFilterJSONBodyMalformed", t, func() {
+		// body 里有敏感字段名但不是合法 JSON，解析失败后回退为去换行的原文
+		out := filterJSONBody([]byte("{\"password\": broken\n"))
+		So(out, ShouldNotContainSubstring, "\n")
+		So(out, ShouldContainSubstring, "password")
+	})
+}

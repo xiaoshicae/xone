@@ -70,6 +70,8 @@ XOne 各模块通过 `init()` 函数调用 `xhook.BeforeStart()` / `xhook.Before
 
 对于相同 Order 值的 Hook，`xhook` 使用**稳定排序**（`slices.SortStableFunc`），即不改变注册时的相对顺序。这意味着只要 import 顺序一致，执行顺序就是确定的。
 
+`Order` 表示**资源层级**而非阶段内优先级：值越小越底层，BeforeStart 越先执行、BeforeStop 越后执行。BeforeStop 是 BeforeStart 顺序的整体镜像，同 Order 内再按注册顺序逆序。这样一个资源只需声明一个 Order 就能做到「先启动、后关闭」。
+
 **BeforeStart 正序执行，BeforeStop 反序执行**，确保与启动顺序对称（LIFO）。后初始化的模块先关闭，先初始化的模块最后关闭。
 
 ### 不推荐使用 Order
@@ -78,7 +80,9 @@ XOne 各模块通过 `init()` 函数调用 `xhook.BeforeStart()` / `xhook.Before
 
 1. **依赖 import 顺序更直观**：Go 开发者天然理解 import 顺序，而显式 Order 值分散在各模块中，难以全局把控
 2. **避免 Order 冲突**：多个模块各自声明 Order 值，容易产生冲突或不一致
-3. **框架内部已有保障**：xconfig 使用 `Order(1)` 确保最先初始化，其余模块无需干预顺序
+3. **全部默认时行为即是所需**：所有模块保持默认 Order 时，行为恰好是「启动按注册顺序、关闭按注册逆序」
+
+框架内部只有 xconfig 使用 `Order(1)`。每个模块都 import xconfig，Go 保证被导入包的 `init()` 先执行，所以框架内部它本就排第一；`Order(1)` 防的是用户自己的包（不 import xconfig）在 main 的 import 列表中排在 xone 之前、且在其 `init()` 里注册了 BeforeStart 的情况。
 
 ```go
 // 正确 - 使用默认 Order，依靠 import 顺序
@@ -100,8 +104,8 @@ func init() {
 ```go
 import (
     _ "github.com/xiaoshicae/xone/v2/xconfig" // 1. 配置（Order=1，始终最先）
-    _ "github.com/xiaoshicae/xone/v2/xtrace"  // 2. 链路追踪
-    _ "github.com/xiaoshicae/xone/v2/xlog"    // 3. 日志
+    _ "github.com/xiaoshicae/xone/v2/xlog"    // 2. 日志（紧随配置，从而倒数第二个关闭）
+    _ "github.com/xiaoshicae/xone/v2/xtrace"  // 3. 链路追踪
     _ "github.com/xiaoshicae/xone/v2/xhttp"   // 4. HTTP 客户端
     _ "github.com/xiaoshicae/xone/v2/xgorm"   // 5. 数据库
 )
@@ -110,8 +114,8 @@ import (
 BeforeStop 自动反序执行，无需额外配置：
 
 ```
-BeforeStart 执行顺序：xconfig → xtrace → xlog → xhttp → xgorm
-BeforeStop  执行顺序：xgorm → xhttp → xlog → xtrace → xconfig
+BeforeStart 执行顺序：xconfig → xlog → xtrace → xhttp → xgorm
+BeforeStop  执行顺序：xgorm → xhttp → xtrace → xlog → xconfig
 ```
 
 ## 新增模块指南

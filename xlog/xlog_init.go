@@ -19,10 +19,6 @@ import (
 const (
 	// defaultLocalIP 获取本机 IP 失败时的兜底值
 	defaultLocalIP = "0.0.0.0"
-
-	// closeHookOrder 日志关闭钩子的 Order
-	// 取较大值确保日志系统在其他模块关闭之后再关闭，避免关闭阶段的日志丢失
-	closeHookOrder = 9999
 )
 
 // findFrameIgnoreFileNames 定位调用方时需跳过的本模块文件
@@ -46,9 +42,6 @@ var (
 	// fileWriter 当前生效的日志文件写入器，重复初始化时替换并关闭旧实例
 	fileWriter   *asyncWriter
 	fileWriterMu sync.Mutex
-
-	// stopHookOnce 保证关闭钩子只注册一次
-	stopHookOnce sync.Once
 )
 
 // localIP 本机 IP，涉及网卡枚举，进程内只计算一次
@@ -63,6 +56,10 @@ func init() {
 	currentLevel.Store(uint32(InfoLevel))
 
 	xhook.BeforeStart(initXLog)
+	// 与 BeforeStart 一并注册，使关闭顺序由 import 顺序决定：
+	// 日志模块在 xconfig 之后最早注册，因而最后关闭，其他模块关闭时打的日志仍能落盘。
+	// 未启用文件日志时 closeFileWriter 直接返回 nil，无条件注册是安全的。
+	xhook.BeforeStop(closeFileWriter)
 }
 
 func initXLog() error {
@@ -172,9 +169,6 @@ func swapFileWriter(aw *asyncWriter) {
 		}
 	}
 
-	stopHookOnce.Do(func() {
-		xhook.BeforeStop(closeFileWriter, xhook.Order(closeHookOrder))
-	})
 }
 
 // closeFileWriter 关闭文件写入器，等待缓冲区写完

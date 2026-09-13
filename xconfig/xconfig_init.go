@@ -179,6 +179,11 @@ func mergeProfilesViperConfig(vp1, vp2 *viper.Viper) *viper.Viper {
 }
 
 // deepMerge 递归合并两个配置 map，override 覆盖 base，返回新 map 不改动入参
+//
+// 不做环检测：入参只来自 vp.AllSettings()，而 YAML 表达不出自引用
+// （递归锚点被解析器拒绝：anchor 'x' value contains itself），
+// 嵌套深度也被解析器限制在 10000 层以内。
+// 若改由别处传入任意 map，自引用会撑爆栈并触发 fatal error（recover 无法拦截）。
 func deepMerge(base, override map[string]any) map[string]any {
 	merged := make(map[string]any, len(base)+len(override))
 	maps.Copy(merged, base)

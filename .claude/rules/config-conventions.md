@@ -120,7 +120,15 @@ FieldName string `mapstructure:"FieldName"`
 
 ## 环境变量注入
 
-xconfig 自动展开配置值中的 `${VAR}` / `${VAR:-default}` 占位符，适用于所有 string 类型叶子节点（包括 `map[string]string` 的 value）：
+xconfig 在配置合并完成后**统一展开一次** `${VAR}` / `${VAR:-default}` 占位符，覆盖 string 叶子节点、`map[string]string` 的 value 以及字符串列表的元素。展开结果不会被再次解释。
+
+| 写法 | 含义 |
+|------|------|
+| `${VAR}` | **必填**，环境变量未设置时初始化失败 |
+| `${VAR:-default}` | 可选，未设置时用 default |
+| `${VAR:-}` | 可选，默认空字符串 |
+
+判断依据是「有没有设置」而非「是不是空」：显式设为空串的环境变量会覆盖默认值。凭证类配置应使用 `${VAR}` 形式，漏配时直接启动失败，而不是静默变成空串。
 
 ```yaml
 XMetric:

@@ -3,7 +3,8 @@ package xconfig
 import (
 	"errors"
 	"os"
-	"regexp"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,38 +16,6 @@ import (
 	. "github.com/bytedance/mockey"
 	. "github.com/smartystreets/goconvey/convey"
 )
-
-// ==================== config.go ====================
-
-func TestServerConfigMergeDefault(t *testing.T) {
-	PatchConvey("TestServerConfigMergeDefault", t, func() {
-		PatchConvey("Nil", func() {
-			sc := serverConfigMergeDefault(nil)
-			So(sc, ShouldResemble, &Server{
-				Name:     "",
-				Version:  defaultServerVersion,
-				Profiles: nil,
-			})
-		})
-
-		PatchConvey("NotNil", func() {
-			sc := serverConfigMergeDefault(&Server{
-				Name:    "svc",
-				Version: "v1.0.0",
-				Profiles: &Profiles{
-					Active: "dev",
-				},
-			})
-			So(sc, ShouldResemble, &Server{
-				Name:    "svc",
-				Version: "v1.0.0",
-				Profiles: &Profiles{
-					Active: "dev",
-				},
-			})
-		})
-	})
-}
 
 // ==================== util.go ====================
 
@@ -470,11 +439,7 @@ func TestGetProfilesActiveWithEnvPlaceholder(t *testing.T) {
 			vp := viper.New()
 			vp.Set("Server.Profiles.Active", "${PROFILES_ACTIVE}")
 
-			// 展开前返回原始占位符
-			So(getProfilesActiveFromViperConfig(vp), ShouldEqual, "${PROFILES_ACTIVE}")
-
-			// 展开后返回环境变量值
-			expandEnvPlaceholders(vp)
+			// 配置尚未整体展开，该函数自己展开这一个值
 			So(getProfilesActiveFromViperConfig(vp), ShouldEqual, "test")
 		})
 
@@ -484,7 +449,6 @@ func TestGetProfilesActiveWithEnvPlaceholder(t *testing.T) {
 			vp := viper.New()
 			vp.Set("Server.Profiles.Active", "${PROFILES_ACTIVE_NOT_SET:-dev}")
 
-			expandEnvPlaceholders(vp)
 			So(getProfilesActiveFromViperConfig(vp), ShouldEqual, "dev")
 		})
 	})
@@ -784,12 +748,13 @@ func TestMergeProfilesViperConfig(t *testing.T) {
 			"server": map[string]any{
 				"s1": 11,
 				"s2": "2",
-				"s3": []string{"33", "44"},
-				"s4": map[string]any{
+				"s3": []string{"33", "44"}, // 列表整体替换
+				"s4": map[string]any{ // 嵌套块逐层合并，vp1 的 s51 得以保留
 					"s41": 441,
+					"s51": "51",
 					"651": "651",
 				},
-				"profiles": "p1",
+				"profiles": "p1", // 环境配置文件不能改写激活环境
 			},
 			"x": "x2",
 			"y": "y1",
@@ -798,97 +763,55 @@ func TestMergeProfilesViperConfig(t *testing.T) {
 	})
 }
 
-func TestGetTopLevelConfigs(t *testing.T) {
-	PatchConvey("TestGetTopLevelConfigs", t, func() {
-		vp := viper.New()
-		vp.Set("server", map[string]any{
-			"s1":       1,
-			"s2":       "2",
-			"s3":       []string{"3", "33"},
-			"s4":       map[string]any{"s41": 41, "s51": "51"},
-			"profiles": "ppp",
-		})
-		vp.Set("x", "xxx")
-		vp.Set("y", "yyy")
-
-		res := getTopLevelConfigs(vp)
-		So(res, ShouldResemble, map[string]any{
-			"server": map[string]any{
-				"s1":       1,
-				"s2":       "2",
-				"s3":       []string{"3", "33"},
-				"s4":       map[string]any{"s41": 41, "s51": "51"},
-				"profiles": "ppp",
-			},
-			"x": "xxx",
-			"y": "yyy",
-		})
-	})
-}
-
-func TestIsNestedKey(t *testing.T) {
-	PatchConvey("TestIsNestedKey", t, func() {
-		So(isNestedKey(""), ShouldBeFalse)
-		So(isNestedKey("1"), ShouldBeFalse)
-		So(isNestedKey("."), ShouldBeTrue)
-		So(isNestedKey(".1"), ShouldBeTrue)
-		So(isNestedKey("1.1"), ShouldBeTrue)
-	})
-}
-
-func TestGetTopLevelAndServerSecondLevelConfigs(t *testing.T) {
-	PatchConvey("TestGetTopLevelAndServerSecondLevelConfigs", t, func() {
-		vp := viper.New()
-		vp.Set("server", map[string]any{
-			"s1":       1,
-			"s2":       "2",
-			"s3":       []string{"3", "33"},
-			"s4":       map[string]any{"s41": 41, "s51": "51"},
-			"profiles": "ppp",
-		})
-		vp.Set("x", "xxx")
-		vp.Set("y", "yyy")
-
-		res := getTopLevelAndServerSecondLevelConfigs(vp)
-		So(res, ShouldResemble, map[string]any{
-			"server.s1": 1,
-			"server.s2": "2",
-			"server.s3": []string{"3", "33"},
-			"server.s4": map[string]any{"s41": 41, "s51": "51"},
-			"x":         "xxx",
-			"y":         "yyy",
-		})
-	})
-}
-
-// ==================== xconfig_init.go (env placeholders) ====================
-
 func TestExpandEnvPlaceholder(t *testing.T) {
 	PatchConvey("TestExpandEnvPlaceholder", t, func() {
 		PatchConvey("WithEnvVar", func() {
-			os.Setenv("TEST_EXPAND", "expanded")
-			defer os.Unsetenv("TEST_EXPAND")
-			So(expandEnvPlaceholder("${TEST_EXPAND}"), ShouldEqual, "expanded")
+			t.Setenv("TEST_EXPAND", "expanded")
+			got, missing := expandEnvPlaceholder("${TEST_EXPAND}")
+			So(got, ShouldEqual, "expanded")
+			So(missing, ShouldBeEmpty)
 		})
 
 		PatchConvey("WithDefault", func() {
 			os.Unsetenv("NONEXISTENT_VAR")
-			So(expandEnvPlaceholder("${NONEXISTENT_VAR:-fallback}"), ShouldEqual, "fallback")
+			got, missing := expandEnvPlaceholder("${NONEXISTENT_VAR:-fallback}")
+			So(got, ShouldEqual, "fallback")
+			So(missing, ShouldBeEmpty)
 		})
 
 		PatchConvey("NoPlaceholder", func() {
-			So(expandEnvPlaceholder("plain_value"), ShouldEqual, "plain_value")
+			got, missing := expandEnvPlaceholder("plain_value")
+			So(got, ShouldEqual, "plain_value")
+			So(missing, ShouldBeEmpty)
 		})
 
-		PatchConvey("EmptyDefault", func() {
-			os.Unsetenv("EMPTY_DEFAULT_VAR")
-			So(expandEnvPlaceholder("${EMPTY_DEFAULT_VAR}"), ShouldEqual, "")
+		PatchConvey("显式设为空串的环境变量应覆盖默认值", func() {
+			t.Setenv("TEST_EXPAND_EMPTY", "")
+			got, missing := expandEnvPlaceholder("${TEST_EXPAND_EMPTY:-fallback}")
+			So(got, ShouldEqual, "")
+			So(missing, ShouldBeEmpty)
 		})
 
-		PatchConvey("FindStringSubmatchShort", func() {
-			// mock FindStringSubmatch 返回不足 2 个元素，覆盖防御性分支
-			Mock((*regexp.Regexp).FindStringSubmatch).Return([]string{"${VAR}"}).Build()
-			So(expandEnvPlaceholder("${VAR}"), ShouldEqual, "${VAR}")
+		PatchConvey("空默认值写法 ${VAR:-} 表示可选且默认为空", func() {
+			os.Unsetenv("TEST_EXPAND_OPTIONAL")
+			got, missing := expandEnvPlaceholder("${TEST_EXPAND_OPTIONAL:-}")
+			So(got, ShouldEqual, "")
+			So(missing, ShouldBeEmpty)
+		})
+
+		PatchConvey("无默认值且未设置时报告为缺失，并保留原样", func() {
+			os.Unsetenv("TEST_EXPAND_REQUIRED")
+			got, missing := expandEnvPlaceholder("prefix-${TEST_EXPAND_REQUIRED}-suffix")
+			So(got, ShouldEqual, "prefix-${TEST_EXPAND_REQUIRED}-suffix")
+			So(missing, ShouldResemble, []string{"TEST_EXPAND_REQUIRED"})
+		})
+
+		PatchConvey("同一个字符串里多个占位符", func() {
+			t.Setenv("TEST_EXPAND_A", "a")
+			os.Unsetenv("TEST_EXPAND_B")
+			got, missing := expandEnvPlaceholder("${TEST_EXPAND_A}/${TEST_EXPAND_B}/${TEST_EXPAND_C:-c}")
+			So(got, ShouldEqual, "a/${TEST_EXPAND_B}/c")
+			So(missing, ShouldResemble, []string{"TEST_EXPAND_B"})
 		})
 	})
 }
@@ -896,12 +819,10 @@ func TestExpandEnvPlaceholder(t *testing.T) {
 func TestExpandEnvPlaceholders(t *testing.T) {
 	PatchConvey("TestExpandEnvPlaceholders", t, func() {
 		PatchConvey("WithEnvVar", func() {
-			os.Setenv("TEST_VAR", "test_value")
-			defer os.Unsetenv("TEST_VAR")
-
+			t.Setenv("TEST_VAR", "test_value")
 			vp := viper.New()
 			vp.Set("key", "${TEST_VAR}")
-			expandEnvPlaceholders(vp)
+			So(expandEnvPlaceholders(vp), ShouldBeNil)
 			So(vp.GetString("key"), ShouldEqual, "test_value")
 		})
 
@@ -909,32 +830,63 @@ func TestExpandEnvPlaceholders(t *testing.T) {
 			os.Unsetenv("NONEXISTENT_VAR")
 			vp := viper.New()
 			vp.Set("key", "${NONEXISTENT_VAR:-default_value}")
-			expandEnvPlaceholders(vp)
+			So(expandEnvPlaceholders(vp), ShouldBeNil)
 			So(vp.GetString("key"), ShouldEqual, "default_value")
 		})
 
 		PatchConvey("NoPlaceholder", func() {
 			vp := viper.New()
 			vp.Set("key", "plain_value")
-			expandEnvPlaceholders(vp)
+			So(expandEnvPlaceholders(vp), ShouldBeNil)
 			So(vp.GetString("key"), ShouldEqual, "plain_value")
 		})
 
 		PatchConvey("EmptyValue", func() {
 			vp := viper.New()
 			vp.Set("key", "")
-			expandEnvPlaceholders(vp)
+			So(expandEnvPlaceholders(vp), ShouldBeNil)
 			So(vp.GetString("key"), ShouldEqual, "")
 		})
 
 		PatchConvey("NestedKey", func() {
-			os.Setenv("NESTED_VAR", "nested_val")
-			defer os.Unsetenv("NESTED_VAR")
-
+			t.Setenv("NESTED_VAR", "nested_val")
 			vp := viper.New()
 			vp.Set("a.b.c", "${NESTED_VAR}")
-			expandEnvPlaceholders(vp)
+			So(expandEnvPlaceholders(vp), ShouldBeNil)
 			So(vp.GetString("a.b.c"), ShouldEqual, "nested_val")
+		})
+
+		PatchConvey("列表元素里的占位符同样展开", func() {
+			t.Setenv("LIST_VAR", "X-Real-Header")
+			vp := viper.New()
+			vp.Set("headers", []any{"${LIST_VAR}", "X-Static", "", 42})
+			So(expandEnvPlaceholders(vp), ShouldBeNil)
+			So(vp.Get("headers"), ShouldResemble, []any{"X-Real-Header", "X-Static", "", 42})
+		})
+
+		PatchConvey("必填占位符缺失时初始化失败", func() {
+			os.Unsetenv("REQUIRED_A")
+			os.Unsetenv("REQUIRED_B")
+			vp := viper.New()
+			vp.Set("a", "${REQUIRED_A}")
+			vp.Set("b.c", "${REQUIRED_A}")
+			vp.Set("list", []any{"${REQUIRED_B}"})
+
+			err := expandEnvPlaceholders(vp)
+			So(err, ShouldNotBeNil)
+			So(err.Error(), ShouldContainSubstring, "required env placeholder not set")
+			// 去重后每个变量只报一次
+			So(strings.Count(err.Error(), "REQUIRED_A"), ShouldEqual, 1)
+			So(err.Error(), ShouldContainSubstring, "REQUIRED_B")
+		})
+
+		PatchConvey("非字符串类型不受影响", func() {
+			vp := viper.New()
+			vp.Set("num", 42)
+			vp.Set("flag", true)
+			So(expandEnvPlaceholders(vp), ShouldBeNil)
+			So(vp.GetInt("num"), ShouldEqual, 42)
+			So(vp.GetBool("flag"), ShouldBeTrue)
 		})
 	})
 }
@@ -976,5 +928,224 @@ func TestSetNestedValue(t *testing.T) {
 			a := m["a"].(map[string]any)
 			So(a["b"], ShouldEqual, "value")
 		})
+	})
+}
+
+// ==================== 审查回归 ====================
+
+// writeTempConfig 写入临时配置文件并返回路径
+func writeTempConfig(t *testing.T, dir, name, body string) string {
+	t.Helper()
+	p := filepath.Join(dir, name)
+	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+		t.Fatalf("write config failed: %v", err)
+	}
+	return p
+}
+
+// TestProfileDeepMerge 环境配置文件只写要改的字段，同一块下未提及的字段必须保留
+func TestProfileDeepMerge(t *testing.T) {
+	PatchConvey("TestProfileDeepMerge", t, func() {
+		dir := t.TempDir()
+		base := writeTempConfig(t, dir, "application.yml", `
+Server:
+  Name: demo
+  Profiles:
+    Active: dev
+XLog:
+  Level: info
+  File:
+    Enable: true
+    Path: ./log
+`)
+		writeTempConfig(t, dir, "application-dev.yml", `
+XLog:
+  Level: debug
+`)
+		vp, err := parseConfig(base)
+		So(err, ShouldBeNil)
+		So(vp.GetString("XLog.Level"), ShouldEqual, "debug")
+		// 环境文件没提到的兄弟字段不应被抹掉
+		So(vp.GetString("XLog.File.Path"), ShouldEqual, "./log")
+		So(vp.GetBool("XLog.File.Enable"), ShouldBeTrue)
+	})
+}
+
+// TestProfilesActiveRejectsPathSeparators 环境名会拼进文件路径，必须限制字符集
+func TestProfilesActiveRejectsPathSeparators(t *testing.T) {
+	PatchConvey("TestProfilesActiveRejectsPathSeparators", t, func() {
+		for _, bad := range []string{"../../../tmp/evil", "a/b", "a\\b", "", "dev prod", "de.v"} {
+			loc, err := toProfilesActiveConfigLocation("./conf/application.yml", bad)
+			So(err, ShouldNotBeNil)
+			So(err.Error(), ShouldContainSubstring, "profiles active is invalid")
+			So(loc, ShouldBeEmpty)
+		}
+
+		for _, ok := range []string{"dev", "pre-prod", "test_1", "PROD"} {
+			loc, err := toProfilesActiveConfigLocation("./conf/application.yml", ok)
+			So(err, ShouldBeNil)
+			So(loc, ShouldEqual, "./conf/application-"+ok+".yml")
+		}
+	})
+}
+
+// TestMaskSensitive 打印配置时凭证必须脱敏
+func TestMaskSensitive(t *testing.T) {
+	PatchConvey("TestMaskSensitive", t, func() {
+		masked := maskSensitive(map[string]any{
+			"xgorm":  map[string]any{"password": "super-secret-pw", "host": "127.0.0.1"},
+			"xredis": map[string]any{"Password": "redis-pw"},
+			"myapp": map[string]any{
+				"apikey":     "ak",
+				"api_key":    "ak2",
+				"accesskey":  "ak3",
+				"privatekey": "pk",
+				"token":      "tk",
+				"secret":     "sc",
+				"credential": "cd",
+				"dsn":        "user:pw@tcp(host)/db",
+				"nested":     map[string]any{"passwd": "p"},
+				"plain":      "visible",
+			},
+		})
+		dumped := xutil.ToJsonStringIndent(masked)
+		for _, secret := range []string{"super-secret-pw", "redis-pw", "ak", "ak2", "ak3", "pk", "tk", "sc", "cd", "user:pw@tcp(host)/db", `"p"`} {
+			So(dumped, ShouldNotContainSubstring, secret)
+		}
+		So(dumped, ShouldContainSubstring, "visible")
+		So(dumped, ShouldContainSubstring, "127.0.0.1")
+	})
+}
+
+// TestPrintFinalConfigMasksSecrets 端到端确认打印路径不泄漏凭证
+func TestPrintFinalConfigMasksSecrets(t *testing.T) {
+	PatchConvey("TestPrintFinalConfigMasksSecrets", t, func() {
+		PatchConvey("debug 关闭时不打印", func() {
+			Mock(xutil.EnableXOneDebug).Return(false).Build()
+			mocker := Mock(xutil.ToJsonStringIndent).Return("").Build()
+			vp := viper.New()
+			vp.Set("XGorm", map[string]any{"Password": "super-secret-pw"})
+			printFinalConfig(vp)
+			So(mocker.Times(), ShouldEqual, 0)
+		})
+
+		PatchConvey("debug 开启时打印脱敏后的内容", func() {
+			Mock(xutil.EnableXOneDebug).Return(true).Build()
+			var dumped any
+			Mock(xutil.ToJsonStringIndent).To(func(v any) string {
+				dumped = v
+				return "dumped"
+			}).Build()
+
+			vp := viper.New()
+			vp.Set("XGorm", map[string]any{"Password": "super-secret-pw"})
+			printFinalConfig(vp)
+
+			settings, ok := dumped.(map[string]any)
+			So(ok, ShouldBeTrue)
+			gorm, ok := settings["xgorm"].(map[string]any)
+			So(ok, ShouldBeTrue)
+			So(gorm["password"], ShouldEqual, maskedValue)
+		})
+	})
+}
+
+// TestUnmarshalConfigTypedNilPointer 类型化 nil 指针应被 checkParam 拦下
+func TestUnmarshalConfigTypedNilPointer(t *testing.T) {
+	PatchConvey("TestUnmarshalConfigTypedNilPointer", t, func() {
+		var p *Server
+		err := UnmarshalConfig(ServerConfigKey, p)
+		So(err, ShouldNotBeNil)
+		So(err.Error(), ShouldContainSubstring, "param conf is a nil pointer")
+	})
+}
+
+// TestDeepMerge 深合并的各条规则
+func TestDeepMerge(t *testing.T) {
+	PatchConvey("TestDeepMerge", t, func() {
+		PatchConvey("嵌套 map 逐层合并", func() {
+			base := map[string]any{"a": map[string]any{"x": 1, "y": 2}}
+			over := map[string]any{"a": map[string]any{"y": 22, "z": 33}}
+			So(deepMerge(base, over), ShouldResemble, map[string]any{
+				"a": map[string]any{"x": 1, "y": 22, "z": 33},
+			})
+			// 入参不被修改
+			So(base, ShouldResemble, map[string]any{"a": map[string]any{"x": 1, "y": 2}})
+		})
+
+		PatchConvey("列表整体替换", func() {
+			base := map[string]any{"a": []any{1, 2, 3}}
+			over := map[string]any{"a": []any{9}}
+			So(deepMerge(base, over), ShouldResemble, map[string]any{"a": []any{9}})
+		})
+
+		PatchConvey("类型不一致时以 override 为准", func() {
+			So(deepMerge(map[string]any{"a": "str"}, map[string]any{"a": map[string]any{"x": 1}}),
+				ShouldResemble, map[string]any{"a": map[string]any{"x": 1}})
+			So(deepMerge(map[string]any{"a": map[string]any{"x": 1}}, map[string]any{"a": "str"}),
+				ShouldResemble, map[string]any{"a": "str"})
+		})
+	})
+}
+
+// TestDropProfilesActive 环境配置文件不能改写激活环境
+func TestDropProfilesActive(t *testing.T) {
+	PatchConvey("TestDropProfilesActive", t, func() {
+		PatchConvey("移除 profiles 后 server 还有其它字段则保留", func() {
+			m := map[string]any{"server": map[string]any{"name": "n", "profiles": map[string]any{"active": "x"}}}
+			dropProfilesActive(m)
+			So(m, ShouldResemble, map[string]any{"server": map[string]any{"name": "n"}})
+		})
+
+		PatchConvey("server 下只有 profiles 时整个 server 移除", func() {
+			m := map[string]any{"server": map[string]any{"profiles": map[string]any{"active": "x"}}}
+			dropProfilesActive(m)
+			So(m, ShouldBeEmpty)
+		})
+
+		PatchConvey("没有 server 块时不做任何事", func() {
+			m := map[string]any{"x": 1}
+			dropProfilesActive(m)
+			So(m, ShouldResemble, map[string]any{"x": 1})
+		})
+
+		PatchConvey("server 不是 map 时不做任何事", func() {
+			m := map[string]any{"server": "not-a-map"}
+			dropProfilesActive(m)
+			So(m, ShouldResemble, map[string]any{"server": "not-a-map"})
+		})
+	})
+}
+
+// TestDistinct 去重保持顺序
+func TestDistinct(t *testing.T) {
+	PatchConvey("TestDistinct", t, func() {
+		So(distinct([]string{"b", "a", "b", "c", "a"}), ShouldResemble, []string{"b", "a", "c"})
+		So(distinct(nil), ShouldBeEmpty)
+	})
+}
+
+// TestParseConfigRequiredPlaceholderMissing 必填占位符缺失时 parseConfig 直接失败
+func TestParseConfigRequiredPlaceholderMissing(t *testing.T) {
+	PatchConvey("TestParseConfigRequiredPlaceholderMissing", t, func() {
+		os.Unsetenv("XONE_TEST_REQUIRED_DSN")
+		dir := t.TempDir()
+		base := writeTempConfig(t, dir, "application.yml", "Server:\n  Name: demo\nXGorm:\n  Dsn: \"${XONE_TEST_REQUIRED_DSN}\"\n")
+
+		vp, err := parseConfig(base)
+		So(vp, ShouldBeNil)
+		So(err, ShouldNotBeNil)
+		So(err.Error(), ShouldContainSubstring, "required env placeholder not set")
+		So(err.Error(), ShouldContainSubstring, "XONE_TEST_REQUIRED_DSN")
+	})
+}
+
+// TestToProfilesActiveConfigLocationNoExtension 配置文件没有扩展名时报错
+func TestToProfilesActiveConfigLocationNoExtension(t *testing.T) {
+	PatchConvey("TestToProfilesActiveConfigLocationNoExtension", t, func() {
+		loc, err := toProfilesActiveConfigLocation("./conf/application", "dev")
+		So(loc, ShouldBeEmpty)
+		So(err, ShouldNotBeNil)
+		So(err.Error(), ShouldContainSubstring, "no extension found")
 	})
 }

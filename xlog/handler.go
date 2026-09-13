@@ -106,8 +106,7 @@ func (h *xHandler) Handle(ctx context.Context, r slog.Record) error {
 		lineNo = caller.Line
 	}
 
-	traceID := xutil.GetTraceIDFromCtx(ctx)
-	spanID := xutil.GetSpanIDFromCtx(ctx)
+	traceID, spanID := xutil.GetTraceAndSpanIDFromCtx(ctx)
 
 	// 先通知旁路观察者，确保输出失败时 metric 等旁路能力仍然生效
 	notifyObservers(ctx, Record{

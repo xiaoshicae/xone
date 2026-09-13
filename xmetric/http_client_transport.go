@@ -126,8 +126,7 @@ const maxExemplarPathLen = 61
 // 无数据时返回 nil，避免高频场景下的空 map 分配
 func buildHTTPExemplar(req *http.Request) prometheus.Labels {
 	path := req.URL.Path
-	traceID := xutil.GetTraceIDFromCtx(req.Context())
-	spanID := xutil.GetSpanIDFromCtx(req.Context())
+	traceID, spanID := xutil.GetTraceAndSpanIDFromCtx(req.Context())
 
 	if path == "" && traceID == "" && spanID == "" {
 		return nil

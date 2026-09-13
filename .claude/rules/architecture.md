@@ -2,13 +2,31 @@
 
 ## 模块分层
 
-- **基础层**：xutil、xhook（无外部依赖）
+- **基础层**：xerror、xutil、xhook（**零第三方依赖**，只用标准库）
 - **核心层**：xconfig、xtrace、xlog（依赖基础层）
 - **服务层**：xhttp、xgorm（依赖核心层）
 - **生命周期层**：xserver（Server 接口 + 信号处理）
 - **应用层**：xgin（依赖 xserver + 核心层/服务层配置）
 
 上层可以依赖下层，下层不得依赖上层。同层模块之间无直接编译依赖。
+
+### 基础层的零依赖约束
+
+xerror / xutil / xhook 只要 import 了 xone 基本都会被编进去，因此它们**不得引入任何第三方依赖**。
+需要下层用到上层能力时，用「上层注入、下层持有扩展点」的方式，而不是让下层 import 上层：
+
+| 扩展点 | 注入方 | 作用 |
+|--------|--------|------|
+| `xutil.SetTraceContextExtractor` | xtrace | 让日志/指标能读到 TraceID，而基础层不必依赖 OpenTelemetry |
+| `xlog.AddObserver` | xmetric、xgin | 观察日志事件，而不必依赖全局日志实例 |
+| `xtrace.AddSpanProcessor` | 业务服务 | 自带 exporter 上报 Span，框架不引入 OTLP/gRPC |
+
+新增基础层代码前跑一遍：
+
+```bash
+# 期望输出为空
+go list -deps ./xerror ./xutil ./xhook | grep -E "^[^/]*\." | grep -v xiaoshicae
+```
 
 ## 全局状态管理
 

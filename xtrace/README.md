@@ -9,6 +9,7 @@ XTrace 是 XOne 框架的分布式追踪模块，基于 OpenTelemetry 封装，�
 - 支持控制台打印 Trace 信息（调试用）
 - 链路关闭时仍保留 Header 透传能力
 - 通过 `AddSpanProcessor` 接入任意上报后端
+- 向 xutil 注入链路标识提取器，使 xlog / xmetric 能关联 TraceID 而基础层不必依赖 OpenTelemetry
 - 线程安全的 shutdown 机制
 
 > **框架不内置上报 exporter**。OTLP / Jaeger 等 exporter 会带进上百个构建依赖

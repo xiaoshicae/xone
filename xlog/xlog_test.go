@@ -450,7 +450,7 @@ func TestHandler(t *testing.T) {
 		})
 
 		mockey.PatchConvey("TestHandler-控制台可读格式", func() {
-			mockey.Mock(xutil.GetTraceIDFromCtx).Return("trace-123").Build()
+			mockey.Mock(xutil.GetTraceAndSpanIDFromCtx).Return("trace-123", "").Build()
 			consoleW := &mockWriter{}
 			h := &xHandler{consoleWriter: consoleW, level: slogLevelTrace}
 			c.So(h.Handle(context.Background(), newTestRecord(slog.LevelInfo, "test message")), c.ShouldBeNil)
@@ -463,7 +463,7 @@ func TestHandler(t *testing.T) {
 
 		mockey.PatchConvey("TestHandler-自定义字段与框架字段同名时不产生重复key", func() {
 			// slog 的 attrs 是列表而非 map，若不去重会在 JSON 中出现两个同名字段
-			mockey.Mock(xutil.GetTraceIDFromCtx).Return("from-ctx").Build()
+			mockey.Mock(xutil.GetTraceAndSpanIDFromCtx).Return("from-ctx", "").Build()
 			fileW := &mockWriter{}
 			h := &xHandler{fileWriter: fileW, level: slogLevelTrace}
 			r := newTestRecord(slog.LevelInfo, "m")

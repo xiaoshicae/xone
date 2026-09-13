@@ -14,7 +14,6 @@ import (
 
 	"github.com/bytedance/mockey"
 	c "github.com/smartystreets/goconvey/convey"
-	"go.opentelemetry.io/otel/trace"
 )
 
 // ==================== convert.go ====================
@@ -74,6 +73,34 @@ func TestToDuration(t *testing.T) {
 		mockey.PatchConvey("TestToDuration-InvalidDay", func() {
 			// "abc" 无法解析为天数，fallback 解析剩余 "12h"
 			c.So(ToDuration("abcd12h"), c.ShouldEqual, 12*time.Hour)
+		})
+
+		mockey.PatchConvey("TestToDuration-数值类型按纳秒计", func() {
+			c.So(ToDuration(time.Duration(5)), c.ShouldEqual, 5*time.Nanosecond)
+			c.So(ToDuration(int8(5)), c.ShouldEqual, 5*time.Nanosecond)
+			c.So(ToDuration(int16(5)), c.ShouldEqual, 5*time.Nanosecond)
+			c.So(ToDuration(int32(5)), c.ShouldEqual, 5*time.Nanosecond)
+			c.So(ToDuration(int64(5)), c.ShouldEqual, 5*time.Nanosecond)
+			c.So(ToDuration(uint(5)), c.ShouldEqual, 5*time.Nanosecond)
+			c.So(ToDuration(uint8(5)), c.ShouldEqual, 5*time.Nanosecond)
+			c.So(ToDuration(uint16(5)), c.ShouldEqual, 5*time.Nanosecond)
+			c.So(ToDuration(uint32(5)), c.ShouldEqual, 5*time.Nanosecond)
+			c.So(ToDuration(uint64(5)), c.ShouldEqual, 5*time.Nanosecond)
+			c.So(ToDuration(float32(5)), c.ShouldEqual, 5*time.Nanosecond)
+			c.So(ToDuration(float64(5)), c.ShouldEqual, 5*time.Nanosecond)
+		})
+
+		mockey.PatchConvey("TestToDuration-不支持的类型与空指针", func() {
+			c.So(ToDuration(struct{}{}), c.ShouldEqual, 0)
+			c.So(ToDuration([]string{"1s"}), c.ShouldEqual, 0)
+			var nilStr *string
+			c.So(ToDuration(nilStr), c.ShouldEqual, 0)
+		})
+
+		mockey.PatchConvey("TestToDuration-无单位纯数字按纳秒解析", func() {
+			c.So(ToDuration("5"), c.ShouldEqual, 5*time.Nanosecond)
+			c.So(ToDuration(""), c.ShouldEqual, 0)
+			c.So(ToDuration("not-a-duration"), c.ShouldEqual, 0)
 		})
 
 		mockey.PatchConvey("TestToDuration-Int", func() {
@@ -586,44 +613,56 @@ func TestGetFuncInfo(t *testing.T) {
 
 // ==================== ctx.go ====================
 
-func TestGetTraceIDFromCtx(t *testing.T) {
-	mockey.PatchConvey("TestGetTraceIDFromCtx", t, func() {
-		mockey.PatchConvey("TestGetTraceIDFromCtx-EmptyCtx", func() {
+// fakeExtractor 测试用的链路标识提取器
+func fakeExtractor(traceID, spanID string) TraceContextExtractor {
+	return func(context.Context) (string, string) { return traceID, spanID }
+}
+
+func TestTraceContextExtractor(t *testing.T) {
+	mockey.PatchConvey("TestTraceContextExtractor", t, func() {
+		defer SetTraceContextExtractor(nil)
+
+		mockey.PatchConvey("未注入提取器时返回空", func() {
+			SetTraceContextExtractor(nil)
 			c.So(GetTraceIDFromCtx(context.Background()), c.ShouldEqual, "")
-		})
-
-		mockey.PatchConvey("TestGetTraceIDFromCtx-ValidSpan", func() {
-			ctx := ctxWithValidSpan()
-			result := GetTraceIDFromCtx(ctx)
-			c.So(result, c.ShouldEqual, "01020304050607080102030405060708")
-		})
-	})
-}
-
-func TestGetSpanIDFromCtx(t *testing.T) {
-	mockey.PatchConvey("TestGetSpanIDFromCtx", t, func() {
-		mockey.PatchConvey("TestGetSpanIDFromCtx-EmptyCtx", func() {
 			c.So(GetSpanIDFromCtx(context.Background()), c.ShouldEqual, "")
+
+			traceID, spanID := GetTraceAndSpanIDFromCtx(context.Background())
+			c.So(traceID, c.ShouldEqual, "")
+			c.So(spanID, c.ShouldEqual, "")
 		})
 
-		mockey.PatchConvey("TestGetSpanIDFromCtx-ValidSpan", func() {
-			ctx := ctxWithValidSpan()
-			result := GetSpanIDFromCtx(ctx)
-			c.So(result, c.ShouldEqual, "0102030405060708")
+		mockey.PatchConvey("注入后按提取器返回", func() {
+			SetTraceContextExtractor(fakeExtractor("01020304050607080102030405060708", "0102030405060708"))
+
+			c.So(GetTraceIDFromCtx(context.Background()), c.ShouldEqual, "01020304050607080102030405060708")
+			c.So(GetSpanIDFromCtx(context.Background()), c.ShouldEqual, "0102030405060708")
+
+			traceID, spanID := GetTraceAndSpanIDFromCtx(context.Background())
+			c.So(traceID, c.ShouldEqual, "01020304050607080102030405060708")
+			c.So(spanID, c.ShouldEqual, "0102030405060708")
+		})
+
+		mockey.PatchConvey("ctx 为 nil 时返回空，且不调用提取器", func() {
+			called := false
+			SetTraceContextExtractor(func(context.Context) (string, string) {
+				called = true
+				return "t", "s"
+			})
+			traceID, spanID := GetTraceAndSpanIDFromCtx(nil)
+			c.So(traceID, c.ShouldEqual, "")
+			c.So(spanID, c.ShouldEqual, "")
+			c.So(called, c.ShouldBeFalse)
+		})
+
+		mockey.PatchConvey("重复注入以最后一次为准", func() {
+			SetTraceContextExtractor(fakeExtractor("a", "b"))
+			SetTraceContextExtractor(fakeExtractor("c", "d"))
+			traceID, spanID := GetTraceAndSpanIDFromCtx(context.Background())
+			c.So(traceID, c.ShouldEqual, "c")
+			c.So(spanID, c.ShouldEqual, "d")
 		})
 	})
-}
-
-// ctxWithValidSpan 创建包含有效 Span 的 context（测试辅助）
-func ctxWithValidSpan() context.Context {
-	traceID, _ := trace.TraceIDFromHex("01020304050607080102030405060708")
-	spanID, _ := trace.SpanIDFromHex("0102030405060708")
-	sc := trace.NewSpanContext(trace.SpanContextConfig{
-		TraceID:    traceID,
-		SpanID:     spanID,
-		TraceFlags: trace.FlagsSampled,
-	})
-	return trace.ContextWithRemoteSpanContext(context.Background(), sc)
 }
 
 // ==================== retry.go ====================

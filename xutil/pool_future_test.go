@@ -101,7 +101,7 @@ func TestDefaultPoolIsLazy(t *testing.T) {
 		So(defaultPool, ShouldNotBeNil)
 
 		done := make(chan struct{})
-		So(Submit(func() { close(done) }), ShouldBeTrue)
+		So(TrySubmit(func() { close(done) }), ShouldBeTrue)
 		select {
 		case <-done:
 		case <-time.After(2 * time.Second):
@@ -159,5 +159,121 @@ func TestFutureCompleteOnce(t *testing.T) {
 		val, err := f.Get()
 		So(val, ShouldEqual, 1)
 		So(err, ShouldBeNil)
+	})
+}
+
+func TestTrySubmit(t *testing.T) {
+	PatchConvey("TestTrySubmit", t, func() {
+		PatchConvey("nil 任务不接收", func() {
+			So(NewPool(1).TrySubmit(nil), ShouldBeFalse)
+		})
+
+		PatchConvey("队列满时立即返回而不阻塞", func() {
+			// 阻塞背压只对自建池成立；不想等的调用方用 TrySubmit
+			p := NewPool(1)
+			block := make(chan struct{})
+			defer close(block)
+
+			So(p.Submit(func() { <-block }), ShouldBeTrue) // 占住唯一的 worker
+			time.Sleep(30 * time.Millisecond)
+			for range taskQueuePerWorker { // 填满队列
+				So(p.Submit(func() {}), ShouldBeTrue)
+			}
+
+			start := time.Now()
+			So(p.TrySubmit(func() {}), ShouldBeFalse)
+			So(time.Since(start), ShouldBeLessThan, 100*time.Millisecond)
+		})
+
+		PatchConvey("池关闭后不接收", func() {
+			p := NewPool(1)
+			p.Shutdown()
+			So(p.TrySubmit(func() {}), ShouldBeFalse)
+		})
+
+		PatchConvey("正常提交会被执行", func() {
+			p := NewPool(1)
+			defer p.Shutdown()
+			done := make(chan struct{})
+			So(p.TrySubmit(func() { close(done) }), ShouldBeTrue)
+			select {
+			case <-done:
+			case <-time.After(2 * time.Second):
+				t.Fatal("任务未执行")
+			}
+		})
+	})
+}
+
+func TestGlobalTrySubmit(t *testing.T) {
+	PatchConvey("TestGlobalTrySubmit", t, func() {
+		PatchConvey("nil 任务不接收", func() {
+			So(TrySubmit(nil), ShouldBeFalse)
+		})
+
+		PatchConvey("正常提交会被执行", func() {
+			done := make(chan struct{})
+			So(TrySubmit(func() { close(done) }), ShouldBeTrue)
+			select {
+			case <-done:
+			case <-time.After(2 * time.Second):
+				t.Fatal("任务未执行")
+			}
+		})
+
+		PatchConvey("提交失败时记录日志，便于排查静默丢弃", func() {
+			logged := 0
+			Mock(ErrorIfEnableDebug).To(func(_ string, _ ...any) { logged++ }).Build()
+			Mock((*Pool).TrySubmit).Return(false).Build()
+
+			So(TrySubmit(func() {}), ShouldBeFalse)
+			So(logged, ShouldEqual, 1)
+		})
+	})
+}
+
+func TestSubmitBlockedWakesOnShutdown(t *testing.T) {
+	PatchConvey("TestSubmitBlockedWakesOnShutdown", t, func() {
+		// 阻塞中的 Submit 必须能被 Shutdown 唤醒：
+		// 否则它会一直持着读锁，Shutdown 永远取不到写锁，
+		// 而 Go 的 RWMutex 写者优先，后续所有 Submit 也会跟着挂起
+		p := NewPool(1)
+		block := make(chan struct{})
+		defer close(block)
+
+		So(p.Submit(func() { <-block }), ShouldBeTrue)
+		time.Sleep(30 * time.Millisecond)
+		for range taskQueuePerWorker {
+			So(p.Submit(func() {}), ShouldBeTrue)
+		}
+
+		blocked := make(chan bool, 1)
+		go func() { blocked <- p.Submit(func() {}) }()
+		time.Sleep(30 * time.Millisecond)
+
+		closed := make(chan struct{})
+		go func() {
+			p.stopOnce.Do(func() {
+				close(p.done)
+				p.mu.Lock()
+				p.closed = true
+				close(p.tasks)
+				p.mu.Unlock()
+			})
+			close(closed)
+		}()
+
+		select {
+		case <-closed:
+		case <-time.After(2 * time.Second):
+			t.Fatal("Shutdown 取不到写锁，被阻塞中的 Submit 拖住")
+		}
+
+		select {
+		case ok := <-blocked:
+			So(ok, ShouldBeFalse) // 关闭时未入队，如实返回 false
+		case <-time.After(2 * time.Second):
+			t.Fatal("阻塞中的 Submit 没有被唤醒")
+		}
 	})
 }

@@ -200,7 +200,7 @@ func TestShutdownXTrace(t *testing.T) {
 		})
 
 		PatchConvey("NoProvider", func() {
-			swapTracerProvider(nil)
+			publishTracerProvider(nil)
 			So(shutdownXTrace(), ShouldBeNil)
 		})
 	})
@@ -262,16 +262,16 @@ func TestSamplerOf(t *testing.T) {
 	})
 }
 
-// TestSwapTracerProviderShutdownError 旧实例关闭失败只告警，不影响新实例生效
-func TestSwapTracerProviderShutdownError(t *testing.T) {
-	PatchConvey("TestSwapTracerProviderShutdownError", t, func() {
+// TestPublishTracerProviderShutdownError 旧实例关闭失败只告警，不影响新实例生效
+func TestPublishTracerProviderShutdownError(t *testing.T) {
+	PatchConvey("TestPublishTracerProviderShutdownError", t, func() {
 		defer func() { _ = shutdownXTrace() }()
 
 		So(initXTraceByConfig(&Config{}, "svc", "v1"), ShouldBeNil)
 		Mock((*trace.TracerProvider).Shutdown).Return(errors.New("shutdown failed")).Build()
 
 		next := trace.NewTracerProvider()
-		So(func() { swapTracerProvider(next) }, ShouldNotPanic)
+		So(func() { publishTracerProvider(next) }, ShouldNotPanic)
 		So(tracerProvider, ShouldEqual, next)
 	})
 }

@@ -168,6 +168,10 @@
           "type": ["number", "string"],
           "description": "采样率，取值(0,1]，>=1时全采样，默认1.0。完全关闭链路请用Enable=false"
         },
+        "ShutdownTimeout": {
+          "type": "string",
+          "description": "关闭时等待Span导出完成的上限，默认5s。仅在通过xtrace.AddSpanProcessor注册了上报处理器时有实际意义"
+        },
         "ForwardHeaders": {
           "type": "array",
           "description": "全局透传的自定义HTTP Header列表，向所有下游服务透传（如X-Request-Id），配置后自动从上游请求提取并注入下游请求",

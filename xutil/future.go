@@ -28,15 +28,41 @@ func Async[T any](fn func() (T, error)) *Future[T] {
 	return f
 }
 
-// Go 向任务池提交一个返回结果的任务，返回 Future 用于异步获取结果
+// AsyncWithPool 在任务池中执行一个返回结果的任务，返回 Future 用于异步获取结果
+//
+// 与 Async 的区别只在执行载体：Async 每次新起一个 goroutine，没有并发上限；
+// 本函数复用池中的 worker，并发数受池大小约束，适合「处理一万个 item 但只要
+// 十个并发」这类需要限流的场景。
+//
+// 队列满时会阻塞调用方，直到有空位或任务池被关闭。池由调用方自己创建、
+// 自己知道容量，这里的背压是合理的；不想等就用 TryAsyncWithPool。
 //
 // 任务池已关闭时立即以 ErrPoolClosed 完成，而不是留下一个永远不会
 // 被关闭的 Future——那会让每个 Get 的调用方永久阻塞。
-func Go[T any](p *Pool, fn func() (T, error)) *Future[T] {
+func AsyncWithPool[T any](p *Pool, fn func() (T, error)) *Future[T] {
 	f := newFuture[T]()
 	if !p.Submit(func() { f.complete(safeCall(fn)) }) {
 		var zero T
-		f.complete(zero, xerror.New("xutil", "Go", ErrPoolClosed))
+		f.complete(zero, xerror.New("xutil", "AsyncWithPool", ErrPoolClosed))
+	}
+	return f
+}
+
+// TryAsyncWithPool 同 AsyncWithPool，但队列满时不阻塞，立即以 ErrPoolFull 完成
+//
+// 适合「宁可降级也不要等」的场景：拿到 ErrPoolFull 说明池子来不及处理，
+// 调用方可以同步执行、丢弃或记一次指标，而不是被拖住。
+func TryAsyncWithPool[T any](p *Pool, fn func() (T, error)) *Future[T] {
+	f := newFuture[T]()
+	if !p.TrySubmit(func() { f.complete(safeCall(fn)) }) {
+		// 先判已关闭：关闭是永久状态、不必重试，队列满则是瞬时的，
+		// 两者对调用方的处置完全不同，不能笼统报一个"没收下"
+		cause := ErrPoolFull
+		if p.isClosed() {
+			cause = ErrPoolClosed
+		}
+		var zero T
+		f.complete(zero, xerror.New("xutil", "TryAsyncWithPool", cause))
 	}
 	return f
 }

@@ -896,8 +896,8 @@ func TestGlobalSubmit(t *testing.T) {
 			c.So(<-ch, c.ShouldEqual, 42)
 		})
 
-		mockey.PatchConvey("TestGlobalSubmit-Go", func() {
-			f := Go(defaultPool(), func() (string, error) {
+		mockey.PatchConvey("TestGlobalSubmit-AsyncWithPool", func() {
+			f := AsyncWithPool(defaultPool(), func() (string, error) {
 				return "default", nil
 			})
 			val, err := f.Get()
@@ -987,12 +987,12 @@ func TestPool_Submit(t *testing.T) {
 	})
 }
 
-func TestPool_Go(t *testing.T) {
-	mockey.PatchConvey("TestPool_Go", t, func() {
-		mockey.PatchConvey("TestPool_Go-Success", func() {
+func TestAsyncWithPool(t *testing.T) {
+	mockey.PatchConvey("TestAsyncWithPool", t, func() {
+		mockey.PatchConvey("TestAsyncWithPool-Success", func() {
 			p := NewPool(2)
 			defer p.Shutdown()
-			f := Go(p, func() (string, error) {
+			f := AsyncWithPool(p, func() (string, error) {
 				return "pooled", nil
 			})
 			val, err := f.Get()
@@ -1000,10 +1000,10 @@ func TestPool_Go(t *testing.T) {
 			c.So(val, c.ShouldEqual, "pooled")
 		})
 
-		mockey.PatchConvey("TestPool_Go-Error", func() {
+		mockey.PatchConvey("TestAsyncWithPool-Error", func() {
 			p := NewPool(2)
 			defer p.Shutdown()
-			f := Go(p, func() (int, error) {
+			f := AsyncWithPool(p, func() (int, error) {
 				return 0, errors.New("pool task error")
 			})
 			val, err := f.Get()
@@ -1012,14 +1012,14 @@ func TestPool_Go(t *testing.T) {
 			c.So(val, c.ShouldEqual, 0)
 		})
 
-		mockey.PatchConvey("TestPool_Go-MultipleFutures", func() {
+		mockey.PatchConvey("TestAsyncWithPool-MultipleFutures", func() {
 			p := NewPool(4)
 			defer p.Shutdown()
 
 			futures := make([]*Future[int], 10)
 			for i := range 10 {
 				v := i
-				futures[i] = Go(p, func() (int, error) {
+				futures[i] = AsyncWithPool(p, func() (int, error) {
 					return v * v, nil
 				})
 			}
@@ -1030,7 +1030,7 @@ func TestPool_Go(t *testing.T) {
 			}
 		})
 
-		mockey.PatchConvey("TestPool_Go-WithTimeout", func() {
+		mockey.PatchConvey("TestAsyncWithPool-WithTimeout", func() {
 			p := NewPool(1)
 			defer p.Shutdown()
 
@@ -1039,7 +1039,7 @@ func TestPool_Go(t *testing.T) {
 				time.Sleep(500 * time.Millisecond)
 			})
 
-			f := Go(p, func() (string, error) {
+			f := AsyncWithPool(p, func() (string, error) {
 				return "result", nil
 			})
 			val, err := f.GetWithTimeout(1 * time.Second)

@@ -14,8 +14,13 @@ const (
 	taskQueuePerWorker = 16
 )
 
-// ErrPoolClosed 任务池已关闭，任务未被接收
-var ErrPoolClosed = errors.New("xutil: pool is closed")
+var (
+	// ErrPoolClosed 任务池已关闭，任务未被接收
+	ErrPoolClosed = errors.New("xutil: pool is closed")
+
+	// ErrPoolFull 任务池队列已满，任务未被接收
+	ErrPoolFull = errors.New("xutil: pool queue is full")
+)
 
 // defaultPool 全局默认任务池，首次使用时才创建
 //
@@ -140,6 +145,16 @@ func (p *Pool) TrySubmit(task func()) bool {
 
 	select {
 	case p.tasks <- task:
+		return true
+	default:
+		return false
+	}
+}
+
+// isClosed 报告任务池是否已关闭
+func (p *Pool) isClosed() bool {
+	select {
+	case <-p.done:
 		return true
 	default:
 		return false

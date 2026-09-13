@@ -65,13 +65,13 @@ func TestAsyncPanicBecomesError(t *testing.T) {
 	})
 }
 
-// TestGoOnClosedPool 池已关闭时 Future 必须立刻完成，而不是永久阻塞
-func TestGoOnClosedPool(t *testing.T) {
-	PatchConvey("TestGoOnClosedPool", t, func() {
+// TestAsyncWithPoolOnClosedPool 池已关闭时 Future 必须立刻完成，而不是永久阻塞
+func TestAsyncWithPoolOnClosedPool(t *testing.T) {
+	PatchConvey("TestAsyncWithPoolOnClosedPool", t, func() {
 		p := NewPool(2)
 		p.Shutdown()
 
-		f := Go(p, func() (int, error) { return 1, nil })
+		f := AsyncWithPool(p, func() (int, error) { return 1, nil })
 
 		val, err := f.GetWithTimeout(500 * time.Millisecond)
 		So(val, ShouldEqual, 0)
@@ -81,13 +81,13 @@ func TestGoOnClosedPool(t *testing.T) {
 	})
 }
 
-// TestGoPanicBecomesError 池中任务的 panic 同样转成 error
-func TestGoPanicBecomesError(t *testing.T) {
-	PatchConvey("TestGoPanicBecomesError", t, func() {
+// TestAsyncWithPoolPanicBecomesError 池中任务的 panic 同样转成 error
+func TestAsyncWithPoolPanicBecomesError(t *testing.T) {
+	PatchConvey("TestAsyncWithPoolPanicBecomesError", t, func() {
 		p := NewPool(1)
 		defer p.Shutdown()
 
-		f := Go(p, func() (string, error) { panic("池任务炸了") })
+		f := AsyncWithPool(p, func() (string, error) { panic("池任务炸了") })
 		val, err := f.Get()
 		So(val, ShouldBeEmpty)
 		So(err.Error(), ShouldContainSubstring, "panic occurred, 池任务炸了")
@@ -275,5 +275,64 @@ func TestSubmitBlockedWakesOnShutdown(t *testing.T) {
 		case <-time.After(2 * time.Second):
 			t.Fatal("阻塞中的 Submit 没有被唤醒")
 		}
+	})
+}
+
+func TestTryAsyncWithPool(t *testing.T) {
+	PatchConvey("TestTryAsyncWithPool", t, func() {
+		PatchConvey("正常提交拿到结果", func() {
+			p := NewPool(1)
+			defer p.Shutdown()
+
+			v, err := TryAsyncWithPool(p, func() (int, error) { return 42, nil }).Get()
+			So(err, ShouldBeNil)
+			So(v, ShouldEqual, 42)
+		})
+
+		PatchConvey("队列满时不阻塞，以 ErrPoolFull 完成", func() {
+			// 与 AsyncWithPool 的区别就在这里：宁可降级也不要等
+			p := NewPool(1)
+			block := make(chan struct{})
+			defer close(block)
+
+			So(p.Submit(func() { <-block }), ShouldBeTrue)
+			time.Sleep(30 * time.Millisecond)
+			for range taskQueuePerWorker {
+				So(p.Submit(func() {}), ShouldBeTrue)
+			}
+
+			start := time.Now()
+			_, err := TryAsyncWithPool(p, func() (int, error) { return 1, nil }).Get()
+			So(time.Since(start), ShouldBeLessThan, 100*time.Millisecond)
+			So(errors.Is(err, ErrPoolFull), ShouldBeTrue)
+		})
+
+		PatchConvey("池已关闭时报 ErrPoolClosed 而非 ErrPoolFull", func() {
+			// 关闭是永久状态、不必重试；队列满是瞬时的，两者处置方式不同
+			p := NewPool(1)
+			p.Shutdown()
+
+			_, err := TryAsyncWithPool(p, func() (int, error) { return 1, nil }).Get()
+			So(errors.Is(err, ErrPoolClosed), ShouldBeTrue)
+			So(errors.Is(err, ErrPoolFull), ShouldBeFalse)
+		})
+
+		PatchConvey("任务 panic 同样转成 error", func() {
+			p := NewPool(1)
+			defer p.Shutdown()
+
+			_, err := TryAsyncWithPool(p, func() (string, error) { panic("炸了") }).Get()
+			So(err, ShouldNotBeNil)
+			So(err.Error(), ShouldContainSubstring, "炸了")
+		})
+	})
+}
+
+func TestPoolIsClosed(t *testing.T) {
+	PatchConvey("TestPoolIsClosed", t, func() {
+		p := NewPool(1)
+		So(p.isClosed(), ShouldBeFalse)
+		p.Shutdown()
+		So(p.isClosed(), ShouldBeTrue)
 	})
 }

@@ -14,6 +14,7 @@ import (
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/sdk/resource"
 	"go.opentelemetry.io/otel/sdk/trace"
+	oteltrace "go.opentelemetry.io/otel/trace"
 
 	. "github.com/bytedance/mockey"
 	. "github.com/smartystreets/goconvey/convey"
@@ -273,5 +274,32 @@ func TestPublishTracerProviderShutdownError(t *testing.T) {
 		next := trace.NewTracerProvider()
 		So(func() { publishTracerProvider(next) }, ShouldNotPanic)
 		So(tracerProvider, ShouldEqual, next)
+	})
+}
+
+// TestTraceContextExtractorInjected 基础层不依赖 otel，链路标识由本模块注入：
+// 注入之后 xutil 才能从 ctx 中读出 TraceID / SpanID
+func TestTraceContextExtractorInjected(t *testing.T) {
+	PatchConvey("TestTraceContextExtractorInjected", t, func() {
+		PatchConvey("init 已注入提取器", func() {
+			traceID, _ := oteltrace.TraceIDFromHex("01020304050607080102030405060708")
+			spanID, _ := oteltrace.SpanIDFromHex("0102030405060708")
+			sc := oteltrace.NewSpanContext(oteltrace.SpanContextConfig{
+				TraceID:    traceID,
+				SpanID:     spanID,
+				TraceFlags: oteltrace.FlagsSampled,
+			})
+			ctx := oteltrace.ContextWithSpanContext(context.Background(), sc)
+
+			gotTrace, gotSpan := xutil.GetTraceAndSpanIDFromCtx(ctx)
+			So(gotTrace, ShouldEqual, "01020304050607080102030405060708")
+			So(gotSpan, ShouldEqual, "0102030405060708")
+		})
+
+		PatchConvey("不在链路中时返回空", func() {
+			gotTrace, gotSpan := traceContextFromCtx(context.Background())
+			So(gotTrace, ShouldBeEmpty)
+			So(gotSpan, ShouldBeEmpty)
+		})
 	})
 }

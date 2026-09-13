@@ -352,8 +352,7 @@ func TestBuildHTTPExemplar(t *testing.T) {
 	})
 
 	PatchConvey("TestBuildHTTPExemplar-有traceID和spanID", t, func() {
-		Mock(xutil.GetTraceIDFromCtx).Return("abc123def456").Build()
-		Mock(xutil.GetSpanIDFromCtx).Return("span789").Build()
+		Mock(xutil.GetTraceAndSpanIDFromCtx).Return("abc123def456", "span789").Build()
 
 		req, _ := http.NewRequest("GET", "http://example.com/api", nil)
 		labels := buildHTTPExemplar(req)
@@ -365,8 +364,7 @@ func TestBuildHTTPExemplar(t *testing.T) {
 
 	PatchConvey("TestBuildHTTPExemplar-长path加trace加span总rune不超128", t, func() {
 		// W3C 标准：trace_id 32 hex chars, span_id 16 hex chars
-		Mock(xutil.GetTraceIDFromCtx).Return("abcdef1234567890abcdef1234567890").Build()
-		Mock(xutil.GetSpanIDFromCtx).Return("1234567890abcdef").Build()
+		Mock(xutil.GetTraceAndSpanIDFromCtx).Return("abcdef1234567890abcdef1234567890", "1234567890abcdef").Build()
 
 		longPath := "/api/v2/organizations/12345/projects/67890/resources/abcdef/actions/deploy/logs"
 		req, _ := http.NewRequest("GET", "http://example.com"+longPath, nil)
@@ -401,8 +399,7 @@ func TestRecordHTTPClientMetric_ExemplarOverLimit(t *testing.T) {
 		resetClientMetricState()
 
 		// 构造超长 trace_id 触发 exemplar 超 128 rune 上限
-		Mock(xutil.GetTraceIDFromCtx).Return("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").Build() // 52 chars
-		Mock(xutil.GetSpanIDFromCtx).Return("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb").Build()                      // 32 chars
+		Mock(xutil.GetTraceAndSpanIDFromCtx).Return("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb").Build() // 52 chars
 
 		req, _ := http.NewRequest("GET", "http://example.com/a]long/path/that/is/not/short", nil)
 		So(func() {

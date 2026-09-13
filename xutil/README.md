@@ -2,6 +2,9 @@
 
 工具函数包，提供通用工具函数、异步任务（Future）和任务池（Pool）。
 
+> **零第三方依赖**：本包只用标准库。它几乎会被所有模块编进去，任何第三方依赖都会
+> 转嫁给全部使用者，因此需要上层能力时一律走扩展点注入，见下方「链路标识」。
+
 ## Future - 异步任务
 
 `Future` 提供类似 Java Future 的异步编程能力，支持泛型。
@@ -129,3 +132,23 @@ for _, f := range futures {
 | `pool.Submit(fn)` | 向自定义任务池提交任务 |
 | `Go[T](pool, fn) *Future[T]` | 提交任务，返回 Future |
 | `pool.Shutdown()` | 优雅关闭，等待所有任务完成 |
+
+## 链路标识
+
+`GetTraceIDFromCtx` / `GetSpanIDFromCtx` / `GetTraceAndSpanIDFromCtx` 从 ctx 中读取链路标识，
+供 xlog 关联日志、xmetric 生成 Exemplar 使用。
+
+本包**不依赖 OpenTelemetry** —— 提取逻辑由 xtrace 在 `init` 阶段注入：
+
+```go
+// xtrace 中自动完成，业务无需关心
+xutil.SetTraceContextExtractor(func(ctx context.Context) (traceID, spanID string) { ... })
+```
+
+因此：
+
+- 服务 import 了 xtrace（通常经由 xone 的任一上层模块）→ 日志自动带上 TraceID / SpanID
+- 完全不用 xtrace → 三个函数返回空串，而不必为此编进整棵 otel trace/attribute 树
+- 直接使用 OpenTelemetry 而不经由 xtrace 时，可自行调用 `SetTraceContextExtractor` 注入
+
+热点路径（如每条日志）建议用 `GetTraceAndSpanIDFromCtx` 一次取两个值。

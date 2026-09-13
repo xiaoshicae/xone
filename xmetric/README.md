@@ -19,6 +19,53 @@ XMetric:
 
 ## 指标类型选择指南
 
+### 先看这张表
+
+| 你想知道… | 用 | 函数 |
+|-----------|-----|------|
+| 一共发生了多少次 | **Counter** | `CounterInc` |
+| 一共累计了多少量 | **Counter** | `CounterAdd` |
+| 当前值是多少 | **Gauge** | `GaugeSet` / `GaugeInc` / `GaugeDec` |
+| **某件事花了多久** | **Histogram** | **`ObserveDuration` / `Timer`** |
+| 其它数值的分布、要算 P99 | **Histogram** | `HistogramObserve` |
+
+一句话判完：
+
+> **这个值会变小吗？会 → Gauge，不会 → Counter。要看分布或分位数 → Histogram。**
+
+### 耗时观测：用 ObserveDuration / Timer，别自己换算单位
+
+```go
+// 方式一：已有 time.Duration
+xmetric.ObserveDuration("db_query", time.Since(start), xmetric.T("table", "orders"))
+
+// 方式二：一行计时
+defer xmetric.Timer("handle_order")()
+```
+
+两者都会自动给指标名补上 `_seconds` 后缀，并按秒记录 —— 和默认桶
+（`prometheus.DefBuckets`，覆盖 5ms ~ 10s）对齐。
+
+> ⚠️ **直接用 `HistogramObserve` 记耗时时要注意单位。** 它的默认桶单位是**秒**，
+> 而 `HttpDurationBuckets`（HTTP 入站/出站指标）的单位是**毫秒** —— 这两个配置
+> 单位不同。若按毫秒往 `HistogramObserve` 传值：
+>
+> ```go
+> xmetric.HistogramObserve("api_latency", 250)  // 以为是 250ms，实际被当成 250s
+> ```
+>
+> 所有样本都会落进 `+Inf` 桶，`histogram_quantile` 只能得出 "p99 > 10"，
+> **分位数完全失效且没有任何报错**。用 `ObserveDuration` 可以从根上避开这个坑。
+
+`Timer` 的标签在计时开始时即固定。若要按执行结果打标签，改用 `ObserveDuration`：
+
+```go
+start := time.Now()
+defer func() {
+    xmetric.ObserveDuration("handle_order", time.Since(start), xmetric.T("status", status))
+}()
+```
+
 ### Counter — 累计计数，只增不减
 
 > 核心问题：**"一共发生了多少次/多少量？"**
@@ -103,16 +150,24 @@ histogram_quantile(0.99, rate(myapp_db_query_duration_ms_bucket[5m]))   # P99 �
 histogram_quantile(0.50, rate(myapp_redis_call_duration_ms_bucket[5m])) # P50 中位数
 ```
 
----
+## 指标命名约定
 
-### 一句话速查
+Prometheus 约定指标名自带单位与语义，Grafana 面板和告警规则都依赖它来推断单位：
 
-| 你想知道... | 用 | 函数 |
-|------------|-----|------|
-| 一共发生了多少次 | **Counter** | `CounterInc` |
-| 一共累计了多少量 | **Counter** | `CounterAdd` |
-| 当前值是多少 | **Gauge** | `GaugeSet` / `GaugeInc` / `GaugeDec` |
-| 耗时/大小分布、P99 | **Histogram** | `HistogramObserve` |
+| 类型 | 后缀 | 示例 |
+|------|------|------|
+| 累计计数 | `_total` | `order_created_total`、`payment_failed_total` |
+| 耗时（秒） | `_seconds` | `db_query_seconds`（`ObserveDuration` 自动补） |
+| 字节数 | `_bytes` | `response_size_bytes` |
+| 当前数量 | 无后缀 | `ws_connections`、`queue_pending` |
+
+另外两条硬约束：
+
+- **同一个指标名只能对应一种类型。** 先 `CounterInc("x")` 再 `GaugeSet("x")`，后者
+  不会被注册进 registry —— 值照记，但 `/metrics` 永远看不到。模块会打一条 error 日志
+  （需开启 `XONE_ENABLE_DEBUG` 才可见），但不会 panic
+- **标签名固定、标签值有界。** 不要把 用户 ID、订单号、原始 URL 路径 这类高基数值
+  作为标签，否则会撑爆时序数量
 
 ## 标签使用
 

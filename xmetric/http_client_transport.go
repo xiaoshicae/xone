@@ -3,49 +3,48 @@ package xmetric
 import (
 	"net/http"
 	"strconv"
-	"sync"
 	"time"
 
-	"github.com/prometheus/client_golang/prometheus"
 	"github.com/xiaoshicae/xone/v2/xutil"
+
+	"github.com/prometheus/client_golang/prometheus"
 )
 
-var (
-	clientMetricOnce      sync.Once
-	clientRequestsTotal   *prometheus.CounterVec
-	clientRequestDuration *prometheus.HistogramVec
-)
+// 出站 HTTP 指标的固定标签与缓存键
+var httpClientLabels = []string{"method", "host", "status"}
 
-func initClientMetricCollectors() {
-	clientMetricOnce.Do(func() {
-		ns := GetConfig().Namespace
+// httpClientCollectors 取出站请求的两个 collector
+//
+// 走统一的 collector 缓存而非 sync.Once：Once 一旦执行就把 Namespace、
+// ConstLabels 和桶边界永久冻结在首次配置上，重新初始化后新配置不再生效。
+func httpClientCollectors() (*prometheus.CounterVec, *prometheus.HistogramVec) {
+	const (
+		counterName   = "http_client_requests_total"
+		histogramName = "http_client_request_duration_ms"
+	)
 
-		cl := getConstLabels()
+	counter := getOrCreateCollector(buildCacheKey(kindCounter, counterName, httpClientLabels), counterName,
+		func() *prometheus.CounterVec {
+			return prometheus.NewCounterVec(prometheus.CounterOpts{
+				Namespace:   getNamespace(),
+				Name:        counterName,
+				Help:        "HTTP 出站请求总数",
+				ConstLabels: getConstLabels(),
+			}, httpClientLabels)
+		})
 
-		counter := prometheus.NewCounterVec(prometheus.CounterOpts{
-			Namespace:   ns,
-			Name:        "http_client_requests_total",
-			Help:        "HTTP 出站请求总数",
-			ConstLabels: cl,
-		}, []string{"method", "host", "status"})
+	histogram := getOrCreateCollector(buildCacheKey(kindHistogram, histogramName, httpClientLabels), histogramName,
+		func() *prometheus.HistogramVec {
+			return prometheus.NewHistogramVec(prometheus.HistogramOpts{
+				Namespace:   getNamespace(),
+				Name:        histogramName,
+				Help:        "HTTP 出站请求耗时分布（毫秒）",
+				Buckets:     getHttpDurationBuckets(),
+				ConstLabels: getConstLabels(),
+			}, httpClientLabels)
+		})
 
-		histogram := prometheus.NewHistogramVec(prometheus.HistogramOpts{
-			Namespace:   ns,
-			Name:        "http_client_request_duration_ms",
-			Help:        "HTTP 出站请求耗时分布（毫秒）",
-			Buckets:     getHttpDurationBuckets(),
-			ConstLabels: cl,
-		}, []string{"method", "host", "status"})
-
-		if rc, ok := safeRegister(counter).(*prometheus.CounterVec); ok {
-			counter = rc
-		}
-		if rh, ok := safeRegister(histogram).(*prometheus.HistogramVec); ok {
-			histogram = rh
-		}
-		clientRequestsTotal = counter
-		clientRequestDuration = histogram
-	})
+	return counter, histogram
 }
 
 // HTTPClientMetricTransport 包装 http.RoundTripper，记录出站请求指标
@@ -80,37 +79,50 @@ func (t *HTTPClientMetricTransport) RoundTrip(req *http.Request) (*http.Response
 // RecordHTTPClientMetric 记录 HTTP 出站请求指标
 // 调用方决定记录时机（如 Resty OnSuccess/OnError 只记录最终结果）
 func RecordHTTPClientMetric(method, host, status string, durationMs float64, req *http.Request) {
-	initClientMetricCollectors()
+	counterVec, histogramVec := httpClientCollectors()
 
 	var exemplar prometheus.Labels
 	if req != nil {
 		exemplar = buildHTTPExemplar(req)
 	}
-	counter := clientRequestsTotal.WithLabelValues(method, host, status)
-	histogram := clientRequestDuration.WithLabelValues(method, host, status)
+	counter := counterVec.WithLabelValues(method, host, status)
+	histogram := histogramVec.WithLabelValues(method, host, status)
 
-	if exemplar != nil {
-		if adder, ok := counter.(prometheus.ExemplarAdder); ok {
-			safeExemplar(func() { adder.AddWithExemplar(1, exemplar) })
-		} else {
-			counter.Inc()
-		}
-		if observer, ok := histogram.(prometheus.ExemplarObserver); ok {
-			safeExemplar(func() { observer.ObserveWithExemplar(durationMs, exemplar) })
-		} else {
-			histogram.Observe(durationMs)
-		}
-	} else {
-		counter.Inc()
-		histogram.Observe(durationMs)
+	addWithExemplar(counter, exemplar)
+	observeWithExemplar(histogram, durationMs, exemplar)
+}
+
+// addWithExemplar 计数 +1，可用时附带 exemplar
+func addWithExemplar(c prometheus.Counter, exemplar prometheus.Labels) {
+	adder, ok := c.(prometheus.ExemplarAdder)
+	if !ok || exemplar == nil {
+		c.Inc()
+		return
 	}
+	safeExemplar(func() { adder.AddWithExemplar(1, exemplar) })
+}
+
+// observeWithExemplar 记录观测值，可用时附带 exemplar
+func observeWithExemplar(o prometheus.Observer, v float64, exemplar prometheus.Labels) {
+	observer, ok := o.(prometheus.ExemplarObserver)
+	if !ok || exemplar == nil {
+		o.Observe(v)
+		return
+	}
+	safeExemplar(func() { observer.ObserveWithExemplar(v, exemplar) })
 }
 
 // safeExemplar 执行附带 exemplar 的指标记录
-// Prometheus client 在 exemplar 验证失败时会 panic（如超 128 rune 上限）
-// 此时指标值已由底层 Add/Observe 记录完成，仅 exemplar 附加失败，静默降级即可
+//
+// Prometheus client 在 exemplar 验证失败时会 panic（如超 128 rune 上限）。
+// 此时指标值已由底层 Add/Observe 记录完成，只是 exemplar 没挂上，降级继续即可；
+// 但不能一声不吭地吞掉——那样 exemplar 长期失效也无人知晓。
 func safeExemplar(fn func()) {
-	defer func() { recover() }()
+	defer func() {
+		if r := recover(); r != nil {
+			xutil.WarnIfEnableDebug("XOne xmetric exemplar rejected, metric value still recorded, %v", r)
+		}
+	}()
 	fn()
 }
 

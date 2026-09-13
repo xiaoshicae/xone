@@ -1,8 +1,12 @@
 package xmetric
 
 import (
-	"github.com/prometheus/client_golang/prometheus"
+	"maps"
+	"slices"
+
 	"github.com/xiaoshicae/xone/v2/xutil"
+
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 const XMetricConfigKey = "XMetric"
@@ -44,15 +48,36 @@ type Config struct {
 	EnableLogErrorMetric *bool `mapstructure:"EnableLogErrorMetric"`
 }
 
+// clone 返回配置的深拷贝，避免调用方改动内部状态
+func (c *Config) clone() *Config {
+	if c == nil {
+		return nil
+	}
+	cp := *c
+	cp.ConstLabels = maps.Clone(c.ConstLabels)
+	cp.HttpDurationBuckets = slices.Clone(c.HttpDurationBuckets)
+	cp.HistogramObserveBuckets = slices.Clone(c.HistogramObserveBuckets)
+	if c.EnableGoMetrics != nil {
+		cp.EnableGoMetrics = xutil.ToPtr(*c.EnableGoMetrics)
+	}
+	if c.EnableProcessMetrics != nil {
+		cp.EnableProcessMetrics = xutil.ToPtr(*c.EnableProcessMetrics)
+	}
+	if c.EnableLogErrorMetric != nil {
+		cp.EnableLogErrorMetric = xutil.ToPtr(*c.EnableLogErrorMetric)
+	}
+	return &cp
+}
+
 func configMergeDefault(c *Config) *Config {
 	if c == nil {
 		c = &Config{}
 	}
 	if len(c.HttpDurationBuckets) == 0 {
-		c.HttpDurationBuckets = append([]float64(nil), defaultHttpDurationBuckets...)
+		c.HttpDurationBuckets = slices.Clone(defaultHttpDurationBuckets)
 	}
 	if len(c.HistogramObserveBuckets) == 0 {
-		c.HistogramObserveBuckets = append([]float64(nil), prometheus.DefBuckets...)
+		c.HistogramObserveBuckets = slices.Clone(prometheus.DefBuckets)
 	}
 	if c.EnableGoMetrics == nil {
 		c.EnableGoMetrics = xutil.ToPtr(true)

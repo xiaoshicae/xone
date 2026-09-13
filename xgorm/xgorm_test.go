@@ -774,13 +774,15 @@ func TestPoolCollector(t *testing.T) {
 					}
 				}
 			}
-			c.So(values[metricOpenConns], c.ShouldEqual, 7)
-			c.So(values[metricInUseConns], c.ShouldEqual, 3)
-			c.So(values[metricIdleConns], c.ShouldEqual, 4)
-			c.So(values[metricMaxOpenConns], c.ShouldEqual, 50)
-			c.So(values[metricWaitCount], c.ShouldEqual, 2)
+			// 用字面量而非常量：指标名是使用者看板和告警依赖的对外契约，
+			// 跟着常量一起改名的话测试就发现不了这种破坏性变更
+			c.So(values["db_connections_open"], c.ShouldEqual, 7)
+			c.So(values["db_connections_in_use"], c.ShouldEqual, 3)
+			c.So(values["db_connections_idle"], c.ShouldEqual, 4)
+			c.So(values["db_connections_max_open"], c.ShouldEqual, 50)
+			c.So(values["db_connections_wait_total"], c.ShouldEqual, 2)
 			// 耗时按秒记录，与 Prometheus 基准单位约定一致
-			c.So(values[metricWaitDuration], c.ShouldEqual, 1.5)
+			c.So(values["db_connections_wait_duration_seconds_total"], c.ShouldEqual, 1.5)
 		})
 
 		PatchConvey("Describe 覆盖全部指标", func() {
@@ -791,7 +793,7 @@ func TestPoolCollector(t *testing.T) {
 			for range ch {
 				n++
 			}
-			c.So(n, c.ShouldEqual, 8)
+			c.So(n, c.ShouldEqual, len(poolMetrics))
 		})
 	})
 }

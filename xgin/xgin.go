@@ -155,25 +155,7 @@ func (g *XGin) Run() error {
 
 	xutil.InfoIfEnableDebug("gin server listen on: %s", addr)
 
-	// 构建 handler，根据配置决定是否启用 h2c
-	handler := g.engine.Handler()
-	if ginConfig.UseH2C && ginConfig.CertFile == "" && ginConfig.KeyFile == "" {
-		// 非 TLS 模式下使用 h2c（HTTP/2 Cleartext）
-		h2s := &http2.Server{}
-		handler = h2c.NewHandler(handler, h2s)
-		xutil.InfoIfEnableDebug("gin server use h2c (HTTP/2 Cleartext)")
-	}
-
-	// 超时必须显式设置：零值是"永不超时"，慢客户端可以一直占着连接，
-	// 连接数打满后服务整体不可用
-	srv := &http.Server{
-		Addr:              addr,
-		Handler:           handler,
-		ReadHeaderTimeout: xutil.ToDuration(ginConfig.ReadHeaderTimeout),
-		ReadTimeout:       xutil.ToDuration(ginConfig.ReadTimeout),
-		WriteTimeout:      xutil.ToDuration(ginConfig.WriteTimeout),
-		IdleTimeout:       xutil.ToDuration(ginConfig.IdleTimeout),
-	}
+	srv := g.newHTTPServer(ginConfig, addr)
 
 	g.srvMu.Lock()
 	if g.stopped {
@@ -230,6 +212,28 @@ func (g *XGin) Stop() error {
 		return xerror.New("xgin", "stop", err)
 	}
 	return nil
+}
+
+// newHTTPServer 按配置构建 http.Server
+func (g *XGin) newHTTPServer(c *Config, addr string) *http.Server {
+	// 构建 handler，根据配置决定是否启用 h2c
+	handler := g.engine.Handler()
+	if c.UseH2C && c.CertFile == "" && c.KeyFile == "" {
+		// 非 TLS 模式下使用 h2c（HTTP/2 Cleartext）
+		handler = h2c.NewHandler(handler, &http2.Server{})
+		xutil.InfoIfEnableDebug("gin server use h2c (HTTP/2 Cleartext)")
+	}
+
+	// 超时必须显式设置：零值是"永不超时"，慢客户端可以一直占着连接，
+	// 连接数打满后服务整体不可用
+	return &http.Server{
+		Addr:              addr,
+		Handler:           handler,
+		ReadHeaderTimeout: xutil.ToDuration(c.ReadHeaderTimeout),
+		ReadTimeout:       xutil.ToDuration(c.ReadTimeout),
+		WriteTimeout:      xutil.ToDuration(c.WriteTimeout),
+		IdleTimeout:       xutil.ToDuration(c.IdleTimeout),
+	}
 }
 
 func (g *XGin) getXGinOptions() *options.Options {

@@ -487,12 +487,14 @@ func TestPoolCollector(t *testing.T) {
 					}
 				}
 			}
-			c.So(values[metricRedisTotalConns], c.ShouldEqual, 9)
-			c.So(values[metricRedisIdleConns], c.ShouldEqual, 4)
-			c.So(values[metricRedisStaleConns], c.ShouldEqual, 1)
-			c.So(values[metricRedisHits], c.ShouldEqual, 100)
-			c.So(values[metricRedisMisses], c.ShouldEqual, 5)
-			c.So(values[metricRedisTimeouts], c.ShouldEqual, 2)
+			// 用字面量而非常量：指标名是使用者看板和告警依赖的对外契约，
+			// 跟着常量一起改名的话测试就发现不了这种破坏性变更
+			c.So(values["redis_pool_connections_total_current"], c.ShouldEqual, 9)
+			c.So(values["redis_pool_connections_idle"], c.ShouldEqual, 4)
+			c.So(values["redis_pool_connections_stale_total"], c.ShouldEqual, 1)
+			c.So(values["redis_pool_hits_total"], c.ShouldEqual, 100)
+			c.So(values["redis_pool_misses_total"], c.ShouldEqual, 5)
+			c.So(values["redis_pool_timeouts_total"], c.ShouldEqual, 2)
 		})
 
 		mockey.PatchConvey("Describe 覆盖全部指标", func() {
@@ -503,7 +505,7 @@ func TestPoolCollector(t *testing.T) {
 			for range ch {
 				n++
 			}
-			c.So(n, c.ShouldEqual, 6)
+			c.So(n, c.ShouldEqual, len(poolMetrics))
 		})
 	})
 }

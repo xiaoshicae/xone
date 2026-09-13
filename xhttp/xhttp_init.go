@@ -44,43 +44,8 @@ func initHttpClient() error {
 	}
 	xutil.InfoIfEnableDebug("XOne initHttpClient got config: %s", xutil.ToJsonString(c))
 
-	// 基于 DefaultTransport 克隆，保留 TLS、HTTP/2、Dial 等默认配置
-	baseTransport := http.DefaultTransport
-	if transport, ok := baseTransport.(*http.Transport); ok {
-		transport = transport.Clone()
-		transport.MaxIdleConns = c.MaxIdleConns
-		transport.MaxIdleConnsPerHost = c.MaxIdleConnsPerHost
-		transport.IdleConnTimeout = xutil.ToDuration(c.IdleConnTimeout)
-		transport.DialContext = (&net.Dialer{
-			Timeout:   xutil.ToDuration(c.DialTimeout),
-			KeepAlive: xutil.ToDuration(c.DialKeepAlive),
-		}).DialContext
-		baseTransport = transport
-	} else {
-		xutil.WarnIfEnableDebug("XOne initHttpClient http.DefaultTransport is %T, skip transport tuning", baseTransport)
-	}
-
-	// 根据是否启用 trace 选择 Transport
-	// HostAwareTransport 把目标 host 写入 ctx，使 HeaderPropagator 能按域名过滤透传 Header
-	//
-	// trace 开启：client → HostAwareTransport → otelhttp.Transport → baseTransport
-	//   otelhttp 负责注入 trace 与透传 Header
-	// trace 关闭但配置了 Header 透传：client → HostAwareTransport → ForwardHeaderTransport → baseTransport
-	//   链路关闭不应让已配置的 Header 透传静默失效
-	var finalTransport http.RoundTripper = baseTransport
-	switch {
-	case xtrace.EnableTrace():
-		opts := []otelhttp.Option{
-			otelhttp.WithSpanNameFormatter(spanNameFormatter),
-		}
-		otelTransport := otelhttp.NewTransport(baseTransport, opts...)
-		finalTransport = &xtrace.HostAwareTransport{Next: otelTransport}
-	case xtrace.EnableForwardHeader():
-		finalTransport = &xtrace.HostAwareTransport{Next: &xtrace.ForwardHeaderTransport{Next: baseTransport}}
-	}
-
 	rawHttpClient := &http.Client{
-		Transport: finalTransport,
+		Transport: buildTransport(c),
 		Timeout:   xutil.ToDuration(c.Timeout),
 	}
 
@@ -140,6 +105,46 @@ func retryOnlyIdempotent(resp *resty.Response, err error) bool {
 		xutil.WarnIfEnableDebug("XHttp skip retry for non-idempotent method=[%s], set XHttp.RetryOnlyIdempotent=false to allow", method)
 	}
 	return ok
+}
+
+// buildTransport 按配置构建出站 Transport 链
+//
+// HostAwareTransport 把目标 host 写入 ctx，使 HeaderPropagator 能按域名过滤透传 Header
+//
+//	trace 开启：client → HostAwareTransport → otelhttp.Transport → baseTransport
+//	  otelhttp 负责注入 trace 与透传 Header
+//	trace 关闭但配置了 Header 透传：client → HostAwareTransport → ForwardHeaderTransport → baseTransport
+//	  链路关闭不应让已配置的 Header 透传静默失效
+func buildTransport(c *Config) http.RoundTripper {
+	base := tunedBaseTransport(c)
+	switch {
+	case xtrace.EnableTrace():
+		otelTransport := otelhttp.NewTransport(base, otelhttp.WithSpanNameFormatter(spanNameFormatter))
+		return &xtrace.HostAwareTransport{Next: otelTransport}
+	case xtrace.EnableForwardHeader():
+		return &xtrace.HostAwareTransport{Next: &xtrace.ForwardHeaderTransport{Next: base}}
+	default:
+		return base
+	}
+}
+
+// tunedBaseTransport 基于 DefaultTransport 克隆，保留 TLS、HTTP/2、Dial 等默认配置
+func tunedBaseTransport(c *Config) http.RoundTripper {
+	transport, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		xutil.WarnIfEnableDebug("XOne initHttpClient http.DefaultTransport is %T, skip transport tuning", http.DefaultTransport)
+		return http.DefaultTransport
+	}
+
+	transport = transport.Clone()
+	transport.MaxIdleConns = c.MaxIdleConns
+	transport.MaxIdleConnsPerHost = c.MaxIdleConnsPerHost
+	transport.IdleConnTimeout = xutil.ToDuration(c.IdleConnTimeout)
+	transport.DialContext = (&net.Dialer{
+		Timeout:   xutil.ToDuration(c.DialTimeout),
+		KeepAlive: xutil.ToDuration(c.DialKeepAlive),
+	}).DialContext
+	return transport
 }
 
 // spanNameFormatter otelhttp 的 span 命名格式：METHOD PATH

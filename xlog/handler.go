@@ -168,23 +168,30 @@ func (h *xHandler) Handle(ctx context.Context, r slog.Record) error {
 		return true
 	})
 
-	// 仅在确有 JSON 输出目标时才序列化
+	// 仅在确有 JSON 输出目标时才序列化，两个输出目标共用同一份结果
 	var jsonLine []byte
 	var jsonErr error
-	var enc *jsonEncoder
-	if h.fileWriter != nil || (h.consoleWriter != nil && h.consoleJSON) {
-		enc = acquireEncoder()
+	if h.needJSON() {
+		enc := acquireEncoder()
 		defer releaseEncoder(enc)
-
-		// 序列化失败只影响 JSON 输出，控制台的可读格式仍应照常写出
-		if err := enc.handler.Handle(ctx, out); err != nil {
-			jsonErr = err
-		} else {
-			jsonLine = enc.buf.Bytes()
-		}
+		jsonLine, jsonErr = enc.encode(ctx, out)
 	}
 
+	return h.writeOutputs(out, caller, jsonLine, jsonErr, traceID, panicStack)
+}
+
+// needJSON 是否有输出目标需要 JSON 序列化
+func (h *xHandler) needJSON() bool {
+	return h.fileWriter != nil || (h.consoleWriter != nil && h.consoleJSON)
+}
+
+// writeOutputs 把日志写往文件与控制台，返回最先发生的错误
+//
+// jsonErr 是序列化阶段的错误：它只影响 JSON 输出，
+// 控制台的可读格式仍应照常写出，所以不在这里提前返回
+func (h *xHandler) writeOutputs(r slog.Record, caller *runtime.Frame, jsonLine []byte, jsonErr error, traceID, panicStack string) error {
 	firstErr := jsonErr
+
 	if h.fileWriter != nil && jsonLine != nil {
 		if _, err := h.fileWriter.Write(jsonLine); err != nil && firstErr == nil {
 			firstErr = err
@@ -192,7 +199,7 @@ func (h *xHandler) Handle(ctx context.Context, r slog.Record) error {
 	}
 	if h.consoleWriter != nil {
 		// 控制台写入失败不应掩盖文件写入的错误，保留先发生的错误
-		if err := h.writeConsole(out, caller, jsonLine, traceID, panicStack); err != nil && firstErr == nil {
+		if err := h.writeConsole(r, caller, jsonLine, traceID, panicStack); err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}
@@ -286,6 +293,14 @@ var encoderPool = sync.Pool{
 			}),
 		}
 	},
+}
+
+// encode 序列化一条记录，失败时返回 nil 行与错误
+func (enc *jsonEncoder) encode(ctx context.Context, r slog.Record) ([]byte, error) {
+	if err := enc.handler.Handle(ctx, r); err != nil {
+		return nil, err
+	}
+	return enc.buf.Bytes(), nil
 }
 
 func acquireEncoder() *jsonEncoder {

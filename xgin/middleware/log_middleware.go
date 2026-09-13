@@ -161,9 +161,9 @@ var rbwPool = sync.Pool{
 	},
 }
 
-// LogMiddleware 请求日志中间件
-// 使用示例：LogMiddleware(WithSkipPaths("/health", "/metrics", "/api/internal/"))
-func LogMiddleware(opts ...LogOption) gin.HandlerFunc {
+// Log 请求日志中间件
+// 使用示例：Log(WithSkipPaths("/health", "/metrics", "/api/internal/"))
+func Log(opts ...LogOption) gin.HandlerFunc {
 	// 应用配置
 	options := &LogOptions{}
 	for _, opt := range opts {
@@ -238,7 +238,7 @@ func LogMiddleware(opts ...LogOption) gin.HandlerFunc {
 				desc += " (" + handlerName + ")"
 			}
 			// 走 xlog 而非全局 logrus，确保请求日志与业务日志使用同一套输出配置
-			xlog.Info(c.Request.Context(), "[XGin-LogMiddleware] %s request processed.", desc, xlog.KVMap(requestInfo))
+			xlog.Info(c.Request.Context(), "[XGin-Log] %s request processed.", desc, xlog.KVMap(requestInfo))
 		}()
 
 		// 继续处理

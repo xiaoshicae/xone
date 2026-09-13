@@ -40,10 +40,10 @@ XTrace:
 
 ```go
 // 检查 Trace 是否启用（需在 xtrace 的 BeforeStart Hook 执行之后调用）
-xtrace.EnableTrace() bool
+xtrace.TraceEnabled() bool
 
 // 检查是否配置了自定义 Header 透传
-xtrace.EnableForwardHeader() bool
+xtrace.ForwardHeaderEnabled() bool
 
 // 获取 Tracer，用于创建自定义 Span
 xtrace.GetTracer(name string, opts ...trace.TracerOption) trace.Tracer
@@ -105,7 +105,7 @@ import (
 
 func main() {
     // 检查 Trace 是否启用
-    if xtrace.EnableTrace() {
+    if xtrace.TraceEnabled() {
         // 创建自定义 Span
         tracer := xtrace.GetTracer("my-service")
         ctx, span := tracer.Start(context.Background(), "my-operation")

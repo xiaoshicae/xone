@@ -49,12 +49,14 @@ func RunBlocking() error {
 	return run(&blockingServer{})
 }
 
-// R 调用before start hook，建议用于调试
+// Init 只执行 BeforeStart Hook，完成各模块初始化但不启动任何服务
 //
-// 注意：R 不执行 BeforeStop hook，各模块初始化后保持可用状态，
-// 调用方可以继续使用 xgorm.C()、xhttp.C() 等客户端。
-// 代价是日志写入器不会 flush，进程退出前若要确保日志落盘，请改用 Run。
-func R() error {
+// 用于测试与调试：初始化完成后各模块保持可用状态，调用方可以直接使用
+// xgorm.C()、xhttp.C() 等客户端。
+//
+// 注意：Init 不执行 BeforeStop Hook，日志写入器不会 flush，
+// 进程退出前若要确保日志落盘，请改用 Run。
+func Init() error {
 	return run(nil)
 }
 

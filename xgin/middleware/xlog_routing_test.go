@@ -24,7 +24,7 @@ func TestMiddlewareLogsGoThroughXLog(t *testing.T) {
 	t.Run("日志中间件", func(t *testing.T) {
 		records = nil
 		r := gin.New()
-		r.Use(LogMiddleware())
+		r.Use(Log())
 		r.GET("/ok", func(c *gin.Context) { c.String(http.StatusOK, "ok") })
 
 		r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", "/ok", nil))
@@ -40,7 +40,7 @@ func TestMiddlewareLogsGoThroughXLog(t *testing.T) {
 	t.Run("Recover中间件", func(t *testing.T) {
 		records = nil
 		r := gin.New()
-		r.Use(GinXRecoverMiddleware(nil))
+		r.Use(Recover(nil))
 		r.GET("/panic", func(c *gin.Context) { panic("boom") })
 
 		r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", "/panic", nil))

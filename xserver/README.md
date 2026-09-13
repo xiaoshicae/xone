@@ -16,10 +16,10 @@ type Server interface {
 ```go
 xserver.Run(server)   // 启动 Server，阻塞等待退出信号
 xserver.RunBlocking() // 无 Server 的常驻服务（consumer / job），阻塞等待退出信号
-xserver.R()           // 只执行 BeforeStart hook，调试用
+xserver.Init()           // 只执行 BeforeStart hook，调试用
 ```
 
-`R()` 不执行 BeforeStop hook —— 各模块初始化后保持可用，调用方可以继续用
+`Init()` 不执行 BeforeStop hook —— 各模块初始化后保持可用，调用方可以继续用
 `xgorm.C()`、`xhttp.C()`。代价是日志写入器不会 flush，要确保日志落盘请用 `Run`。
 
 ## 生命周期

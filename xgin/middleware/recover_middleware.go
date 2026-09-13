@@ -13,9 +13,9 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// GinXRecoverMiddleware panic recover 中间件
+// Recover panic recover 中间件
 // panic 日志通过 xlog 输出，与业务日志共用同一套格式与输出目标
-func GinXRecoverMiddleware(recoveryFunc gin.RecoveryFunc) gin.HandlerFunc {
+func Recover(recoveryFunc gin.RecoveryFunc) gin.HandlerFunc {
 	if recoveryFunc == nil {
 		recoveryFunc = defaultHandleRecovery
 	}

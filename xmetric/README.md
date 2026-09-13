@@ -66,6 +66,10 @@ defer func() {
 }()
 ```
 
+`Timer` 与 `TrackInFlight` 返回的函数都**重复调用只有首次生效**。两者签名相同、
+用法相同，一个幂等一个不幂等只会是记忆负担；`defer` 之外再显式调一次
+（提前返回时想"先记一笔"）也不会把 histogram 的 count 和 rate 一起推高。
+
 ### 进行中数量：用 TrackInFlight，别手动配对 Inc/Dec
 
 ```go

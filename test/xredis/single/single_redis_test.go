@@ -18,7 +18,7 @@ func TestXRedisSingleClient(t *testing.T) {
 
 	PatchConvey("TestXRedisSingleClient", t, func() {
 		// 初始化 XOne
-		err := xserver.R()
+		err := xserver.Init()
 		So(err, ShouldBeNil)
 
 		ctx := context.Background()

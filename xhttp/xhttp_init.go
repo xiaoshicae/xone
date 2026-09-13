@@ -118,10 +118,10 @@ func retryOnlyIdempotent(resp *resty.Response, err error) bool {
 func buildTransport(c *Config) http.RoundTripper {
 	base := tunedBaseTransport(c)
 	switch {
-	case xtrace.EnableTrace():
+	case xtrace.TraceEnabled():
 		otelTransport := otelhttp.NewTransport(base, otelhttp.WithSpanNameFormatter(spanNameFormatter))
 		return &xtrace.HostAwareTransport{Next: otelTransport}
-	case xtrace.EnableForwardHeader():
+	case xtrace.ForwardHeaderEnabled():
 		return &xtrace.HostAwareTransport{Next: &xtrace.ForwardHeaderTransport{Next: base}}
 	default:
 		return base

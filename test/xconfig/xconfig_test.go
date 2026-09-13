@@ -14,7 +14,7 @@ import (
 func TestXConfig(t *testing.T) {
 	t.Skip("集成测试，需手动运行")
 	PatchConvey("TestXConfig", t, func() {
-		if err := xserver.R(); err != nil {
+		if err := xserver.Init(); err != nil {
 			panic(err)
 		}
 
@@ -57,7 +57,7 @@ var cfg Config
 
 func TestLoadConfig(t *testing.T) {
 	t.Skip("集成测试，需手动运行")
-	if err := xserver.R(); err != nil {
+	if err := xserver.Init(); err != nil {
 		t.Fatal(err)
 	}
 

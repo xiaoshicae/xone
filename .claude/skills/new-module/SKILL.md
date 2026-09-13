@@ -109,7 +109,7 @@ func closeX{模块名}() error {
   - 创建错误：`xerror.New(module, op, err)` 或 `xerror.Newf(module, op, format, args...)`
 - 内部 debug 日志使用 `xutil.InfoIfEnableDebug()` / `xutil.WarnIfEnableDebug()` / `xutil.ErrorIfEnableDebug()`
 - 正式日志记录使用 `xlog.Info(ctx, ...)` / `xlog.Warn(ctx, ...)` / `xlog.Error(ctx, ...)`，必须传递 context
-- 如需链路追踪，检查 `xtrace.EnableTrace()`
+- 如需链路追踪，检查 `xtrace.TraceEnabled()`
 - import 路径使用 v2：`github.com/xiaoshicae/xone/v2/x{模块名}`
 - 测试使用 mockey + goconvey，需要 `-gcflags="all=-N -l"`
 - 配置默认值需要考虑生产级别的最佳实践：

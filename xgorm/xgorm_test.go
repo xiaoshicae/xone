@@ -289,7 +289,7 @@ func TestNewClient(t *testing.T) {
 				return nil
 			}).Build()
 			Mock((*sql.DB).PingContext).Return(nil).Build()
-			Mock(xtrace.EnableTrace).Return(true).Build()
+			Mock(xtrace.TraceEnabled).Return(true).Build()
 			Mock((*gorm.DB).Use).Return(errors.New("use err")).Build()
 
 			_, err := newClient(&Config{})

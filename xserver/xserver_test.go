@@ -73,10 +73,10 @@ func TestRunBlocking(t *testing.T) {
 	})
 }
 
-func TestR(t *testing.T) {
-	PatchConvey("TestR", t, func() {
+func TestInit(t *testing.T) {
+	PatchConvey("TestInit", t, func() {
 		Mock(run).Return(nil).Build()
-		So(R(), ShouldBeNil)
+		So(Init(), ShouldBeNil)
 	})
 }
 

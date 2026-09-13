@@ -228,7 +228,7 @@ type Server interface {
 // 启动方式
 xserver.Run(server)      // 启动 Server，阻塞等待退出信号
 xserver.RunBlocking()    // 启动阻塞式 Server（consumer/job 服务）
-xserver.R()              // 仅执行 BeforeStart hook（调试用）
+xserver.Init()           // 仅执行 BeforeStart hook（调试用）
 ```
 
 ## xgin 包

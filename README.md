@@ -195,7 +195,7 @@ xserver.Run(myServer)
 xserver.RunBlocking()
 
 // 方式五：只初始化模块，不启动服务（调试用）
-xserver.R()
+xserver.Init()
 ```
 
 TLS、HTTP/2、超时与优雅退出都通过 YAML 配置，见 [配置参考](./doc/configuration.md#常用配置项)。

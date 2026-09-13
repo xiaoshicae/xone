@@ -81,6 +81,19 @@ func TestTimer(t *testing.T) {
 			_ = Timer("never_stopped")
 			So(gatheredNames(), ShouldNotContain, "never_stopped_seconds")
 		})
+
+		PatchConvey("重复调用只记一次", func() {
+			// 与 TrackInFlight 保持一致：两者签名相同、用法相同，
+			// 一个幂等一个不幂等只会让调用方记错。多记一次会让
+			// histogram 的 count 与 rate 一起偏高
+			stop := Timer("double_stopped")
+			stop()
+			stop()
+			stop()
+
+			h := gatherHistogram(t, "double_stopped_seconds")
+			So(h.GetSampleCount(), ShouldEqual, 1)
+		})
 	})
 }
 

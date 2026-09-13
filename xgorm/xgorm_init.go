@@ -227,7 +227,7 @@ func newClient(c *Config) (*gorm.DB, error) {
 		return nil, xerror.Newf("xgorm", "newClient", "invoke db.PingContext failed, err=[%v]", err)
 	}
 
-	if xtrace.EnableTrace() {
+	if xtrace.TraceEnabled() {
 		if err := client.Use(tracing.NewPlugin(tracing.WithoutMetrics())); err != nil {
 			return nil, xerror.Newf("xgorm", "newClient", "use tracing.NewPlugin failed, err=[%v]", err)
 		}

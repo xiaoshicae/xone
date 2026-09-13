@@ -33,7 +33,7 @@ func TestXGormMultiClient(t *testing.T) {
 
 	PatchConvey("TestXGormMultiClient", t, func() {
 		// 初始化 XOne
-		err := xserver.R()
+		err := xserver.Init()
 		So(err, ShouldBeNil)
 
 		ctx := context.Background()

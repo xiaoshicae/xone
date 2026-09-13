@@ -11,10 +11,10 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
 
-func TestGinXTraceMiddleware(t *testing.T) {
+func TestTrace(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	r.Use(GinXTraceMiddleware())
+	r.Use(Trace())
 
 	r.GET("/test", func(c *gin.Context) {
 		c.String(http.StatusOK, "ok")
@@ -29,10 +29,10 @@ func TestGinXTraceMiddleware(t *testing.T) {
 	}
 }
 
-func TestGinXTraceMiddlewareWithErrors(t *testing.T) {
+func TestTraceWithErrors(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	r.Use(GinXTraceMiddleware())
+	r.Use(Trace())
 
 	r.GET("/error", func(c *gin.Context) {
 		c.Error(http.ErrAbortHandler)
@@ -48,10 +48,10 @@ func TestGinXTraceMiddlewareWithErrors(t *testing.T) {
 	}
 }
 
-func TestGinXTraceMiddlewareNoMatchRoute(t *testing.T) {
+func TestTraceNoMatchRoute(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	r.Use(GinXTraceMiddleware())
+	r.Use(Trace())
 
 	// 不注册路由，测试 404 情况（fullPath 为空）
 	r.NoRoute(func(c *gin.Context) {
@@ -67,10 +67,10 @@ func TestGinXTraceMiddlewareNoMatchRoute(t *testing.T) {
 	}
 }
 
-func TestGinXTraceMiddlewareWithPropagation(t *testing.T) {
+func TestTraceWithPropagation(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	r.Use(GinXTraceMiddleware())
+	r.Use(Trace())
 
 	r.GET("/propagate", func(c *gin.Context) {
 		// 验证 context 被正确传递
@@ -92,7 +92,7 @@ func TestGinXTraceMiddlewareWithPropagation(t *testing.T) {
 	}
 }
 
-func TestGinXTraceMiddlewareStatusCodes(t *testing.T) {
+func TestTraceStatusCodes(t *testing.T) {
 	tests := []struct {
 		name         string
 		statusCode   int
@@ -108,7 +108,7 @@ func TestGinXTraceMiddlewareStatusCodes(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			gin.SetMode(gin.TestMode)
 			r := gin.New()
-			r.Use(GinXTraceMiddleware())
+			r.Use(Trace())
 
 			r.GET("/test", func(c *gin.Context) {
 				c.Status(tt.statusCode)
@@ -125,7 +125,7 @@ func TestGinXTraceMiddlewareStatusCodes(t *testing.T) {
 	}
 }
 
-func TestGinXTraceMiddleware_ValidSpan(t *testing.T) {
+func TestTrace_ValidSpan(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	// 设置真实的 TracerProvider，使 span 具有有效的 SpanContext
@@ -137,7 +137,7 @@ func TestGinXTraceMiddleware_ValidSpan(t *testing.T) {
 	defer otel.SetTracerProvider(origTP)
 
 	r := gin.New()
-	r.Use(GinXTraceMiddleware())
+	r.Use(Trace())
 
 	r.GET("/trace-valid", func(c *gin.Context) {
 		c.String(http.StatusOK, "ok")

@@ -55,8 +55,8 @@ func TestConfigMergeDefault(t *testing.T) {
 
 // ==================== util.go ====================
 
-func TestEnableTrace(t *testing.T) {
-	PatchConvey("TestEnableTrace", t, func() {
+func TestTraceEnabled(t *testing.T) {
+	PatchConvey("TestTraceEnabled", t, func() {
 		defer func() {
 			traceEnabled.Store(true)
 			forwardHeaderEnabled.Store(false)
@@ -64,19 +64,19 @@ func TestEnableTrace(t *testing.T) {
 
 		PatchConvey("初始化前默认开启", func() {
 			traceEnabled.Store(true)
-			So(EnableTrace(), ShouldBeTrue)
+			So(TraceEnabled(), ShouldBeTrue)
 		})
 
 		PatchConvey("初始化写入 false 后关闭", func() {
 			traceEnabled.Store(false)
-			So(EnableTrace(), ShouldBeFalse)
+			So(TraceEnabled(), ShouldBeFalse)
 		})
 
-		PatchConvey("EnableForwardHeader 跟随初始化写入", func() {
+		PatchConvey("ForwardHeaderEnabled 跟随初始化写入", func() {
 			forwardHeaderEnabled.Store(false)
-			So(EnableForwardHeader(), ShouldBeFalse)
+			So(ForwardHeaderEnabled(), ShouldBeFalse)
 			forwardHeaderEnabled.Store(true)
-			So(EnableForwardHeader(), ShouldBeTrue)
+			So(ForwardHeaderEnabled(), ShouldBeTrue)
 		})
 	})
 }

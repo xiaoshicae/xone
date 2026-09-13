@@ -60,7 +60,7 @@ func TestFormatRows(t *testing.T) {
 
 func TestNewGormLogger(t *testing.T) {
 	PatchConvey("TestNewGormLogger", t, func() {
-		Mock(xlog.XLogLevel).Return("warn").Build()
+		Mock(xlog.CurrentLevel).Return(xlog.WarnLevel).Build()
 
 		l := newGormLogger(&Config{SlowThreshold: "2s", IgnoreRecordNotFoundErrorLog: true})
 		c.So(l.logLevel, c.ShouldEqual, logger.Warn)

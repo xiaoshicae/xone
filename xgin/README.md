@@ -9,6 +9,12 @@
 * 支持中文验证错误翻译
 * 实现 `xserver.Server` 接口，通过 `Start()` 或 `xserver.Run()` 启动
 
+> **`Start()` 而不是 `Run()`。** 两者是英文同义词但职责完全不同：`Start()` 走完整生命周期
+> （BeforeStart Hook → 服务 → 退出信号 → BeforeStop Hook），`Run()` 只是 `xserver.Server`
+> 接口的实现，由 `xserver` 在初始化之后调用，自己不跑任何 Hook。直接调 `Run()` 会被拒绝并
+> 报错——否则它会拿到一份空配置（xconfig 未初始化时读配置不报错、只返回零值），
+> 于是服务照常起在默认端口上，而日志、链路、数据库客户端一个都没配置。
+
 ### 2. 配置参数
 
 ```yaml

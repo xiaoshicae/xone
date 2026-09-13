@@ -32,6 +32,10 @@ func Get[V any](key string) (V, bool) {
 }
 
 // Set 向全局缓存设置值，使用默认 TTL
+//
+// 返回值含义见 Cache.Set：true 只代表被接收，既不保证最终留下，也不保证
+// 下一次 Get 能读到。全局缓存额外多一种 false：缓存不可用（创建失败，
+// 或模块已关闭），这种情况 global 会打日志，与「缓冲区满」这种瞬时丢弃区分开。
 func Set(key string, value any) bool {
 	cache := global()
 	if cache == nil {
@@ -41,6 +45,8 @@ func Set(key string, value any) bool {
 }
 
 // SetWithTTL 向全局缓存设置值，指定 TTL
+//
+// 返回值含义同 Set。
 func SetWithTTL(key string, value any, ttl time.Duration) bool {
 	cache := global()
 	if cache == nil {
@@ -50,6 +56,8 @@ func SetWithTTL(key string, value any, ttl time.Duration) bool {
 }
 
 // SetWithCost 向全局缓存设置值，指定 cost，使用默认 TTL
+//
+// 返回值含义同 Set。
 func SetWithCost(key string, value any, cost int64) bool {
 	cache := global()
 	if cache == nil {
@@ -59,6 +67,8 @@ func SetWithCost(key string, value any, cost int64) bool {
 }
 
 // SetWithCostAndTTL 向全局缓存设置值，指定 cost 和 TTL
+//
+// 返回值含义同 Set。
 func SetWithCostAndTTL(key string, value any, cost int64, ttl time.Duration) bool {
 	cache := global()
 	if cache == nil {
@@ -86,7 +96,9 @@ func Clear() {
 }
 
 // Wait 等待全局缓存的缓冲写入完成，主要用于测试场景
-// ristretto 内部使用环形缓冲区，Set 后值不一定立即可读
+//
+// ristretto 内部使用环形缓冲区，Set 返回后值不一定立即可读。
+// 会阻塞到缓冲区排空，不要放在请求路径上。
 func Wait() {
 	cache := global()
 	if cache == nil {

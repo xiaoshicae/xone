@@ -70,7 +70,7 @@ xgorm 依赖 xlog 记录日志、依赖 xtrace 上报链路，因此关闭时先
 | 选项 | 默认值 | 说明 |
 |------|--------|------|
 | `Order(n)` | 100 | 资源层级，值越小越底层：启动越早、关闭越晚。必须 >= 0，负值为框架保留区（panic）。**不推荐使用**，详见下文 |
-| `MustInvokeSuccess(b)` | true | 失败时是否中断流程（仅 BeforeStart 有效） |
+| `MustSucceed(b)` | true | 失败时是否中断流程（仅 BeforeStart 有效） |
 | `Timeout(d)` | 10s | 单个 Hook 超时时间 |
 
 ### 关于 Order
@@ -117,8 +117,8 @@ for _, name := range dbNames {
 
 ## BeforeStart 错误处理
 
-- `MustInvokeSuccess=true`（默认）：Hook 失败时立即返回错误，中断启动流程
-- `MustInvokeSuccess=false`：Hook 失败时记录警告，继续执行后续 Hook
+- `MustSucceed=true`（默认）：Hook 失败时立即返回错误，中断启动流程
+- `MustSucceed=false`：Hook 失败时记录警告，继续执行后续 Hook
 
 ## BeforeStop 错误处理
 

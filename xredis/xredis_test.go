@@ -379,7 +379,7 @@ func TestNewClient(t *testing.T) {
 
 	mockey.PatchConvey("TestNewClient-PingSuccess-NoTrace", t, func() {
 		mockey.Mock(pingWithRetry).Return(nil).Build()
-		mockey.Mock(xtrace.EnableTrace).Return(false).Build()
+		mockey.Mock(xtrace.TraceEnabled).Return(false).Build()
 
 		client, err := newClient(&Config{Addr: "localhost:6379", DialTimeout: "1s"})
 		c.So(err, c.ShouldBeNil)
@@ -389,7 +389,7 @@ func TestNewClient(t *testing.T) {
 
 	mockey.PatchConvey("TestNewClient-PingSuccess-WithTrace", t, func() {
 		mockey.Mock(pingWithRetry).Return(nil).Build()
-		mockey.Mock(xtrace.EnableTrace).Return(true).Build()
+		mockey.Mock(xtrace.TraceEnabled).Return(true).Build()
 
 		client, err := newClient(&Config{Addr: "localhost:6379", DialTimeout: "1s"})
 		c.So(err, c.ShouldBeNil)
@@ -399,7 +399,7 @@ func TestNewClient(t *testing.T) {
 
 	mockey.PatchConvey("TestNewClient-InstrumentTracingFail", t, func() {
 		mockey.Mock(pingWithRetry).Return(nil).Build()
-		mockey.Mock(xtrace.EnableTrace).Return(true).Build()
+		mockey.Mock(xtrace.TraceEnabled).Return(true).Build()
 		mockey.Mock(redisotel.InstrumentTracing).Return(errors.New("tracing error")).Build()
 
 		client, err := newClient(&Config{Addr: "localhost:6379", DialTimeout: "1s"})
@@ -412,7 +412,7 @@ func TestNewClient(t *testing.T) {
 		// 不 mock pingWithRetry，走真实的重试与 Ping 路径
 		// mock Process 使 Ping 不走真实连接
 		mockey.Mock((*redis.Client).Process).Return(nil).Build()
-		mockey.Mock(xtrace.EnableTrace).Return(false).Build()
+		mockey.Mock(xtrace.TraceEnabled).Return(false).Build()
 
 		client, err := newClient(&Config{Addr: "localhost:6379", DialTimeout: "100ms"})
 		c.So(err, c.ShouldBeNil)

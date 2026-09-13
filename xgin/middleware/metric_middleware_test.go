@@ -41,8 +41,8 @@ func labelValue(metric *dto.Metric, name string) string {
 	return ""
 }
 
-func TestGinXMetricMiddleware_NormalRequest(t *testing.T) {
-	PatchConvey("TestGinXMetricMiddleware-正常GET请求", t, func() {
+func TestMetric_NormalRequest(t *testing.T) {
+	PatchConvey("TestMetric-正常GET请求", t, func() {
 		resetMetricMiddlewareState()
 		Mock(xmetric.GetConfig).Return(&xmetric.Config{}).Build()
 		Mock(xmetric.SafeRegister).To(func(c prometheus.Collector) prometheus.Collector {
@@ -51,7 +51,7 @@ func TestGinXMetricMiddleware_NormalRequest(t *testing.T) {
 
 		gin.SetMode(gin.TestMode)
 		r := gin.New()
-		r.Use(GinXMetricMiddleware())
+		r.Use(Metric())
 		r.GET("/api/users", func(c *gin.Context) {
 			c.JSON(http.StatusOK, gin.H{"status": "ok"})
 		})
@@ -68,8 +68,8 @@ func TestGinXMetricMiddleware_NormalRequest(t *testing.T) {
 	})
 }
 
-func TestGinXMetricMiddleware_RecordsMetrics(t *testing.T) {
-	PatchConvey("TestGinXMetricMiddleware-记录请求数和耗时", t, func() {
+func TestMetric_RecordsMetrics(t *testing.T) {
+	PatchConvey("TestMetric-记录请求数和耗时", t, func() {
 		resetMetricMiddlewareState()
 
 		// 使用真实 registry 验证指标数据
@@ -82,7 +82,7 @@ func TestGinXMetricMiddleware_RecordsMetrics(t *testing.T) {
 
 		gin.SetMode(gin.TestMode)
 		r := gin.New()
-		r.Use(GinXMetricMiddleware())
+		r.Use(Metric())
 		r.GET("/api/users", func(c *gin.Context) {
 			c.JSON(http.StatusOK, gin.H{"status": "ok"})
 		})
@@ -136,8 +136,8 @@ func TestGinXMetricMiddleware_RecordsMetrics(t *testing.T) {
 	})
 }
 
-func TestGinXMetricMiddleware_StatusCodes(t *testing.T) {
-	PatchConvey("TestGinXMetricMiddleware-不同状态码分开统计", t, func() {
+func TestMetric_StatusCodes(t *testing.T) {
+	PatchConvey("TestMetric-不同状态码分开统计", t, func() {
 		resetMetricMiddlewareState()
 
 		testRegistry := prometheus.NewRegistry()
@@ -149,7 +149,7 @@ func TestGinXMetricMiddleware_StatusCodes(t *testing.T) {
 
 		gin.SetMode(gin.TestMode)
 		r := gin.New()
-		r.Use(GinXMetricMiddleware())
+		r.Use(Metric())
 		r.GET("/api/ok", func(c *gin.Context) {
 			c.JSON(http.StatusOK, nil)
 		})
@@ -192,8 +192,8 @@ func TestGinXMetricMiddleware_StatusCodes(t *testing.T) {
 	})
 }
 
-func TestGinXMetricMiddleware_UnknownPath(t *testing.T) {
-	PatchConvey("TestGinXMetricMiddleware-未匹配路由path为unknown", t, func() {
+func TestMetric_UnknownPath(t *testing.T) {
+	PatchConvey("TestMetric-未匹配路由path为unknown", t, func() {
 		resetMetricMiddlewareState()
 
 		testRegistry := prometheus.NewRegistry()
@@ -205,7 +205,7 @@ func TestGinXMetricMiddleware_UnknownPath(t *testing.T) {
 
 		gin.SetMode(gin.TestMode)
 		r := gin.New()
-		r.Use(GinXMetricMiddleware())
+		r.Use(Metric())
 		// 不注册任何路由
 
 		req := httptest.NewRequest("GET", "/not-exist", nil)
@@ -223,8 +223,8 @@ func TestGinXMetricMiddleware_UnknownPath(t *testing.T) {
 	})
 }
 
-func TestGinXMetricMiddleware_WithNamespace(t *testing.T) {
-	PatchConvey("TestGinXMetricMiddleware-带Namespace前缀", t, func() {
+func TestMetric_WithNamespace(t *testing.T) {
+	PatchConvey("TestMetric-带Namespace前缀", t, func() {
 		resetMetricMiddlewareState()
 
 		testRegistry := prometheus.NewRegistry()
@@ -236,7 +236,7 @@ func TestGinXMetricMiddleware_WithNamespace(t *testing.T) {
 
 		gin.SetMode(gin.TestMode)
 		r := gin.New()
-		r.Use(GinXMetricMiddleware())
+		r.Use(Metric())
 		r.GET("/api/health", func(c *gin.Context) {
 			c.String(http.StatusOK, "ok")
 		})
@@ -256,8 +256,8 @@ func TestGinXMetricMiddleware_WithNamespace(t *testing.T) {
 	})
 }
 
-func TestGinXMetricMiddleware_PathTemplate(t *testing.T) {
-	PatchConvey("TestGinXMetricMiddleware-路径参数使用模板而非实际值", t, func() {
+func TestMetric_PathTemplate(t *testing.T) {
+	PatchConvey("TestMetric-路径参数使用模板而非实际值", t, func() {
 		resetMetricMiddlewareState()
 
 		testRegistry := prometheus.NewRegistry()
@@ -269,7 +269,7 @@ func TestGinXMetricMiddleware_PathTemplate(t *testing.T) {
 
 		gin.SetMode(gin.TestMode)
 		r := gin.New()
-		r.Use(GinXMetricMiddleware())
+		r.Use(Metric())
 		r.GET("/api/users/:id", func(c *gin.Context) {
 			c.JSON(http.StatusOK, gin.H{"id": c.Param("id")})
 		})
@@ -294,8 +294,8 @@ func TestGinXMetricMiddleware_PathTemplate(t *testing.T) {
 	})
 }
 
-func TestGinXMetricMiddleware_DurationBuckets(t *testing.T) {
-	PatchConvey("TestGinXMetricMiddleware-耗时桶边界正确", t, func() {
+func TestMetric_DurationBuckets(t *testing.T) {
+	PatchConvey("TestMetric-耗时桶边界正确", t, func() {
 		expected := []float64{0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10}
 		So(xmetric.GetHttpDurationBuckets(), ShouldResemble, expected)
 	})
@@ -343,8 +343,8 @@ func TestInitMetricCollectors_Idempotent(t *testing.T) {
 	})
 }
 
-func TestGinXMetricMiddleware_PanicStillRecorded(t *testing.T) {
-	PatchConvey("TestGinXMetricMiddleware-panic穿过时仍记录", t, func() {
+func TestMetric_PanicStillRecorded(t *testing.T) {
+	PatchConvey("TestMetric-panic穿过时仍记录", t, func() {
 		// 收尾逻辑放在 defer 里，即使 panic 穿过本中间件（如用户自定义的
 		// RecoveryFunc 自身 panic），请求也不会在错误率指标里凭空消失
 		resetMetricMiddlewareState()
@@ -355,7 +355,7 @@ func TestGinXMetricMiddleware_PanicStillRecorded(t *testing.T) {
 
 		gin.SetMode(gin.TestMode)
 		r := gin.New()
-		r.Use(GinXMetricMiddleware())
+		r.Use(Metric())
 		r.GET("/boom", func(c *gin.Context) { panic("boom") })
 
 		func() {

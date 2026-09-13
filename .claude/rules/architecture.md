@@ -84,7 +84,16 @@ XOne 各模块通过 `init()` 函数调用 `xhook.BeforeStart()` / `xhook.Before
 2. **避免 Order 冲突**：多个模块各自声明 Order 值，容易产生冲突或不一致
 3. **全部默认时行为即是所需**：所有模块保持默认 Order 时，行为恰好是「启动按 init 顺序、关闭按其逆序」
 
-框架内部只有 xconfig（`Order(1)`）与 xlog（`Order(10)`）声明了 Order，且两者都不可省：Go 按 import path 字典序决定 init 顺序，用户模块叫 `acme/...` 还是 `myapp/...` 就决定了它排在 xone 之前还是之后，使用者无法通过 import 纪律控制。没有 `Order(1)`，路径靠前的用户包会在配置加载完成前执行 BeforeStart；没有 `Order(10)`，这样的用户包会在日志写入器关闭之后才关闭，其关闭日志直接丢失。
+**Order 分两个区间，且是强制隔离的：**
+
+| 区间 | 成员 | Order |
+|------|------|-------|
+| 框架保留区（负值） | xconfig / xlog | -100 / -50 |
+| 业务区（>= 0） | 其余模块与用户资源 | 默认 100 |
+
+`xhook.Order(n)` 对 `n < 0` 直接 panic；负值只能经 `xhook.ReservedOrder` 设置，其参数类型在 `internal/hookorder` 中，外部模块 import 会编译失败。所以业务 Hook 不可能先于 xconfig 启动、也不可能晚于 xlog 关闭。
+
+这两层都不可省：Go 按 import path 字典序决定 init 顺序，用户模块叫 `acme/...` 还是 `myapp/...` 就决定了它排在 xone 之前还是之后，使用者无法通过 import 纪律控制。没有配置层级，路径靠前的用户包会在配置加载完成前执行 BeforeStart；没有日志层级，它会在日志写入器关闭之后才关闭，其关闭日志直接丢失。
 
 ```go
 // 正确 - 使用默认 Order，依靠 import 顺序
@@ -93,9 +102,9 @@ func init() {
     xhook.BeforeStop(closeXLog)
 }
 
-// 不推荐 - 除 xconfig 外，其他模块不应使用 Order
+// 不推荐 - 除框架保留层级外，其他模块不应使用 Order
 func init() {
-    xhook.BeforeStart(initXLog, xhook.Order(30))
+    xhook.BeforeStart(initModule, xhook.Order(30))
 }
 ```
 
@@ -105,8 +114,8 @@ func init() {
 
 ```go
 import (
-    _ "github.com/xiaoshicae/xone/v2/xconfig" // Order=1，最先启动
-    _ "github.com/xiaoshicae/xone/v2/xlog"    // Order=10，次先启动、最后关闭
+    _ "github.com/xiaoshicae/xone/v2/xconfig" // 保留层级 -100，最先启动
+    _ "github.com/xiaoshicae/xone/v2/xlog"    // 保留层级 -50，次先启动、最后关闭
     _ "github.com/xiaoshicae/xone/v2/xtrace"
     _ "github.com/xiaoshicae/xone/v2/xhttp"
     _ "github.com/xiaoshicae/xone/v2/xgorm"

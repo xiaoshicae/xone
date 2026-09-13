@@ -33,7 +33,7 @@ xone/
 
 **BeforeStart 初始化顺序**：正序执行（xconfig → xlog → xtrace → xhttp → xgorm）
 **BeforeStop 关闭顺序**：自动反序执行（xgorm → xhttp → xtrace → xlog → xconfig），LIFO 保证后初始化的模块先关闭
-**Order 语义**：资源层级，值越小越底层 —— 启动越早、关闭越晚。框架内仅 xconfig(1)、xlog(10) 声明，其余保持默认 100
+**Order 语义**：资源层级，值越小越底层 —— 启动越早、关闭越晚。负值为框架保留区（xconfig=-100、xlog=-50，经 `xhook.ReservedOrder` + `internal/hookorder` 强制隔离），业务 Hook 传负值会 panic，保持默认 100 即可
 **注意**：Go 的 init 顺序是「拓扑序 + import path 字典序」，**与 import 书写顺序无关**，不要靠调整 import 控制生命周期顺序
 
 ## 核心设计模式

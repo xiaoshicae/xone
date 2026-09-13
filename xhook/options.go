@@ -1,15 +1,41 @@
 package xhook
 
-import "time"
+import (
+	"fmt"
+	"time"
 
-const defaultHookTimeout = 10 * time.Second
+	"github.com/xiaoshicae/xone/v2/internal/hookorder"
+)
+
+const (
+	defaultHookTimeout = 10 * time.Second
+
+	// minOrder 业务 Hook 允许的最小 Order
+	//
+	// 负值区为框架保留（xconfig / xlog），业务 Hook 无法进入，
+	// 因此不可能先于配置启动，也不可能晚于日志关闭。
+	minOrder = 0
+)
 
 // Order 设置 Hook 所处的资源层级，数值越小越底层：
 // BeforeStart 越先执行，BeforeStop 越后执行（启停对称）。
 // 相同 Order 的 Hook：BeforeStart 按注册顺序，BeforeStop 按注册逆序。
 //
-// 普通模块应保持默认值，依靠 import 顺序控制执行顺序，详见 README。
+// 取值必须 >= 0，负值为框架保留区，传入负值直接 panic。
+// 普通模块应保持默认值（100），详见 README。
 func Order(order int) Option {
+	if order < minOrder {
+		panic(fmt.Sprintf("XOne hook order can not be less than %d, negative order is reserved for the framework", minOrder))
+	}
+	return func(o *options) {
+		o.Order = order
+	}
+}
+
+// ReservedOrder 设置框架保留层级，取值见 internal/hookorder。
+//
+// 参数类型位于 internal 包，外部模块无法构造，因此本函数仅 xone 内部可用。
+func ReservedOrder(_ hookorder.Token, order int) Option {
 	return func(o *options) {
 		o.Order = order
 	}

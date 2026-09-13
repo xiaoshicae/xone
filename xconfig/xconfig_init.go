@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/joho/godotenv"
+	"github.com/xiaoshicae/xone/v2/internal/hookorder"
 	"github.com/xiaoshicae/xone/v2/xerror"
 	"github.com/xiaoshicae/xone/v2/xhook"
 	"github.com/xiaoshicae/xone/v2/xutil"
@@ -25,7 +26,7 @@ var (
 var envPlaceholderRegex = regexp.MustCompile(`\$\{([^}:]+)(?::-([^}]*))?\}`)
 
 func init() {
-	xhook.BeforeStart(initXConfig, xhook.Order(1))
+	xhook.BeforeStart(initXConfig, xhook.ReservedOrder(hookorder.Token{}, hookorder.Config))
 }
 
 func initXConfig() error {

@@ -54,7 +54,7 @@ go tool cover -func=coverage.out
 1. 读取项目根目录 `version.go` 中的 `VERSION` 常量，获取当前版本号
 2. 按上表规则计算新版本号
 3. 更新 `version.go` 中的 `VERSION` 常量
-4. 在 `README.md` 的"更新日志"部分顶部添加新版本记录：
+4. 在 `CHANGELOG.md` 顶部添加新版本记录（紧跟说明段落之后）：
    ```
    - **vX.Y.Z** (YYYY-MM-DD) - <type>: <简短描述>
    ```
@@ -97,5 +97,5 @@ EOF
 - [ ] 质量检查全部通过（fmt + vet + test）
 - [ ] 增量代码覆盖率 >= 60%
 - [ ] version.go 版本号已正确更新（feat/fix/refactor/perf）
-- [ ] README.md 更新日志已添加
+- [ ] CHANGELOG.md 已添加新版本记录
 - [ ] 提交信息格式规范（英文）

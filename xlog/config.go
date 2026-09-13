@@ -1,6 +1,8 @@
 package xlog
 
 import (
+	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -17,6 +19,7 @@ const (
 	defaultFilePath   = "./log"
 	defaultMaxAge     = "7d"
 	defaultRotateTime = "1d"
+	defaultFilePerm   = "0644"
 )
 
 // minRotateTime 轮转周期下限
@@ -93,6 +96,23 @@ type FileConfig struct {
 	// RotateTime 日志切割周期，支持小于一天的周期如 "6h"
 	// optional default "1d"
 	RotateTime string `mapstructure:"RotateTime"`
+
+	// Perm 日志文件权限，八进制字符串如 "0644"
+	// 日志可能含敏感信息，需要限制同机其他用户读取时配 "0600"
+	// optional default "0644"
+	Perm string `mapstructure:"Perm"`
+}
+
+// FileMode 解析日志文件权限，无法解析时回退到默认值
+func (c FileConfig) FileMode() os.FileMode {
+	v, err := strconv.ParseUint(strings.TrimSpace(c.Perm), 8, 32)
+	if err != nil || v == 0 {
+		if c.Perm != "" && c.Perm != defaultFilePerm {
+			xutil.WarnIfEnableDebug("XOne xlog invalid File.Perm [%s], fallback to [%s]", c.Perm, defaultFilePerm)
+		}
+		return defaultLogFilePerm
+	}
+	return os.FileMode(v)
 }
 
 // IsJSON 控制台是否输出 JSON 格式
@@ -148,6 +168,9 @@ func configMergeDefault(c *Config) *Config {
 	if xutil.ToDuration(c.File.RotateTime) < minRotateTime {
 		xutil.WarnIfEnableDebug("XOne xlog invalid File.RotateTime [%s] (min %v), fallback to [%s]", c.File.RotateTime, minRotateTime, defaultRotateTime)
 		c.File.RotateTime = defaultRotateTime
+	}
+	if c.File.Perm == "" {
+		c.File.Perm = defaultFilePerm
 	}
 	// 负数保留时长会让所有历史文件立即过期，同样视为配置错误
 	if xutil.ToDuration(c.File.MaxAge) < 0 {

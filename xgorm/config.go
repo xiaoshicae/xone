@@ -1,5 +1,7 @@
 package xgorm
 
+import "github.com/xiaoshicae/xone/v2/xutil"
+
 const XGormConfigKey = "XGorm"
 
 // Driver 数据库驱动类型
@@ -37,8 +39,9 @@ type Config struct {
 	MaxOpenConns int `mapstructure:"MaxOpenConns"`
 
 	// MaxIdleConns 最大空闲连接数
+	// 指针类型以区分「未配置」与「显式配 0」：0 表示不保留任何空闲连接
 	// optional default 等于 MaxOpenConns
-	MaxIdleConns int `mapstructure:"MaxIdleConns"`
+	MaxIdleConns *int `mapstructure:"MaxIdleConns"`
 
 	// MaxLifetime 连接的最长存活时间
 	// optional default "5m"
@@ -59,6 +62,11 @@ type Config struct {
 	// EnableLog 是否开启日志(开启后gorm的日志将记录到应用的log文件中)
 	// optional default false
 	EnableLog bool `mapstructure:"EnableLog"`
+
+	// EnableMetric 是否启用连接池 Prometheus 指标采集（需配合 xmetric 模块）
+	// 指标在 scrape 时实时读取 sql.DB.Stats()，不额外占用协程
+	// optional default true
+	EnableMetric *bool `mapstructure:"EnableMetric"`
 
 	// Name 用于区分多client配置时的唯一身份
 	// optional default ""
@@ -123,8 +131,8 @@ func configMergeDefault(c *Config) *Config {
 	if c.MaxOpenConns <= 0 {
 		c.MaxOpenConns = 50
 	}
-	if c.MaxIdleConns == 0 {
-		c.MaxIdleConns = c.MaxOpenConns
+	if c.MaxIdleConns == nil {
+		c.MaxIdleConns = xutil.ToPtr(c.MaxOpenConns)
 	}
 	if c.MaxLifetime == "" {
 		c.MaxLifetime = "5m"
@@ -135,7 +143,24 @@ func configMergeDefault(c *Config) *Config {
 	if c.SlowThreshold == "" {
 		c.SlowThreshold = "3s"
 	}
+	if c.EnableMetric == nil {
+		c.EnableMetric = xutil.ToPtr(true)
+	}
 	return c
+}
+
+// metricEnabled 返回是否启用连接池指标
+// nil 视为启用，与文档中的默认值一致，避免直接构造 Config 的调用方踩空指针
+func (c *Config) metricEnabled() bool {
+	return c.EnableMetric == nil || *c.EnableMetric
+}
+
+// maxIdleConns 返回生效的最大空闲连接数
+func (c *Config) maxIdleConns() int {
+	if c.MaxIdleConns == nil {
+		return c.MaxOpenConns
+	}
+	return *c.MaxIdleConns
 }
 
 // GetDriver 获取驱动类型

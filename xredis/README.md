@@ -88,3 +88,34 @@ func example() {
     _ = err
 }
 ```
+
+## 连接池指标
+
+默认启用（需配合 xmetric 模块），在 scrape 时实时读取 `redis.PoolStats()`，不额外占用协程：
+
+| 指标 | 类型 | 说明 |
+|------|------|------|
+| `redis_pool_connections_total_current{name}` | Gauge | 连接池中的连接数（使用中 + 空闲） |
+| `redis_pool_connections_idle{name}` | Gauge | 空闲的连接数 |
+| `redis_pool_connections_stale_total{name}` | Counter | 因超时被移除的连接累计数 |
+| `redis_pool_hits_total{name}` | Counter | 累计命中空闲连接的次数 |
+| `redis_pool_misses_total{name}` | Counter | 累计未命中空闲连接的次数 |
+| `redis_pool_timeouts_total{name}` | Counter | 累计等待连接超时的次数 |
+
+`timeouts` 持续增长说明 `PoolSize` 不够或下游变慢，是最值得告警的一个。
+
+关闭方式：
+
+```yaml
+XRedis:
+  EnableMetric: false
+```
+
+## 注意事项
+
+`MinIdleConns` 默认 **5**，这是框架加的默认值（go-redis 本身默认 0）。
+多实例配置下每个实例都会常驻这么多连接 —— 配了 10 个 Redis 就是 50 条常驻连接，
+实例多时按需调小。
+
+`C()` 在未配置或已关闭时返回 `nil` 并打一条 Error 日志。go-redis 的方法都是指针接收者，
+对 `nil` 调用会 panic，因此不要在启动完成前调用它。

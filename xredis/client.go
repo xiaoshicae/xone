@@ -50,3 +50,13 @@ func setDefault(client *redis.Client) {
 	defer clientMu.Unlock()
 	clientMap[defaultClientName] = client
 }
+
+// removeClients 把指定配置对应的 client 从 clientMap 中摘除，用于初始化失败回滚
+func removeClients(configs []*Config) {
+	clientMu.Lock()
+	defer clientMu.Unlock()
+	for _, c := range configs {
+		delete(clientMap, c.Name)
+	}
+	delete(clientMap, defaultClientName)
+}

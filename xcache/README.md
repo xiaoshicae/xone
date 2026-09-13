@@ -95,9 +95,37 @@ productCache := xcache.C("product-cache")
 defaultCache := xcache.C()
 ```
 
+## 包级函数
+
+操作全局缓存（未配置 `XCache` 时懒初始化一个默认实例）：
+
+| 函数 | 说明 |
+|------|------|
+| `Get[V](key) (V, bool)` | 取值并转换为目标类型 |
+| `Set(key, value) bool` | 设置，使用默认 TTL，cost=1 |
+| `SetWithTTL(key, value, ttl) bool` | 指定 TTL |
+| `SetWithCost(key, value, cost) bool` | 指定 cost |
+| `SetWithCostAndTTL(key, value, cost, ttl) bool` | 同时指定 cost 与 TTL |
+| `Del(key)` | 删除 |
+| `Clear()` | 清空 |
+| `Wait()` | 等待缓冲写入完成（ristretto 是环形缓冲，Set 后不一定立即可读，主要用于测试） |
+
+需要操作具名实例时用 `C("name")` 取到 `*Cache`，方法名与上表一致。
+
 ## 注意事项
 
 - ristretto 内部使用环形缓冲区，`Set` 后值不一定立即可通过 `Get` 读取。在测试场景下可调用 `Wait()` 确保写入完成，生产环境下通常无需关注。
 - `Set` 方法默认 cost=1，此时 `MaxCost` 等价于最大缓存条目数。如需按实际大小淘汰，请使用 `SetWithCost` 或 `SetWithCostAndTTL`。
 - `NumCounters` 建议设置为期望缓存条目数量的 10 倍，以获得最佳的频率追踪效果。
 - 泛型 `Get[V]` 在类型不匹配时返回零值和 `false`，不会 panic。
+
+## 注意事项
+
+`Get[V]` 在类型不匹配时返回零值与 `false`，与 cache miss 的返回值完全相同 ——
+存的是 `*User` 却用 `Get[User]` 取，表现就是「明明 Set 了却永远 miss」。
+这种情况会额外打一条 warn 日志，排查时先看它。
+
+模块关闭（BeforeStop）之后，`global()` 不再懒初始化新实例，包级的
+`Get` / `Set` / `Del` 安全返回零值。否则新建的缓存再也不会有人来关，等于永久泄漏 ——
+用户自己的 BeforeStop hook 在 xcache 之后执行（同为默认 Order，按 LIFO 反序），
+里面读一次缓存就会触发。

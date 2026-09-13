@@ -15,6 +15,14 @@ var (
 	cacheMu  sync.RWMutex
 
 	globalCache *Cache
+
+	// closed 模块是否已执行过关闭
+	//
+	// global() 是懒初始化的：不记住这个状态的话，BeforeStop 之后任何一次
+	// Get/Set 都会重建一个 ristretto 实例，而它再也不会被关闭。
+	// 用户的 BeforeStop hook 在 xcache 之后执行（同为默认 Order，按 LIFO 反序），
+	// 里面读一次缓存就会触发
+	closed bool
 )
 
 // C 获取缓存实例，支持指定名称获取，name 为空则默认获取第一个缓存实例
@@ -33,6 +41,7 @@ func C(name ...string) *Cache {
 }
 
 // global 获取全局缓存实例，如果没有配置的缓存则懒初始化一个默认缓存
+// 模块关闭后返回 nil，不再重建
 func global() *Cache {
 	// 快速路径：读锁检查是否已有配置的缓存
 	if cache := get(); cache != nil {
@@ -48,6 +57,11 @@ func global() *Cache {
 	}
 	if globalCache != nil {
 		return globalCache
+	}
+	if closed {
+		// 关闭后不再重建：新建的实例不会有人再来关，等于永久泄漏
+		xutil.WarnIfEnableDebug("XOne xcache already closed, skip creating default global cache")
+		return nil
 	}
 
 	c, err := newCache(configMergeDefault(nil))
@@ -80,4 +94,14 @@ func setDefault(cache *Cache) {
 	cacheMu.Lock()
 	defer cacheMu.Unlock()
 	cacheMap[defaultCacheName] = cache
+}
+
+// removeCaches 把指定配置对应的 cache 从 cacheMap 中摘除，用于初始化失败回滚
+func removeCaches(configs []*Config) {
+	cacheMu.Lock()
+	defer cacheMu.Unlock()
+	for _, c := range configs {
+		delete(cacheMap, c.Name)
+	}
+	delete(cacheMap, defaultCacheName)
 }

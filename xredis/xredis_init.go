@@ -14,7 +14,16 @@ import (
 	"github.com/xiaoshicae/xone/v2/xutil"
 )
 
-const defaultClientName = "__default_client__"
+const (
+	defaultClientName = "__default_client__"
+
+	// pingAttempts 建连验证的尝试次数
+	pingAttempts = 3
+	// pingRetryInterval 建连验证的重试间隔
+	pingRetryInterval = time.Second
+	// defaultPingTimeout 无法从配置推算时单次 Ping 的兜底超时
+	defaultPingTimeout = time.Second
+)
 
 func init() {
 	xhook.BeforeStart(initXRedis)
@@ -47,6 +56,10 @@ func initSingle() error {
 	}
 
 	setDefault(client)
+
+	if config.metricEnabled() {
+		registerPoolMetrics()
+	}
 	return nil
 }
 
@@ -62,10 +75,12 @@ func initMulti() error {
 	for idx, config := range configs {
 		client, err := newClient(config)
 		if err != nil {
-			// 回滚已创建的连接
+			// 回滚：关闭已创建的连接，并从 clientMap 中摘除
+			// 只关不摘的话，回滚到 BeforeStop 执行之间 C() 会返回已关闭的 client
 			for _, c := range created {
 				_ = c.Close()
 			}
+			removeClients(configs[:idx])
 			return xerror.Newf("xredis", "init", "newClient failed, name=[%v], err=[%v]", config.Name, err)
 		}
 
@@ -75,6 +90,14 @@ func initMulti() error {
 		// 第一个 client 为 C() 默认获取的 client
 		if idx == 0 {
 			setDefault(client)
+		}
+	}
+
+	// 指标是进程级的单个 collector，只要有任一 client 开启就注册
+	for _, config := range configs {
+		if config.metricEnabled() {
+			registerPoolMetrics()
+			break
 		}
 	}
 	return nil
@@ -126,13 +149,7 @@ func newClient(c *Config) (*redis.Client, error) {
 	client := redis.NewClient(opts)
 
 	// Ping 连接验证（带重试）
-	pingTimeout := xutil.ToDuration(c.DialTimeout)
-	err := xutil.Retry(func() error {
-		ctx, cancel := context.WithTimeout(context.Background(), pingTimeout)
-		defer cancel()
-		return client.Ping(ctx).Err()
-	}, 3, time.Second)
-	if err != nil {
+	if err := pingWithRetry(client, c); err != nil {
 		_ = client.Close()
 		return nil, xerror.Newf("xredis", "newClient", "ping failed, addr=[%s], err=[%v]", c.Addr, err)
 	}
@@ -146,6 +163,39 @@ func newClient(c *Config) (*redis.Client, error) {
 	}
 
 	return client, nil
+}
+
+// pingWithRetry 建连验证，失败按固定间隔重试
+//
+// 用带 context 的重试：初始化跑在 BeforeStart 里，不可中断的重试会让
+// 启动阶段收到的退出信号必须等满 attempts×interval 才生效
+func pingWithRetry(client *redis.Client, c *Config) error {
+	ctx, cancel := context.WithTimeout(context.Background(), pingTotalBudget(c))
+	defer cancel()
+
+	timeout := pingTimeout(c)
+	return xutil.RetryWithContext(ctx, func(ctx context.Context) error {
+		pingCtx, pingCancel := context.WithTimeout(ctx, timeout)
+		defer pingCancel()
+		return client.Ping(pingCtx).Err()
+	}, pingAttempts, pingRetryInterval)
+}
+
+// pingTimeout 单次 Ping 的超时
+//
+// 不能只用 DialTimeout：Ping 的耗时是建连加一个往返，
+// 拿建连预算当整体预算，会让连接刚建成就判超时
+func pingTimeout(c *Config) time.Duration {
+	d := xutil.ToDuration(c.DialTimeout) + xutil.ToDuration(c.ReadTimeout)
+	if d <= 0 {
+		return defaultPingTimeout
+	}
+	return d
+}
+
+// pingTotalBudget 建连验证的总预算，兜住整轮重试的最坏耗时
+func pingTotalBudget(c *Config) time.Duration {
+	return pingTimeout(c)*pingAttempts + pingRetryInterval*(pingAttempts-1)
 }
 
 func getConfig() (*Config, error) {

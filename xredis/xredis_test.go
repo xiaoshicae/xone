@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/redis/go-redis/extra/redisotel/v9"
 	redis "github.com/redis/go-redis/v9"
 	"github.com/xiaoshicae/xone/v2/xconfig"
@@ -27,6 +28,7 @@ func TestConfigMergeDefault(t *testing.T) {
 			PoolTimeout:     "1s",
 			ConnMaxIdleTime: "5m",
 			ConnMaxLifetime: "5m",
+			EnableMetric:    xutil.ToPtr(true),
 		})
 	})
 
@@ -367,7 +369,7 @@ func TestCloseXRedis(t *testing.T) {
 
 func TestNewClient(t *testing.T) {
 	mockey.PatchConvey("TestNewClient-PingFail", t, func() {
-		mockey.Mock(xutil.Retry).Return(errors.New("ping timeout")).Build()
+		mockey.Mock(pingWithRetry).Return(errors.New("ping timeout")).Build()
 
 		client, err := newClient(&Config{Addr: "localhost:6379", DialTimeout: "1s"})
 		c.So(err, c.ShouldNotBeNil)
@@ -376,7 +378,7 @@ func TestNewClient(t *testing.T) {
 	})
 
 	mockey.PatchConvey("TestNewClient-PingSuccess-NoTrace", t, func() {
-		mockey.Mock(xutil.Retry).Return(nil).Build()
+		mockey.Mock(pingWithRetry).Return(nil).Build()
 		mockey.Mock(xtrace.EnableTrace).Return(false).Build()
 
 		client, err := newClient(&Config{Addr: "localhost:6379", DialTimeout: "1s"})
@@ -386,7 +388,7 @@ func TestNewClient(t *testing.T) {
 	})
 
 	mockey.PatchConvey("TestNewClient-PingSuccess-WithTrace", t, func() {
-		mockey.Mock(xutil.Retry).Return(nil).Build()
+		mockey.Mock(pingWithRetry).Return(nil).Build()
 		mockey.Mock(xtrace.EnableTrace).Return(true).Build()
 
 		client, err := newClient(&Config{Addr: "localhost:6379", DialTimeout: "1s"})
@@ -396,7 +398,7 @@ func TestNewClient(t *testing.T) {
 	})
 
 	mockey.PatchConvey("TestNewClient-InstrumentTracingFail", t, func() {
-		mockey.Mock(xutil.Retry).Return(nil).Build()
+		mockey.Mock(pingWithRetry).Return(nil).Build()
 		mockey.Mock(xtrace.EnableTrace).Return(true).Build()
 		mockey.Mock(redisotel.InstrumentTracing).Return(errors.New("tracing error")).Build()
 
@@ -407,10 +409,7 @@ func TestNewClient(t *testing.T) {
 	})
 
 	mockey.PatchConvey("TestNewClient-PingLambdaExecuted", t, func() {
-		// 让 Retry 实际调用 fn，覆盖 Ping lambda 内部路径
-		mockey.Mock(xutil.Retry).To(func(fn func() error, attempts int, sleep time.Duration) error {
-			return fn()
-		}).Build()
+		// 不 mock pingWithRetry，走真实的重试与 Ping 路径
 		// mock Process 使 Ping 不走真实连接
 		mockey.Mock((*redis.Client).Process).Return(nil).Build()
 		mockey.Mock(xtrace.EnableTrace).Return(false).Build()
@@ -419,5 +418,137 @@ func TestNewClient(t *testing.T) {
 		c.So(err, c.ShouldBeNil)
 		c.So(client, c.ShouldNotBeNil)
 		_ = client.Close()
+	})
+}
+
+func TestPingTimeout(t *testing.T) {
+	mockey.PatchConvey("TestPingTimeout", t, func() {
+		mockey.PatchConvey("含读超时而非只用建连超时", func() {
+			// Ping 的耗时是建连加一个往返，只给建连预算会让连接刚建成就判超时
+			cfg := configMergeDefault(&Config{DialTimeout: "500ms", ReadTimeout: "500ms"})
+			c.So(pingTimeout(cfg), c.ShouldEqual, time.Second)
+		})
+
+		mockey.PatchConvey("无法推算时用兜底值", func() {
+			c.So(pingTimeout(&Config{}), c.ShouldEqual, defaultPingTimeout)
+		})
+
+		mockey.PatchConvey("总预算覆盖整轮重试", func() {
+			cfg := &Config{DialTimeout: "1s"}
+			c.So(pingTotalBudget(cfg), c.ShouldEqual, 3*time.Second+2*time.Second)
+		})
+	})
+}
+
+func TestRemoveClients(t *testing.T) {
+	mockey.PatchConvey("TestRemoveClients", t, func() {
+		// 初始化失败回滚时，已关闭的 client 必须从 map 中摘除，
+		// 否则回滚到 BeforeStop 执行之间 C() 会返回已关闭的 client
+		clientMu.Lock()
+		clear(clientMap)
+		clientMu.Unlock()
+
+		set("a", &redis.Client{})
+		set("b", &redis.Client{})
+		setDefault(&redis.Client{})
+
+		removeClients([]*Config{{Name: "a"}, {Name: "b"}})
+
+		clientMu.RLock()
+		size := len(clientMap)
+		clientMu.RUnlock()
+		c.So(size, c.ShouldEqual, 0)
+	})
+}
+
+func TestPoolCollector(t *testing.T) {
+	mockey.PatchConvey("TestPoolCollector", t, func() {
+		mockey.PatchConvey("导出各连接池的实时状态", func() {
+			col := newPoolCollector()
+			col.statsFor = func() map[string]*redis.PoolStats {
+				return map[string]*redis.PoolStats{
+					"primary": {TotalConns: 9, IdleConns: 4, StaleConns: 1, Hits: 100, Misses: 5, Timeouts: 2},
+				}
+			}
+
+			reg := prometheus.NewRegistry()
+			c.So(reg.Register(col), c.ShouldBeNil)
+			got, err := reg.Gather()
+			c.So(err, c.ShouldBeNil)
+
+			values := map[string]float64{}
+			for _, f := range got {
+				for _, m := range f.Metric {
+					if m.Gauge != nil {
+						values[f.GetName()] = m.Gauge.GetValue()
+					}
+					if m.Counter != nil {
+						values[f.GetName()] = m.Counter.GetValue()
+					}
+				}
+			}
+			c.So(values[metricRedisTotalConns], c.ShouldEqual, 9)
+			c.So(values[metricRedisIdleConns], c.ShouldEqual, 4)
+			c.So(values[metricRedisStaleConns], c.ShouldEqual, 1)
+			c.So(values[metricRedisHits], c.ShouldEqual, 100)
+			c.So(values[metricRedisMisses], c.ShouldEqual, 5)
+			c.So(values[metricRedisTimeouts], c.ShouldEqual, 2)
+		})
+
+		mockey.PatchConvey("Describe 覆盖全部指标", func() {
+			ch := make(chan *prometheus.Desc, 16)
+			newPoolCollector().Describe(ch)
+			close(ch)
+			n := 0
+			for range ch {
+				n++
+			}
+			c.So(n, c.ShouldEqual, 6)
+		})
+	})
+}
+
+func TestCollectPoolStats(t *testing.T) {
+	mockey.PatchConvey("TestCollectPoolStats", t, func() {
+		mockey.Mock((*redis.Client).PoolStats).Return(&redis.PoolStats{TotalConns: 1}).Build()
+
+		mockey.PatchConvey("default 是具名 client 的别名，不重复导出", func() {
+			// 不跳过会让同一个池子的指标出现两份、总量翻倍
+			cli := &redis.Client{}
+			clientMu.Lock()
+			clientMap = map[string]*redis.Client{defaultClientName: cli, "primary": cli}
+			clientMu.Unlock()
+
+			stats := collectPoolStats()
+			c.So(len(stats), c.ShouldEqual, 1)
+			_, ok := stats["primary"]
+			c.So(ok, c.ShouldBeTrue)
+		})
+
+		mockey.PatchConvey("单 client 场景用 default 兜底", func() {
+			clientMu.Lock()
+			clientMap = map[string]*redis.Client{defaultClientName: {}}
+			clientMu.Unlock()
+
+			stats := collectPoolStats()
+			c.So(len(stats), c.ShouldEqual, 1)
+			_, ok := stats[defaultClientName]
+			c.So(ok, c.ShouldBeTrue)
+		})
+
+		mockey.PatchConvey("无 client 时返回空", func() {
+			clientMu.Lock()
+			clientMap = map[string]*redis.Client{}
+			clientMu.Unlock()
+			c.So(collectPoolStats(), c.ShouldBeEmpty)
+		})
+	})
+}
+
+func TestMetricEnabled(t *testing.T) {
+	mockey.PatchConvey("TestMetricEnabled", t, func() {
+		c.So((&Config{}).metricEnabled(), c.ShouldBeTrue)
+		c.So((&Config{EnableMetric: xutil.ToPtr(false)}).metricEnabled(), c.ShouldBeFalse)
+		c.So(configMergeDefault(nil).metricEnabled(), c.ShouldBeTrue)
 	})
 }

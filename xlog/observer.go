@@ -29,18 +29,60 @@ type Record struct {
 //   - 不得在其中调用 xlog 的日志函数，否则会无限递归
 type Observer func(ctx context.Context, r Record)
 
+// ObserverHandle AddObserver 返回的句柄，用于注销
+type ObserverHandle struct {
+	id uint64
+}
+
+// registeredObserver 带标识的观察者，标识用于精确注销
+type registeredObserver struct {
+	id uint64
+	fn Observer
+}
+
 var (
 	// observers 采用读时无锁的写时复制，日志热路径只做一次原子读
-	observers atomic.Pointer[[]Observer]
+	observers atomic.Pointer[[]registeredObserver]
 
 	// observerMu 仅保护注册过程
 	observerMu sync.Mutex
+
+	// observerSeq 观察者标识自增序列
+	observerSeq atomic.Uint64
 )
 
 // AddObserver 注册日志观察者，注册后对所有级别的日志生效
 // 观察者需自行按 Record.Level 过滤关心的级别
-func AddObserver(o Observer) {
+//
+// 返回的句柄可传给 RemoveObserver 注销；不需要注销时忽略即可
+func AddObserver(o Observer) ObserverHandle {
 	if o == nil {
+		return ObserverHandle{}
+	}
+
+	observerMu.Lock()
+	defer observerMu.Unlock()
+
+	id := observerSeq.Add(1)
+	old := observers.Load()
+	var next []registeredObserver
+	if old != nil {
+		next = make([]registeredObserver, 0, len(*old)+1)
+		next = append(next, *old...)
+	} else {
+		next = make([]registeredObserver, 0, 1)
+	}
+	next = append(next, registeredObserver{id: id, fn: o})
+	observers.Store(&next)
+	return ObserverHandle{id: id}
+}
+
+// RemoveObserver 注销此前注册的观察者
+//
+// 以注册时返回的句柄为准而不是比较函数值：Go 中函数不可比较，
+// 相同的闭包每次构造都是不同的实例，按值找是找不回来的
+func RemoveObserver(h ObserverHandle) {
+	if h.id == 0 {
 		return
 	}
 
@@ -48,14 +90,15 @@ func AddObserver(o Observer) {
 	defer observerMu.Unlock()
 
 	old := observers.Load()
-	var next []Observer
-	if old != nil {
-		next = make([]Observer, 0, len(*old)+1)
-		next = append(next, *old...)
-	} else {
-		next = make([]Observer, 0, 1)
+	if old == nil {
+		return
 	}
-	next = append(next, o)
+	next := make([]registeredObserver, 0, len(*old))
+	for _, o := range *old {
+		if o.id != h.id {
+			next = append(next, o)
+		}
+	}
 	observers.Store(&next)
 }
 
@@ -66,7 +109,7 @@ func notifyObservers(ctx context.Context, r Record) {
 		return
 	}
 	for _, o := range *p {
-		invokeObserver(ctx, o, r)
+		invokeObserver(ctx, o.fn, r)
 	}
 }
 

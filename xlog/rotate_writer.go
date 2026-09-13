@@ -3,6 +3,7 @@ package xlog
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -18,8 +19,11 @@ const (
 	rotateLayoutMinute = "200601021504"
 )
 
-// logFilePerm 日志文件权限
-const logFilePerm = 0o644
+// defaultLogFilePerm 日志文件默认权限
+const defaultLogFilePerm = 0o644
+
+// rotateErrLogInterval 轮转失败告警的最小间隔
+const rotateErrLogInterval = time.Minute
 
 // rotateWriter 按时间轮转的日志文件写入器
 //
@@ -37,15 +41,24 @@ type rotateWriter struct {
 	// clock 可注入的时间源，便于测试轮转与清理
 	clock func() time.Time
 
+	// perm 日志文件权限
+	perm os.FileMode
+
 	mu          sync.Mutex
 	file        *os.File
 	currentName string
 	closed      bool
+
+	// lastRotateErrAt 上次记录轮转失败的时刻，用于告警降噪
+	lastRotateErrAt time.Time
 }
 
 // newRotateWriter 创建轮转写入器并立即打开当前文件
 // 提前打开可将权限、路径等问题暴露在初始化阶段，而非首次写日志时才失败
-func newRotateWriter(base string, maxAge, rotate time.Duration) (*rotateWriter, error) {
+func newRotateWriter(base string, maxAge, rotate time.Duration, perm os.FileMode) (*rotateWriter, error) {
+	if perm == 0 {
+		perm = defaultLogFilePerm
+	}
 	w := &rotateWriter{
 		base:     base,
 		linkName: base,
@@ -53,6 +66,7 @@ func newRotateWriter(base string, maxAge, rotate time.Duration) (*rotateWriter, 
 		maxAge:   maxAge,
 		rotate:   rotate,
 		clock:    time.Now,
+		perm:     perm,
 	}
 	if err := w.rotateTo(w.filenameFor(w.clock())); err != nil {
 		return nil, err
@@ -83,13 +97,31 @@ func (w *rotateWriter) Write(p []byte) (int, error) {
 
 	if name := w.filenameFor(w.clock()); name != w.currentName {
 		if err := w.rotateTo(name); err != nil {
-			return 0, err
+			// 轮转失败不能丢日志：旧文件句柄仍然可用，降级继续写它。
+			// 直接返回错误的话，从第一次轮转失败起每条日志都走这条路，
+			// 而 asyncWriter 只保留第一个错误且只在 Close 时返回——
+			// 现象就是某天日志突然断了，没有任何报错
+			w.reportRotateFailure(err)
+		} else {
+			// 清理放到后台执行，避免阻塞日志写入；当前文件名以参数传入，避免再次取锁
+			go w.purge(name)
 		}
-		// 清理放到后台执行，避免阻塞日志写入；当前文件名以参数传入，避免再次取锁
-		go w.purge(name)
 	}
 
+	if w.file == nil {
+		return 0, os.ErrClosed
+	}
 	return w.file.Write(p)
+}
+
+// reportRotateFailure 记录轮转失败
+// 按间隔降噪：轮转周期到了之后每条日志都会重试，不限流会把告警刷爆
+func (w *rotateWriter) reportRotateFailure(err error) {
+	now := w.clock()
+	if w.lastRotateErrAt.IsZero() || now.Sub(w.lastRotateErrAt) >= rotateErrLogInterval {
+		w.lastRotateErrAt = now
+		xutil.WarnIfEnableDebug("XOne rotateWriter rotate failed, keep writing current file=[%s], err=[%v]", w.currentName, err)
+	}
 }
 
 // Close 关闭当前日志文件，多次调用安全
@@ -118,7 +150,7 @@ func (w *rotateWriter) filenameFor(t time.Time) string {
 // rotateTo 切换到指定文件
 // 调用方需持有锁；构造阶段实例尚未被共享，此时无需加锁
 func (w *rotateWriter) rotateTo(name string) error {
-	f, err := os.OpenFile(name, os.O_CREATE|os.O_WRONLY|os.O_APPEND, logFilePerm)
+	f, err := os.OpenFile(name, os.O_CREATE|os.O_WRONLY|os.O_APPEND, w.perm)
 	if err != nil {
 		return xerror.Newf("xlog", "rotate", "open log file failed, file=[%s], err=[%v]", name, err)
 	}
@@ -182,13 +214,27 @@ func (w *rotateWriter) purge(current string) {
 		if path == current {
 			continue // 不删除正在写入的文件
 		}
-		if fi.ModTime().After(cutoff) {
+		if !w.expired(path, fi, cutoff) {
 			continue
 		}
 		if err := os.Remove(path); err != nil {
 			xutil.WarnIfEnableDebug("XOne rotateWriter remove expired log failed, file=[%s], err=[%v]", path, err)
 		}
 	}
+}
+
+// expired 判断历史日志文件是否已过保留期
+//
+// 优先用文件名里的时间后缀，而不是 mtime：备份恢复、rsync、容器镜像分层
+// 都会重写 mtime，按它判断可能把昨天的日志当成刚写的而永远不清，
+// 也可能把刚轮转出来的文件当成过期的删掉。文件名解析不了时才退回 mtime
+func (w *rotateWriter) expired(path string, fi os.FileInfo, cutoff time.Time) bool {
+	suffix := strings.TrimPrefix(path, w.base+".")
+	if t, err := time.ParseInLocation(w.layout, suffix, w.clock().Location()); err == nil {
+		// 文件名记的是所属周期的起点，整个周期结束后才算过期
+		return t.Add(w.rotate).Before(cutoff) || t.Add(w.rotate).Equal(cutoff)
+	}
+	return !fi.ModTime().After(cutoff)
 }
 
 // truncateInLocation 按周期截断时间，且对齐到本地时区

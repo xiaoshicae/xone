@@ -84,3 +84,38 @@ func TestModule(t *testing.T) {
 		})
 	})
 }
+
+func TestIs_Nested(t *testing.T) {
+	PatchConvey("TestIs-嵌套错误链", t, func() {
+		// 模块之间会互相包装错误（xgorm 初始化失败里裹着 xconfig 的错误），
+		// 只比对第一个 XOneError 会让 Is(err, "xconfig") 返回 false
+		inner := New("xconfig", "load", errors.New("file not found"))
+		middle := New("xgorm", "init", inner)
+		outer := New("xserver", "run", middle)
+
+		PatchConvey("链上每一层都能命中", func() {
+			So(Is(outer, "xserver"), ShouldBeTrue)
+			So(Is(outer, "xgorm"), ShouldBeTrue)
+			So(Is(outer, "xconfig"), ShouldBeTrue)
+		})
+
+		PatchConvey("不在链上的模块返回 false", func() {
+			So(Is(outer, "xredis"), ShouldBeFalse)
+		})
+
+		PatchConvey("非 XOneError 返回 false", func() {
+			So(Is(errors.New("plain"), "xgorm"), ShouldBeFalse)
+			So(Is(nil, "xgorm"), ShouldBeFalse)
+		})
+
+		PatchConvey("穿透 %w 包装", func() {
+			wrapped := New("xgorm", "init", fmt.Errorf("wrapped: %w", inner))
+			So(Is(wrapped, "xgorm"), ShouldBeTrue)
+			So(Is(wrapped, "xconfig"), ShouldBeTrue)
+		})
+
+		PatchConvey("Module 取最外层", func() {
+			So(Module(outer), ShouldEqual, "xserver")
+		})
+	})
+}

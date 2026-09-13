@@ -152,6 +152,20 @@
         }
       }
     },
+    "XFlow": {
+      "type": "object",
+      "description": "流程编排配置",
+      "properties": {
+        "EnableMonitor": {
+          "type": ["boolean", "string"],
+          "description": "是否开启流程监控，默认true"
+        },
+        "RollbackTimeout": {
+          "type": "string",
+          "description": "回滚全部处理器的总超时，默认30s。回滚不沿用调用方context（否则请求超时后补偿必然失败），由本项单独限时"
+        }
+      }
+    },
     "XTrace": {
       "type": "object",
       "description": "链路追踪配置",

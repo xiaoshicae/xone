@@ -3,6 +3,7 @@ package xhook
 import (
 	"context"
 	"errors"
+	"math"
 	"strconv"
 	"strings"
 	"testing"
@@ -39,11 +40,9 @@ func PanicFunc() error {
 
 // resetHooks 重置所有 hooks 状态，用于测试
 func resetHooks() {
-	beforeStartHooks = beforeStartHooks[:0]
-	beforeStartHooksSorted = true
-	beforeStopHooks = beforeStopHooks[:0]
-	beforeStopHooksSorted = true
-	registeredFuncs = make(map[string]struct{})
+	startRegistry.reset()
+	stopRegistry.reset()
+	SetStopTimeout(defaultStopTimeout)
 }
 
 func TestXHookBeforeStart(t *testing.T) {
@@ -54,7 +53,7 @@ func TestXHookBeforeStart(t *testing.T) {
 		var h HookFunc
 		So(func() { BeforeStart(h) }, ShouldPanicWith, "XOne BeforeStart hook can not be nil")
 
-		maxHookNum = 1
+		startRegistry.maxHook = 1
 
 		BeforeStart(IntFunc1)
 		So(func() { BeforeStart(IntFunc2) }, ShouldPanicWith, "XOne BeforeStart hook can not be more than 1")
@@ -63,7 +62,6 @@ func TestXHookBeforeStart(t *testing.T) {
 	PatchConvey("TestXHookBeforeStart-Sort", t, func() {
 		resetHooks()
 		defer resetHooks()
-		maxHookNum = 10
 
 		h1 := func() error { println("h1"); return errors.New("h1") }
 		h2 := func() error { println("h2"); return errors.New("h2") }
@@ -72,7 +70,7 @@ func TestXHookBeforeStart(t *testing.T) {
 		BeforeStart(h3, Order(3))
 		BeforeStart(h2, Order(2))
 		// 使用 getSortedHooks 获取排序后的副本进行测试
-		hooks := getSortedHooks(&beforeStartHooks, &beforeStartHooksSorted)
+		hooks := startRegistry.sortedHooks()
 		for i, h := range hooks {
 			err := h.HookFunc()
 			So(err.Error(), ShouldEqual, "h"+strconv.Itoa(i+1))
@@ -88,7 +86,7 @@ func TestXHookBeforeStop(t *testing.T) {
 		var h HookFunc
 		So(func() { BeforeStop(h) }, ShouldPanicWith, "XOne BeforeStop hook can not be nil")
 
-		maxHookNum = 1
+		stopRegistry.maxHook = 1
 
 		BeforeStop(IntFunc1)
 		So(func() { BeforeStop(IntFunc2) }, ShouldPanicWith, "XOne BeforeStop hook can not be more than 1")
@@ -97,7 +95,6 @@ func TestXHookBeforeStop(t *testing.T) {
 	PatchConvey("TestXHookBeforeStop-Sort", t, func() {
 		resetHooks()
 		defer resetHooks()
-		maxHookNum = 10
 
 		h1 := func() error { println("h1"); return errors.New("h1") }
 		h2 := func() error { println("h2"); return errors.New("h2") }
@@ -106,7 +103,7 @@ func TestXHookBeforeStop(t *testing.T) {
 		BeforeStop(h3, Order(3))
 		BeforeStop(h2, Order(2))
 		// getSortedHooks 仍按 Order 升序排列（底层排序逻辑不变）
-		hooks := getSortedHooks(&beforeStopHooks, &beforeStopHooksSorted)
+		hooks := stopRegistry.sortedHooks()
 		for i, h := range hooks {
 			err := h.HookFunc()
 			So(err.Error(), ShouldEqual, "h"+strconv.Itoa(i+1))
@@ -241,7 +238,7 @@ func TestInvokeBeforeStopHook(t *testing.T) {
 		BeforeStop(f3)
 		stopErrChan := make(chan error, 1)
 		ctx := context.Background()
-		hooks := getSortedHooks(&beforeStopHooks, &beforeStopHooksSorted)
+		hooks := stopRegistry.sortedHooks()
 		go func() {
 			invokeBeforeStopHook(ctx, hooks, stopErrChan)
 		}()
@@ -252,10 +249,10 @@ func TestInvokeBeforeStopHook(t *testing.T) {
 
 	PatchConvey("TestInvokeBeforeStopHook-Timeout", t, func() {
 		resetHooks()
-		defaultStopTimeout = 1 * time.Second
+		SetStopTimeout(1 * time.Second)
 		defer func() {
 			resetHooks()
-			defaultStopTimeout = 60 * time.Second
+			SetStopTimeout(60 * time.Second)
 		}()
 		f := func() error {
 			time.Sleep(2 * time.Second)
@@ -286,59 +283,74 @@ func TestInvokeBeforeStopHookTimeoutMessage(t *testing.T) {
 
 func TestSetStopTimeout(t *testing.T) {
 	PatchConvey("TestSetStopTimeout", t, func() {
-		originalTimeout := defaultStopTimeout
+		originalTimeout := time.Duration(stopTimeout.Load())
 		defer func() {
-			defaultStopTimeout = originalTimeout
+			SetStopTimeout(originalTimeout)
 		}()
 
 		// 测试设置有效超时时间
 		SetStopTimeout(5 * time.Second)
-		So(defaultStopTimeout, ShouldEqual, 5*time.Second)
+		So(time.Duration(stopTimeout.Load()), ShouldEqual, 5*time.Second)
 
 		// 测试设置无效超时时间（<=0 应该被忽略）
 		SetStopTimeout(0)
-		So(defaultStopTimeout, ShouldEqual, 5*time.Second)
+		So(time.Duration(stopTimeout.Load()), ShouldEqual, 5*time.Second)
 
 		SetStopTimeout(-1 * time.Second)
-		So(defaultStopTimeout, ShouldEqual, 5*time.Second)
+		So(time.Duration(stopTimeout.Load()), ShouldEqual, 5*time.Second)
 	})
 }
 
-func TestHookDedup(t *testing.T) {
-	PatchConvey("TestHookDedup-重复注册跳过", t, func() {
+func TestHookRegistration(t *testing.T) {
+	PatchConvey("TestHookRegistration-同一函数可重复注册", t, func() {
 		resetHooks()
 		defer resetHooks()
 
+		// 不再按函数指针去重：重复注册由调用方自行保证
 		f := func() error { return nil }
 		BeforeStart(f, Order(1))
-		BeforeStart(f, Order(2)) // 重复注册，应跳过
-		hooks := getSortedHooks(&beforeStartHooks, &beforeStartHooksSorted)
-		So(len(hooks), ShouldEqual, 1)
+		BeforeStart(f, Order(2))
+		So(len(startRegistry.sortedHooks()), ShouldEqual, 2)
 	})
 
-	PatchConvey("TestHookDedup-不同函数各自注册", t, func() {
+	PatchConvey("TestHookRegistration-循环中注册的闭包不会丢失", t, func() {
+		// 回归：同一函数字面量产生的闭包共享代码指针，
+		// 曾因此被按指针去重误判为重复而静默丢弃
+		resetHooks()
+		defer resetHooks()
+
+		var got []int
+		for i := 0; i < 3; i++ {
+			n := i
+			BeforeStart(func() error {
+				got = append(got, n)
+				return nil
+			})
+		}
+		So(len(startRegistry.sortedHooks()), ShouldEqual, 3)
+		So(InvokeBeforeStartHook(), ShouldBeNil)
+		So(got, ShouldResemble, []int{0, 1, 2})
+	})
+
+	PatchConvey("TestHookRegistration-不同函数各自注册", t, func() {
 		resetHooks()
 		defer resetHooks()
 
 		BeforeStart(IntFunc1)
 		BeforeStart(IntFunc2)
-		hooks := getSortedHooks(&beforeStartHooks, &beforeStartHooksSorted)
-		So(len(hooks), ShouldEqual, 2)
+		So(len(startRegistry.sortedHooks()), ShouldEqual, 2)
 	})
 
-	PatchConvey("TestHookDedup-同函数可跨类型注册", t, func() {
+	PatchConvey("TestHookRegistration-两个阶段互相独立", t, func() {
 		resetHooks()
 		defer resetHooks()
 
 		BeforeStart(IntFunc1)
-		BeforeStop(IntFunc1) // 同一个函数可以注册到 BeforeStop
-		startHooks := getSortedHooks(&beforeStartHooks, &beforeStartHooksSorted)
-		stopHooks := getSortedHooks(&beforeStopHooks, &beforeStopHooksSorted)
-		So(len(startHooks), ShouldEqual, 1)
-		So(len(stopHooks), ShouldEqual, 1)
+		BeforeStop(IntFunc1)
+		So(len(startRegistry.sortedHooks()), ShouldEqual, 1)
+		So(len(stopRegistry.sortedHooks()), ShouldEqual, 1)
 	})
 }
-
 func IntFunc1() error {
 	return nil
 }
@@ -409,10 +421,10 @@ func TestHookIndividualTimeout(t *testing.T) {
 
 	PatchConvey("TestHookIndividualTimeout-BeforeStop个体超时", t, func() {
 		resetHooks()
-		defaultStopTimeout = 10 * time.Second
+		SetStopTimeout(10 * time.Second)
 		defer func() {
 			resetHooks()
-			defaultStopTimeout = 60 * time.Second
+			SetStopTimeout(60 * time.Second)
 		}()
 
 		slowStop := func() error {
@@ -434,5 +446,162 @@ func TestInvokeHookWithTimeout(t *testing.T) {
 		}
 		err := invokeHookWithTimeout(h, 0)
 		So(err, ShouldBeNil)
+	})
+}
+
+// TestBeforeStopOrderSemantics 回归防护：
+// Order 表示资源层级（值越小越底层），启停必须对称——
+// BeforeStart 按 Order 升序，BeforeStop 按 Order 降序，
+// 使一个资源只需声明一个 Order 就能做到"先启动、后关闭"。
+func TestBeforeStopOrderSemantics(t *testing.T) {
+	PatchConvey("TestBeforeStopOrderSemantics", t, func() {
+		PatchConvey("Order 小的后关闭", func() {
+			resetHooks()
+			defer resetHooks()
+
+			var seq []string
+			BeforeStop(func() error { seq = append(seq, "日志"); return nil }, Order(10))
+			BeforeStop(func() error { seq = append(seq, "普通A"); return nil })
+			BeforeStop(func() error { seq = append(seq, "普通B"); return nil })
+
+			So(InvokeBeforeStopHook(), ShouldBeNil)
+			// 低 Order 的日志模块最后关闭，同 Order 的普通模块按注册逆序
+			So(seq, ShouldResemble, []string{"普通B", "普通A", "日志"})
+		})
+
+		PatchConvey("同 Order 内按注册顺序逆序执行", func() {
+			resetHooks()
+			defer resetHooks()
+
+			var seq []string
+			for _, name := range []string{"第一", "第二", "第三"} {
+				n := name
+				BeforeStop(func() error { seq = append(seq, n); return nil })
+			}
+
+			So(InvokeBeforeStopHook(), ShouldBeNil)
+			So(seq, ShouldResemble, []string{"第三", "第二", "第一"})
+		})
+
+		PatchConvey("启停对称：BeforeStop 是 BeforeStart 的镜像", func() {
+			resetHooks()
+			defer resetHooks()
+
+			var startSeq, stopSeq []string
+			BeforeStart(func() error { startSeq = append(startSeq, "低"); return nil }, Order(1))
+			BeforeStart(func() error { startSeq = append(startSeq, "高"); return nil }, Order(9999))
+			BeforeStop(func() error { stopSeq = append(stopSeq, "低"); return nil }, Order(1))
+			BeforeStop(func() error { stopSeq = append(stopSeq, "高"); return nil }, Order(9999))
+
+			So(InvokeBeforeStartHook(), ShouldBeNil)
+			So(InvokeBeforeStopHook(), ShouldBeNil)
+			So(startSeq, ShouldResemble, []string{"低", "高"})
+			So(stopSeq, ShouldResemble, []string{"高", "低"})
+		})
+
+		PatchConvey("全部默认 Order 时等价于注册顺序与其逆序", func() {
+			resetHooks()
+			defer resetHooks()
+
+			// 模拟 import 顺序：xconfig → xlog → xhttp → xgorm
+			modules := []string{"xconfig", "xlog", "xhttp", "xgorm"}
+			var startSeq, stopSeq []string
+			for _, name := range modules {
+				n := name
+				BeforeStart(func() error { startSeq = append(startSeq, n); return nil })
+				BeforeStop(func() error { stopSeq = append(stopSeq, n); return nil })
+			}
+
+			So(InvokeBeforeStartHook(), ShouldBeNil)
+			So(InvokeBeforeStopHook(), ShouldBeNil)
+			So(startSeq, ShouldResemble, modules)
+			So(stopSeq, ShouldResemble, []string{"xgorm", "xhttp", "xlog", "xconfig"})
+		})
+	})
+}
+
+// TestBeforeStopExhaustedDeadline 回归防护：
+// 全局剩余时间耗尽时，min(个体超时, 剩余) 会得到非正数，
+// 而 invokeHookWithTimeout 对非正数的处理是「不设超时同步执行」，
+// 卡住的 Hook 会永久阻塞该协程。
+func TestBeforeStopExhaustedDeadline(t *testing.T) {
+	PatchConvey("TestBeforeStopExhaustedDeadline", t, func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond)
+		defer cancel()
+		time.Sleep(10 * time.Millisecond) // 确保 deadline 已过
+
+		blocked := make(chan struct{})
+		defer close(blocked)
+		hooks := []hook{{
+			HookFunc: func() error { <-blocked; return nil },
+			Options:  defaultOptions(),
+		}}
+
+		stopErrChan := make(chan error, 1)
+		done := make(chan struct{})
+		go func() {
+			invokeBeforeStopHook(ctx, hooks, stopErrChan)
+			close(done)
+		}()
+
+		select {
+		case <-done:
+			err := <-stopErrChan
+			So(err, ShouldNotBeNil)
+			So(err.Error(), ShouldContainSubstring, "interrupted due to timeout")
+		case <-time.After(2 * time.Second):
+			t.Fatal("剩余时间耗尽时未中断，协程被卡住的 Hook 永久阻塞")
+		}
+	})
+}
+
+func TestCompareHookOrder(t *testing.T) {
+	PatchConvey("TestCompareHookOrder", t, func() {
+		mk := func(order int) hook { return hook{Options: &options{Order: order}} }
+		So(compareHookOrder(mk(1), mk(2)), ShouldBeLessThan, 0)
+		So(compareHookOrder(mk(2), mk(1)), ShouldBeGreaterThan, 0)
+		So(compareHookOrder(mk(1), mk(1)), ShouldEqual, 0)
+		// 极端值不能因相减溢出而得到错误符号
+		So(compareHookOrder(mk(math.MinInt), mk(math.MaxInt)), ShouldBeLessThan, 0)
+		So(compareHookOrder(mk(math.MaxInt), mk(math.MinInt)), ShouldBeGreaterThan, 0)
+	})
+}
+
+func TestInvokeBeforeStopHookEmpty(t *testing.T) {
+	PatchConvey("TestInvokeBeforeStopHookEmpty", t, func() {
+		resetHooks()
+		defer resetHooks()
+		// 无 Hook 时直接返回，不应创建 context 与协程
+		So(InvokeBeforeStopHook(), ShouldBeNil)
+	})
+}
+
+func TestBeforeStopDeadlineRaceWindow(t *testing.T) {
+	PatchConvey("TestBeforeStopDeadlineRaceWindow", t, func() {
+		// ctx.Done() 检查通过后、调用 Hook 前恰好超时，是无法稳定复现的竞态窗口；
+		// 此处直接让剩余时间返回非正数来覆盖该兜底分支。
+		// 若缺少这一兜底，非正数会被 invokeHookWithTimeout 当作「不设超时」，
+		// 卡住的 Hook 将永久阻塞该协程。
+		// 必须先建 ctx 再装 mock：context.WithTimeout 内部也调用 time.Until，
+		// 先装 mock 会让它误判 deadline 已过而直接返回已取消的 ctx，
+		// 测试就会走 ctx.Done() 分支、以错误的原因通过
+		ctx, cancel := context.WithTimeout(context.Background(), time.Hour)
+		defer cancel()
+
+		Mock(time.Until).Return(-time.Second).Build()
+
+		invoked := false
+		hooks := []hook{{
+			HookFunc: func() error { invoked = true; return nil },
+			Options:  defaultOptions(),
+		}}
+
+		stopErrChan := make(chan error, 1)
+		invokeBeforeStopHook(ctx, hooks, stopErrChan)
+
+		err := <-stopErrChan
+		So(err, ShouldNotBeNil)
+		So(err.Error(), ShouldContainSubstring, "interrupted due to timeout")
+		So(invoked, ShouldBeFalse)
 	})
 }

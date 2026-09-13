@@ -4,7 +4,11 @@ import "time"
 
 const defaultHookTimeout = 10 * time.Second
 
-// Order 设置 Hook 执行顺序，数值越小越先执行
+// Order 设置 Hook 所处的资源层级，数值越小越底层：
+// BeforeStart 越先执行，BeforeStop 越后执行（启停对称）。
+// 相同 Order 的 Hook：BeforeStart 按注册顺序，BeforeStop 按注册逆序。
+//
+// 普通模块应保持默认值，依靠 import 顺序控制执行顺序，详见 README。
 func Order(order int) Option {
 	return func(o *options) {
 		o.Order = order

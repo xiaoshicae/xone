@@ -31,8 +31,9 @@ xone/
 
 ## Hook 生命周期
 
-**BeforeStart 初始化顺序**：正序执行（xconfig → xtrace → xlog → xhttp → xgorm）
-**BeforeStop 关闭顺序**：自动反序执行（xgorm → xhttp → xlog → xtrace → xconfig），LIFO 保证后初始化的模块先关闭
+**BeforeStart 初始化顺序**：正序执行（xconfig → xlog → xtrace → xhttp → xgorm）
+**BeforeStop 关闭顺序**：自动反序执行（xgorm → xhttp → xtrace → xlog → xconfig），LIFO 保证后初始化的模块先关闭
+**Order 语义**：资源层级，值越小越底层 —— 启动越早、关闭越晚；普通模块保持默认值 100，靠 import 顺序控制
 
 ## 核心设计模式
 

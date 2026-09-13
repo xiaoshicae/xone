@@ -11,10 +11,17 @@ import (
 	c "github.com/smartystreets/goconvey/convey"
 )
 
-// newTestWriter 创建写入器并注入可控时间源
+// newTestWriter 在新建临时目录中创建写入器并注入可控时间源
 func newTestWriter(t *testing.T, maxAge, rotate time.Duration, now *time.Time) (*rotateWriter, string) {
 	t.Helper()
 	dir := t.TempDir()
+	return newTestWriterInDir(t, dir, maxAge, rotate, now), dir
+}
+
+// newTestWriterInDir 在指定目录中创建写入器并注入可控时间源
+// 重启场景必须复用同一目录且注入同一时间源，否则第二个写入器会按真实时间落到别的文件
+func newTestWriterInDir(t *testing.T, dir string, maxAge, rotate time.Duration, now *time.Time) *rotateWriter {
+	t.Helper()
 	base := filepath.Join(dir, "app.log")
 
 	w, err := newRotateWriter(base, maxAge, rotate)
@@ -31,7 +38,7 @@ func newTestWriter(t *testing.T, maxAge, rotate time.Duration, now *time.Time) (
 		}
 	}
 	t.Cleanup(func() { _ = w.Close() })
-	return w, dir
+	return w
 }
 
 func TestRotateWriter(t *testing.T) {
@@ -104,9 +111,7 @@ func TestRotateWriter(t *testing.T) {
 		_, _ = w.Write([]byte("first\n"))
 		c.So(w.Close(), c.ShouldBeNil)
 
-		w2, err := newRotateWriter(filepath.Join(dir, "app.log"), 7*24*time.Hour, 24*time.Hour)
-		c.So(err, c.ShouldBeNil)
-		defer func() { _ = w2.Close() }()
+		w2 := newTestWriterInDir(t, dir, 7*24*time.Hour, 24*time.Hour, &now)
 		_, _ = w2.Write([]byte("second\n"))
 
 		content, _ := os.ReadFile(w2.currentName)

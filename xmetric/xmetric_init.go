@@ -1,18 +1,22 @@
 package xmetric
 
 import (
-	"github.com/xiaoshicae/xone/v2/xlog"
 	"sync"
 
-	promcollectors "github.com/prometheus/client_golang/prometheus/collectors"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/xiaoshicae/xone/v2/xconfig"
 	"github.com/xiaoshicae/xone/v2/xerror"
 	"github.com/xiaoshicae/xone/v2/xhook"
+	"github.com/xiaoshicae/xone/v2/xlog"
 	"github.com/xiaoshicae/xone/v2/xutil"
+
+	promcollectors "github.com/prometheus/client_golang/prometheus/collectors"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
-// logHookOnce 确保日志观察者只注册一次（注册后不可撤销）
+// logHookOnce 确保日志观察者只注册一次
+//
+// xlog 的观察者注册后不可撤销，因此这个 Once 不随 closeMetric 重置：
+// 重置会让重新初始化时重复注册，同一条错误日志被计数多次。
 var logHookOnce sync.Once
 
 func init() {
@@ -27,21 +31,24 @@ func initMetric() error {
 	}
 	xutil.InfoIfEnableDebug("XOne initMetric got config: %s", xutil.ToJsonString(c))
 
-	// 注册 Go runtime 和进程指标
-	if *c.EnableGoMetrics {
-		defaultRegistry.MustRegister(promcollectors.NewGoCollector())
-	}
-	if *c.EnableProcessMetrics {
-		defaultRegistry.MustRegister(promcollectors.NewProcessCollector(promcollectors.ProcessCollectorOpts{}))
-	}
-
-	// 设置全局配置
+	// 设置全局配置，必须先于创建 collector：Namespace / ConstLabels 在创建时读取
 	registryMu.Lock()
 	metricConfig = c
 	metricsHandler = promhttp.HandlerFor(defaultRegistry, promhttp.HandlerOpts{
 		EnableOpenMetrics: true,
 	})
 	registryMu.Unlock()
+
+	// 注册 Go runtime 和进程指标
+	//
+	// 用 safeRegister 而非 MustRegister：后者在重复初始化时直接 panic
+	// （duplicate metrics collector registration attempted）。
+	if *c.EnableGoMetrics {
+		safeRegister(promcollectors.NewGoCollector())
+	}
+	if *c.EnableProcessMetrics {
+		safeRegister(promcollectors.NewProcessCollector(promcollectors.ProcessCollectorOpts{}))
+	}
 
 	// 注册日志观察者（Error 自动上报 metric），只注册一次
 	if *c.EnableLogErrorMetric {
@@ -55,9 +62,13 @@ func initMetric() error {
 
 func closeMetric() error {
 	registryMu.Lock()
-	defer registryMu.Unlock()
 	metricsHandler = nil
 	metricConfig = nil
+	registryMu.Unlock()
+
+	// 清空 collector 缓存：留着的话，重新初始化后新的 Namespace / ConstLabels
+	// 对已缓存的指标不生效，指标名会一直沿用旧配置
+	resetCollectors()
 	return nil
 }
 

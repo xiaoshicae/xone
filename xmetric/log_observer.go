@@ -41,15 +41,7 @@ func (h *metricLogObserver) observe(_ context.Context, r xlog.Record) {
 	}
 
 	counter := h.errorCounter.WithLabelValues(r.Level.String(), buildCaller(r))
-
-	if exemplar := buildExemplar(r); exemplar != nil {
-		if adder, ok := counter.(prometheus.ExemplarAdder); ok {
-			adder.AddWithExemplar(1, exemplar)
-			return
-		}
-	}
-
-	counter.Inc()
+	addWithExemplar(counter, buildExemplar(r))
 }
 
 // buildCaller 提取日志位置，格式: filename:line

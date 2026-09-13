@@ -3,7 +3,6 @@ package xmetric
 import (
 	"errors"
 	"net/http"
-	"sync"
 	"testing"
 
 	. "github.com/bytedance/mockey"
@@ -16,9 +15,7 @@ import (
 // resetClientMetricState 重置 HTTP client metric 相关全局状态
 func resetClientMetricState() {
 	resetState()
-	clientMetricOnce = sync.Once{}
-	clientRequestsTotal = nil
-	clientRequestDuration = nil
+	resetCollectors()
 }
 
 // mockRoundTripper 模拟 HTTP RoundTripper
@@ -60,9 +57,9 @@ func TestNewHTTPClientMetricTransport(t *testing.T) {
 
 		So(transport, ShouldNotBeNil)
 		So(transport.Next, ShouldEqual, mock)
-		// collector 延迟到首次 RecordHTTPClientMetric 时初始化
-		So(clientRequestsTotal, ShouldBeNil)
-		So(clientRequestDuration, ShouldBeNil)
+		// collector 延迟到首次 RecordHTTPClientMetric 时创建
+		_, loaded := collectors.Load(buildCacheKey(kindCounter, "http_client_requests_total", httpClientLabels))
+		So(loaded, ShouldBeFalse)
 	})
 
 	PatchConvey("TestNewHTTPClientMetricTransport-带Namespace", t, func() {
@@ -420,18 +417,34 @@ func TestRecordHTTPClientMetric_ExemplarOverLimit(t *testing.T) {
 	})
 }
 
-func TestInitClientMetricCollectors_Idempotent(t *testing.T) {
-	PatchConvey("TestInitClientMetricCollectors-幂等性", t, func() {
+func TestHttpClientCollectors(t *testing.T) {
+	PatchConvey("TestHttpClientCollectors-复用同一实例", t, func() {
 		resetClientMetricState()
 
-		// 多次调用不应 panic
-		initClientMetricCollectors()
-		first := clientRequestsTotal
+		firstCounter, firstHistogram := httpClientCollectors()
+		secondCounter, secondHistogram := httpClientCollectors()
 
-		initClientMetricCollectors()
-		second := clientRequestsTotal
+		So(firstCounter, ShouldEqual, secondCounter)
+		So(firstHistogram, ShouldEqual, secondHistogram)
+	})
 
-		So(first, ShouldEqual, second) // sync.Once 保证同一实例
+	PatchConvey("TestHttpClientCollectors-重新初始化后跟随新配置", t, func() {
+		resetClientMetricState()
+
+		registryMu.Lock()
+		metricConfig = configMergeDefault(&Config{Namespace: "first"})
+		registryMu.Unlock()
+		RecordHTTPClientMetric("GET", "a.com", "200", 1, nil)
+
+		// 关闭会清空缓存，重新初始化后新的 Namespace 必须生效
+		So(closeMetric(), ShouldBeNil)
+		registryMu.Lock()
+		metricConfig = configMergeDefault(&Config{Namespace: "second"})
+		registryMu.Unlock()
+		RecordHTTPClientMetric("GET", "b.com", "200", 1, nil)
+
+		names := gatheredNames()
+		So(names, ShouldContain, "second_http_client_requests_total")
 	})
 }
 
@@ -459,4 +472,14 @@ func TestSafeRegister_Export(t *testing.T) {
 		result2 := SafeRegister(counter)
 		So(result2, ShouldEqual, counter)
 	})
+}
+
+// gatheredNames 返回当前 registry 中所有指标族的名称
+func gatheredNames() []string {
+	fams, _ := Registry().Gather()
+	names := make([]string, 0, len(fams))
+	for _, f := range fams {
+		names = append(names, f.GetName())
+	}
+	return names
 }

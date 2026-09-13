@@ -2,6 +2,7 @@ package xmetric
 
 import (
 	"net/http"
+	"slices"
 	"sync"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -25,20 +26,22 @@ func Registry() *prometheus.Registry {
 // Handler 获取 /metrics HTTP handler
 func Handler() http.Handler {
 	registryMu.RLock()
-	defer registryMu.RUnlock()
-	if metricsHandler != nil {
-		return metricsHandler
-	}
-	// 兜底：未初始化时返回基于当前 registry 的 handler
-	return promhttp.HandlerFor(defaultRegistry, promhttp.HandlerOpts{})
-}
-
-// MustRegister 注册自定义指标到全局 Registry
-func MustRegister(cs ...prometheus.Collector) {
-	registryMu.RLock()
+	h := metricsHandler
 	reg := defaultRegistry
 	registryMu.RUnlock()
-	reg.MustRegister(cs...)
+	if h != nil {
+		return h
+	}
+	// 兜底：未初始化时返回基于当前 registry 的 handler
+	//
+	// 不缓存这个兜底实例：registry 本身可被替换，缓存会让它指向旧实例。
+	// 这条路径只在初始化之前走到，代价可忽略。
+	return promhttp.HandlerFor(reg, promhttp.HandlerOpts{})
+}
+
+// MustRegister 注册自定义指标到全局 Registry，重复注册会 panic
+func MustRegister(cs ...prometheus.Collector) {
+	Registry().MustRegister(cs...)
 }
 
 // SafeRegister 安全注册 collector，重复注册时复用已有实例而非 panic
@@ -46,14 +49,18 @@ func SafeRegister(c prometheus.Collector) prometheus.Collector {
 	return safeRegister(c)
 }
 
-// GetConfig 获取 xmetric 配置
+// GetConfig 获取 xmetric 配置的副本
+//
+// 返回副本而非内部实例：调用方拿到指针后改动字段或切片元素，
+// 会直接污染全局配置。
 func GetConfig() *Config {
 	registryMu.RLock()
-	defer registryMu.RUnlock()
-	if metricConfig != nil {
-		return metricConfig
+	c := metricConfig
+	registryMu.RUnlock()
+	if c == nil {
+		return configMergeDefault(nil)
 	}
-	return configMergeDefault(nil)
+	return c.clone()
 }
 
 func getNamespace() string {
@@ -85,6 +92,9 @@ func getConstLabels() prometheus.Labels {
 }
 
 // GetHttpDurationBuckets 获取 HTTP 请求耗时桶边界（毫秒），供 xgin middleware 等外部包使用
+//
+// 返回副本：调用方直接把它交给 prometheus.HistogramOpts，
+// 若返回内部切片，任何越界写入都会污染全局配置。
 func GetHttpDurationBuckets() []float64 {
 	return getHttpDurationBuckets()
 }
@@ -93,16 +103,16 @@ func getHttpDurationBuckets() []float64 {
 	registryMu.RLock()
 	defer registryMu.RUnlock()
 	if metricConfig != nil && len(metricConfig.HttpDurationBuckets) > 0 {
-		return metricConfig.HttpDurationBuckets
+		return slices.Clone(metricConfig.HttpDurationBuckets)
 	}
-	return defaultHttpDurationBuckets
+	return slices.Clone(defaultHttpDurationBuckets)
 }
 
 func getHistogramObserveBuckets() []float64 {
 	registryMu.RLock()
 	defer registryMu.RUnlock()
 	if metricConfig != nil && len(metricConfig.HistogramObserveBuckets) > 0 {
-		return metricConfig.HistogramObserveBuckets
+		return slices.Clone(metricConfig.HistogramObserveBuckets)
 	}
-	return prometheus.DefBuckets
+	return slices.Clone(prometheus.DefBuckets)
 }

@@ -3,6 +3,7 @@ package xmetric
 import (
 	"context"
 	"errors"
+	"fmt"
 	"github.com/xiaoshicae/xone/v2/xlog"
 	"sync"
 	"testing"
@@ -13,6 +14,7 @@ import (
 	dto "github.com/prometheus/client_model/go"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/xiaoshicae/xone/v2/xconfig"
+	"github.com/xiaoshicae/xone/v2/xutil"
 )
 
 var errTest = errors.New("test error")
@@ -754,5 +756,176 @@ func TestGetConstLabels(t *testing.T) {
 
 		result := GetConstLabels()
 		So(result, ShouldBeNil)
+	})
+}
+
+// ==================== 审查回归 ====================
+
+// TestMetricNameConflictWarns 同名不同类型时必须告警，不能静默丢数据
+func TestMetricNameConflictWarns(t *testing.T) {
+	PatchConvey("TestMetricNameConflictWarns", t, func() {
+		resetState()
+
+		var warned string
+		Mock(xutil.ErrorIfEnableDebug).To(func(msg string, args ...any) {
+			warned = fmt.Sprintf(msg, args...)
+		}).Build()
+
+		CounterInc("conflict_metric")
+		GaugeSet("conflict_metric", 5)
+
+		So(warned, ShouldContainSubstring, "metric name conflict")
+		So(warned, ShouldContainSubstring, "conflict_metric")
+		So(warned, ShouldContainSubstring, "will NOT be exported")
+	})
+}
+
+// TestInitMetricIsRepeatable 重复初始化不能 panic
+func TestInitMetricIsRepeatable(t *testing.T) {
+	PatchConvey("TestInitMetricIsRepeatable", t, func() {
+		resetState()
+		Mock(getConfig).Return(configMergeDefault(nil), nil).Build()
+
+		So(func() {
+			So(initMetric(), ShouldBeNil)
+			So(initMetric(), ShouldBeNil)
+			So(initMetric(), ShouldBeNil)
+		}, ShouldNotPanic)
+	})
+}
+
+// TestCloseMetricClearsCollectorCache 关闭后重新初始化，新配置必须生效
+func TestCloseMetricClearsCollectorCache(t *testing.T) {
+	PatchConvey("TestCloseMetricClearsCollectorCache", t, func() {
+		resetState()
+
+		registryMu.Lock()
+		metricConfig = configMergeDefault(&Config{Namespace: "ns1"})
+		registryMu.Unlock()
+		CounterInc("cached_metric")
+		So(gatheredNames(), ShouldContain, "ns1_cached_metric")
+
+		So(closeMetric(), ShouldBeNil)
+
+		registryMu.Lock()
+		metricConfig = configMergeDefault(&Config{Namespace: "ns2"})
+		registryMu.Unlock()
+		CounterInc("cached_metric")
+		So(gatheredNames(), ShouldContain, "ns2_cached_metric")
+	})
+}
+
+// TestConfigAccessorsReturnCopies 对外暴露的配置不能是内部实例
+func TestConfigAccessorsReturnCopies(t *testing.T) {
+	PatchConvey("TestConfigAccessorsReturnCopies", t, func() {
+		resetState()
+		registryMu.Lock()
+		metricConfig = configMergeDefault(&Config{
+			Namespace:   "orig",
+			ConstLabels: map[string]string{"env": "prod"},
+		})
+		registryMu.Unlock()
+
+		PatchConvey("GetConfig 返回深拷贝", func() {
+			c := GetConfig()
+			c.Namespace = "hacked"
+			c.HttpDurationBuckets[0] = -999
+			c.ConstLabels["env"] = "hacked"
+			*c.EnableGoMetrics = false
+
+			So(GetConfig().Namespace, ShouldEqual, "orig")
+			So(getHttpDurationBuckets()[0], ShouldEqual, 1)
+			So(GetConstLabels()["env"], ShouldEqual, "prod")
+			So(*GetConfig().EnableGoMetrics, ShouldBeTrue)
+		})
+
+		PatchConvey("桶边界返回副本", func() {
+			b := GetHttpDurationBuckets()
+			b[0] = -999
+			So(GetHttpDurationBuckets()[0], ShouldEqual, 1)
+
+			hb := getHistogramObserveBuckets()
+			hb[0] = -999
+			So(getHistogramObserveBuckets()[0], ShouldNotEqual, -999)
+		})
+
+		PatchConvey("未初始化时也返回可安全改动的副本", func() {
+			resetState()
+			c := GetConfig()
+			c.Namespace = "hacked"
+			So(GetConfig().Namespace, ShouldBeEmpty)
+			So(GetConfig().clone(), ShouldNotBeNil)
+			So((*Config)(nil).clone(), ShouldBeNil)
+		})
+	})
+}
+
+// TestSafeExemplarWarns exemplar 被拒时要留痕，不能一声不吭
+func TestSafeExemplarWarns(t *testing.T) {
+	PatchConvey("TestSafeExemplarWarns", t, func() {
+		var warned string
+		Mock(xutil.WarnIfEnableDebug).To(func(msg string, args ...any) {
+			warned = fmt.Sprintf(msg, args...)
+		}).Build()
+
+		So(func() { safeExemplar(func() { panic("exemplar too long") }) }, ShouldNotPanic)
+		So(warned, ShouldContainSubstring, "exemplar rejected")
+		So(warned, ShouldContainSubstring, "exemplar too long")
+	})
+}
+
+// TestBuildCacheKey 缓存键按类型与标签名区分
+func TestBuildCacheKey(t *testing.T) {
+	PatchConvey("TestBuildCacheKey", t, func() {
+		So(buildCacheKey(kindCounter, "n", nil), ShouldEqual, "c:n:")
+		So(buildCacheKey(kindGauge, "n", []string{"a"}), ShouldEqual, "g:n:a")
+		So(buildCacheKey(kindHistogram, "n", []string{"a", "b"}), ShouldEqual, "h:n:a,b")
+		// 同名不同类型是两个 key
+		So(buildCacheKey(kindCounter, "n", nil), ShouldNotEqual, buildCacheKey(kindGauge, "n", nil))
+	})
+}
+
+// plainCounter 不实现 prometheus.ExemplarAdder 的计数器
+type plainCounter struct {
+	prometheus.Metric
+	prometheus.Collector
+	incCalls int
+}
+
+func (c *plainCounter) Inc()                   { c.incCalls++ }
+func (c *plainCounter) Add(float64)            {}
+func (c *plainCounter) Desc() *prometheus.Desc { return nil }
+
+// plainObserver 不实现 prometheus.ExemplarObserver 的观测器
+type plainObserver struct{ observed []float64 }
+
+func (o *plainObserver) Observe(v float64) { o.observed = append(o.observed, v) }
+
+// TestExemplarFallback 底层实现不支持 exemplar 时回落到普通记录
+func TestExemplarFallback(t *testing.T) {
+	PatchConvey("TestExemplarFallback", t, func() {
+		exemplar := prometheus.Labels{"trace_id": "abc"}
+
+		PatchConvey("计数器不支持 exemplar 时仍然计数", func() {
+			c := &plainCounter{}
+			addWithExemplar(c, exemplar)
+			So(c.incCalls, ShouldEqual, 1)
+		})
+
+		PatchConvey("观测器不支持 exemplar 时仍然记录", func() {
+			o := &plainObserver{}
+			observeWithExemplar(o, 12.5, exemplar)
+			So(o.observed, ShouldResemble, []float64{12.5})
+		})
+
+		PatchConvey("exemplar 为 nil 时走普通路径", func() {
+			c := &plainCounter{}
+			addWithExemplar(c, nil)
+			So(c.incCalls, ShouldEqual, 1)
+
+			o := &plainObserver{}
+			observeWithExemplar(o, 1, nil)
+			So(o.observed, ShouldResemble, []float64{1})
+		})
 	})
 }

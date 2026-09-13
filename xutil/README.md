@@ -61,11 +61,18 @@ if f.IsDone() {
 内置 100 worker 的全局任务池，直接调用包级函数：
 
 ```go
-// 提交任务（fire-and-forget）
-xutil.Submit(func() {
-    sendEmail(user)
-})
+// 提交任务（fire-and-forget），队列满时返回 false，不会阻塞
+if !xutil.TrySubmit(func() { sendEmail(user) }) {
+    // 队列满或池已关闭，按需降级：同步执行、丢弃、或记一次指标
+}
 ```
+
+**全局池上没有阻塞背压，这是有意的。** 它由进程内所有调用方共用 ——
+一个业务的慢任务把队列填满后，阻塞会传播给毫不相干的另一个业务，
+而后者既不知道前者的存在，也没有「慢下来」的余地，它只是想扔个埋点。
+
+需要背压请用 `NewPool` 自建池并调用 `pool.Submit`：那是你独占的池子，
+知道容量，也控制得了生产速度。
 
 ### 创建自定义任务池
 
@@ -73,8 +80,13 @@ xutil.Submit(func() {
 pool := xutil.NewPool(10) // 10 个 worker
 defer pool.Shutdown()      // 优雅关闭，等待所有任务完成
 
-// 提交任务
+// 提交任务，队列满时阻塞到有空位（背压）
 pool.Submit(func() {
+    processItem(item)
+})
+
+// 不想等就用 TrySubmit，队列满直接返回 false
+pool.TrySubmit(func() {
     processItem(item)
 })
 
@@ -128,16 +140,20 @@ for _, f := range futures {
 
 | 方法 | 说明 |
 |------|------|
-| `Submit(fn) bool` | 向全局任务池提交任务，返回是否提交成功 |
+| `TrySubmit(fn) bool` | 向全局任务池提交任务，队列满返回 false，不阻塞 |
 | `NewPool(n) *Pool` | 创建 n 个 worker 的自定义任务池 |
-| `pool.Submit(fn) bool` | 向自定义任务池提交任务；任务为 nil 或池已关闭时返回 false |
+| `pool.Submit(fn) bool` | 提交任务，队列满时阻塞；nil / 池已关闭返回 false |
+| `pool.TrySubmit(fn) bool` | 提交任务，队列满 / nil / 池已关闭均返回 false，不阻塞 |
 | `Go[T](pool, fn) *Future[T]` | 提交任务，返回 Future；池已关闭时立即以 `ErrPoolClosed` 完成 |
 | `pool.Shutdown()` | 优雅关闭，等待所有任务完成，多次调用安全 |
 
 关于任务池的三条保证：
 
 - **任务里的 panic 被隔离**：转成日志记录，既不崩进程，也不会杀死 worker
-- **并发 Submit 与 Shutdown 是安全的**：发送与关闭互斥，不会出现 send on closed channel
+- **并发 Submit 与 Shutdown 是安全的**：发送与关闭互斥，不会出现 send on closed channel。
+  阻塞在队列满上的 `Submit` 会被 `Shutdown` 唤醒并返回 false —— 否则它会一直持着读锁，
+  `Shutdown` 永远取不到写锁，而 Go 的 `RWMutex` 写者优先，后续所有 `Submit` 会跟着挂起
+- **`Submit` 返回 true 则任务一定会被执行**：发送在读锁内完成，此时队列不可能已关闭
 - **全局池是惰性创建的**：只 import xutil 而不调用 `Submit` 时不会启动任何 worker goroutine
 
 ### Retry

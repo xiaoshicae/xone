@@ -892,7 +892,7 @@ func TestGlobalSubmit(t *testing.T) {
 	mockey.PatchConvey("TestGlobalSubmit", t, func() {
 		mockey.PatchConvey("TestGlobalSubmit-Basic", func() {
 			ch := make(chan int, 1)
-			Submit(func() { ch <- 42 })
+			TrySubmit(func() { ch <- 42 })
 			c.So(<-ch, c.ShouldEqual, 42)
 		})
 

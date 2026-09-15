@@ -70,7 +70,8 @@ func RawLog(ctx context.Context, level Level, msg string, args ...any) {
 		return
 	}
 
-	dos := &options{KV: make(map[string]any, optCount)}
+	// KV map 交给 Option 自己按真实字段数创建，见 options.ensureKV
+	dos := &options{}
 	logArgs := make([]any, 0, len(args)-optCount)
 	for _, arg := range args {
 		if opt, ok := arg.(Option); ok {

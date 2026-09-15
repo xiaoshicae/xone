@@ -27,7 +27,15 @@ type kvScope struct {
 	kv map[string]any
 }
 
+// newKVScope 创建作用域，kvs 为空时不建 map
+//
+// 延迟到首次写入才建：请求入口无条件装一个作用域，而多数请求一个字段都不写，
+// 那个空 map 就是每请求一次的纯浪费。读取侧对 nil map 天然安全
+// （range nil 不循环、len(nil) 为 0），不需要额外判空。
 func newKVScope(kvs map[string]any) *kvScope {
+	if len(kvs) == 0 {
+		return &kvScope{}
+	}
 	s := &kvScope{kv: make(map[string]any, len(kvs))}
 	for k, v := range kvs {
 		s.kv[k] = v
@@ -35,15 +43,24 @@ func newKVScope(kvs map[string]any) *kvScope {
 	return s
 }
 
+// kvScopeHint 首次写入时 map 的初始容量
+const kvScopeHint = 8
+
 func (s *kvScope) add(k string, v any) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.kv == nil {
+		s.kv = make(map[string]any, kvScopeHint)
+	}
 	s.kv[k] = v
 }
 
 func (s *kvScope) addAll(kvs map[string]any) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.kv == nil {
+		s.kv = make(map[string]any, max(len(kvs), kvScopeHint))
+	}
 	for k, v := range kvs {
 		s.kv[k] = v
 	}
@@ -62,6 +79,9 @@ func (s *kvScope) snapshot() map[string]any {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
+	if s.kv == nil {
+		return map[string]any{}
+	}
 	out := make(map[string]any, len(s.kv))
 	for k, v := range s.kv {
 		out[k] = v

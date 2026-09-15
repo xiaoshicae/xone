@@ -167,13 +167,33 @@ func maskSensitive(settings map[string]any) map[string]any {
 			masked[k] = maskedValue
 			continue
 		}
-		if sub, ok := v.(map[string]any); ok {
-			masked[k] = maskSensitive(sub)
-			continue
-		}
-		masked[k] = v
+		masked[k] = maskSensitiveValue(v)
 	}
 	return masked
+}
+
+// maskSensitiveValue 对任意配置值递归脱敏
+//
+// 必须穿过列表：xgorm / xredis 的多实例形态就是一个 map 列表
+//
+//	XGorm:
+//	  - Name: master
+//	    DSN: "user:pass@tcp(...)/db"
+//
+// 只递归 map 的话，这里的 DSN 连同密码会原样打进启动日志。
+func maskSensitiveValue(v any) any {
+	switch val := v.(type) {
+	case map[string]any:
+		return maskSensitive(val)
+	case []any:
+		out := make([]any, len(val))
+		for i, item := range val {
+			out[i] = maskSensitiveValue(item)
+		}
+		return out
+	default:
+		return v
+	}
 }
 
 // lowerKey viper 内部统一把 key 转小写，比对时同样处理
@@ -343,7 +363,7 @@ func expandEnvPlaceholder(val string) (string, placeholderIssues) {
 //   - ${VAR}          必填，环境变量未设置时初始化失败
 //   - ${VAR:default}  可选，环境变量未设置时使用 default（想要空值写 ${VAR:}）
 //
-// 覆盖 string 叶子节点与字符串列表的元素；只展开一次，
+// 覆盖所有 string 叶子节点，包括列表元素以及列表里嵌套的 map；只展开一次，
 // 环境变量的值里若恰好含有 ${...} 不会被再次解释。
 func expandEnvPlaceholders(vp *viper.Viper) error {
 	expansions := make(map[string]any)
@@ -376,10 +396,20 @@ func expandEnvPlaceholders(vp *viper.Viper) error {
 	return nil
 }
 
-// expandConfigValue 展开单个配置值，返回展开结果、是否发生变化、发现的问题
+// expandConfigValue 递归展开单个配置值，返回展开结果、是否发生变化、发现的问题
 //
-// 只处理 string 与字符串列表：map 已被 viper 的 AllKeys 拆成独立叶子节点，
-// 其余类型（数值、布尔）不含占位符。
+// 顶层 map 已被 viper 的 AllKeys 拆成独立叶子节点，但列表不会被拆——
+// 列表里的 map 是 viper 眼中的一个整体叶子值。xgorm / xredis 的多实例形态
+// 恰好就是这个形状：
+//
+//	XRedis:
+//	  - Name: r1
+//	    Password: "${REDIS_PW}"
+//
+// 因此这里必须自己往下走：只认字符串元素的话，多实例配置里的占位符
+// 既不会被展开（密码变成字面量 "${REDIS_PW}"），缺失时也不会报错。
+//
+// 数值、布尔等其余类型不含占位符，原样返回。
 func expandConfigValue(raw any) (any, bool, placeholderIssues) {
 	var issues placeholderIssues
 
@@ -395,18 +425,28 @@ func expandConfigValue(raw any) (any, bool, placeholderIssues) {
 		items := make([]any, len(v))
 		copy(items, v)
 		for i, item := range v {
-			str, ok := item.(string)
-			if !ok || str == "" {
-				continue
-			}
-			expanded, itemIssues := expandEnvPlaceholder(str)
+			expanded, itemChanged, itemIssues := expandConfigValue(item)
 			issues.merge(itemIssues)
-			if expanded != str {
+			if itemChanged {
 				items[i] = expanded
 				changed = true
 			}
 		}
 		return items, changed, issues
+	case map[string]any:
+		// 拷贝而非就地改：入参来自 viper 内部，展开不该顺手改写它的状态
+		changed := false
+		out := make(map[string]any, len(v))
+		maps.Copy(out, v)
+		for k, item := range v {
+			expanded, itemChanged, itemIssues := expandConfigValue(item)
+			issues.merge(itemIssues)
+			if itemChanged {
+				out[k] = expanded
+				changed = true
+			}
+		}
+		return out, changed, issues
 	default:
 		return nil, false, issues
 	}

@@ -1382,3 +1382,58 @@ func TestKVScopeConcurrent(t *testing.T) {
 		c.So(len(KVFromCtx(ctx)), c.ShouldEqual, 50)
 	})
 }
+
+func TestEnabled(t *testing.T) {
+	mockey.PatchConvey("TestEnabled", t, func() {
+		mockey.PatchConvey("级别开启时为 true", func() {
+			c.So(initXLogByConfig(&Config{Level: "info"}), c.ShouldBeNil)
+			c.So(Enabled(context.Background(), InfoLevel), c.ShouldBeTrue)
+			c.So(Enabled(context.Background(), ErrorLevel), c.ShouldBeTrue)
+		})
+
+		mockey.PatchConvey("级别关闭时为 false", func() {
+			// 热路径据此跳过「构造出来只会被丢弃」的日志内容
+			c.So(initXLogByConfig(&Config{Level: "warn"}), c.ShouldBeNil)
+			c.So(Enabled(context.Background(), InfoLevel), c.ShouldBeFalse)
+			c.So(Enabled(context.Background(), DebugLevel), c.ShouldBeFalse)
+			c.So(Enabled(context.Background(), WarnLevel), c.ShouldBeTrue)
+		})
+
+		mockey.PatchConvey("nil ctx 不 panic", func() {
+			c.So(initXLogByConfig(&Config{Level: "info"}), c.ShouldBeNil)
+			c.So(func() { Enabled(nil, InfoLevel) }, c.ShouldNotPanic)
+		})
+
+		mockey.PatchConvey("handler 未初始化时为 false", func() {
+			old := handler.Load()
+			handler.Store(nil)
+			defer handler.Store(old)
+
+			c.So(Enabled(context.Background(), ErrorLevel), c.ShouldBeFalse)
+		})
+	})
+}
+
+func TestRawLogManyKV(t *testing.T) {
+	mockey.PatchConvey("TestRawLogManyKV", t, func() {
+		// 字段数超过栈缓冲容量时走 make 分支，所有字段都不能丢
+		c.So(initXLogByConfig(&Config{Level: "info"}), c.ShouldBeNil)
+
+		fileW := &mockWriter{}
+		old := handler.Load()
+		handler.Store(&xHandler{fileWriter: fileW, level: slogLevelTrace})
+		defer handler.Store(old)
+
+		n := attrStackBuf + 5
+		kvs := make(map[string]any, n)
+		for i := range n {
+			kvs["k"+strconv.Itoa(i)] = i
+		}
+		Info(context.Background(), "many kv", KVMap(kvs))
+
+		out := decodeJSON(t, fileW.written)
+		for i := range n {
+			c.So(out["k"+strconv.Itoa(i)], c.ShouldEqual, float64(i))
+		}
+	})
+}

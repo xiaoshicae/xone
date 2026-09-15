@@ -6,10 +6,10 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/xiaoshicae/xone/v2/xconfig"
-	"github.com/xiaoshicae/xone/v2/xerror"
-	"github.com/xiaoshicae/xone/v2/xhook"
-	"github.com/xiaoshicae/xone/v2/xutil"
+	"github.com/xiaoshicae/xone/v3/xconfig"
+	"github.com/xiaoshicae/xone/v3/xerror"
+	"github.com/xiaoshicae/xone/v3/xhook"
+	"github.com/xiaoshicae/xone/v3/xutil"
 
 	"go.opentelemetry.io/contrib/propagators/b3"
 	"go.opentelemetry.io/otel"

@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/go-resty/resty/v2"
-	"github.com/xiaoshicae/xone/v2/xutil"
+	"github.com/xiaoshicae/xone/v3/xutil"
 )
 
 // fallbackTimeout 未初始化 / 已关闭时兜底 client 的超时

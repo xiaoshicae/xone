@@ -7,7 +7,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/xiaoshicae/xone/v2/xutil"
+	"github.com/xiaoshicae/xone/v3/xutil"
 
 	"github.com/prometheus/client_golang/prometheus"
 )

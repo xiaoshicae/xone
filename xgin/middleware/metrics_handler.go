@@ -2,7 +2,7 @@ package middleware
 
 import (
 	"github.com/gin-gonic/gin"
-	"github.com/xiaoshicae/xone/v2/xmetric"
+	"github.com/xiaoshicae/xone/v3/xmetric"
 )
 
 // MetricsHandler 返回 Prometheus /metrics 端点的 Gin handler

@@ -23,10 +23,10 @@ Go >= 1.25
 ### 1. 安装
 
 ```bash
-go get github.com/xiaoshicae/xone/v2
+go get github.com/xiaoshicae/xone/v3
 ```
 
-> 模块路径带 `/v2`，所有 import 也必须带，例如 `github.com/xiaoshicae/xone/v2/xlog`。
+> 模块路径带 `/v3`，所有 import 也必须带，例如 `github.com/xiaoshicae/xone/v3/xlog`。
 
 ### 2. 创建配置文件
 
@@ -59,8 +59,8 @@ package main
 import (
 	"github.com/gin-gonic/gin"
 
-	"github.com/xiaoshicae/xone/v2/xgin"
-	"github.com/xiaoshicae/xone/v2/xgin/options"
+	"github.com/xiaoshicae/xone/v3/xgin"
+	"github.com/xiaoshicae/xone/v3/xgin/options"
 )
 
 func main() {
@@ -103,7 +103,7 @@ func main() {
 **日志** —— 所有日志函数都要求传 `ctx`，TraceID 由此关联：
 
 ```go
-import "github.com/xiaoshicae/xone/v2/xlog"
+import "github.com/xiaoshicae/xone/v3/xlog"
 
 xlog.Info(ctx, "order created, amount=%d", 99)
 xlog.Info(ctx, "request handled", xlog.KV("userId", "u-123"))
@@ -115,7 +115,7 @@ ctx = xlog.CtxWithKV(ctx, map[string]any{"requestId": "req-456"})
 **HTTP 客户端**：
 
 ```go
-import "github.com/xiaoshicae/xone/v2/xhttp"
+import "github.com/xiaoshicae/xone/v3/xhttp"
 
 resp, err := xhttp.RWithCtx(ctx).Get("https://api.example.com/users")
 
@@ -125,7 +125,7 @@ rawClient := xhttp.RawClient() // 原生 http.Client，用于 SSE 等流式场�
 **数据库**（多数据源传 Name）：
 
 ```go
-import "github.com/xiaoshicae/xone/v2/xgorm"
+import "github.com/xiaoshicae/xone/v3/xgorm"
 
 var user User
 xgorm.CWithCtx(ctx).First(&user, 1)
@@ -137,8 +137,8 @@ masterDB := xgorm.CWithCtx(ctx, "master")
 
 ```go
 import (
-	"github.com/xiaoshicae/xone/v2/xcache"
-	"github.com/xiaoshicae/xone/v2/xredis"
+	"github.com/xiaoshicae/xone/v3/xcache"
+	"github.com/xiaoshicae/xone/v3/xredis"
 )
 
 xredis.C().Set(ctx, "key", "value", time.Minute)
@@ -150,7 +150,7 @@ u, ok := xcache.Get[*User]("user:1")
 **指标**：
 
 ```go
-import "github.com/xiaoshicae/xone/v2/xmetric"
+import "github.com/xiaoshicae/xone/v3/xmetric"
 
 xmetric.CounterInc("order_created_total", xmetric.T("channel", "wechat"))
 xmetric.ObserveDuration("db_query", elapsed, xmetric.T("table", "orders"))
@@ -162,7 +162,7 @@ defer xmetric.TrackInFlight("http_requests_in_flight")()
 **自定义配置**：
 
 ```go
-import "github.com/xiaoshicae/xone/v2/xconfig"
+import "github.com/xiaoshicae/xone/v3/xconfig"
 
 apiKey := xconfig.GetString("MyApp.ApiKey")
 
@@ -173,7 +173,7 @@ xconfig.UnmarshalConfig("MyApp", &cfg)
 **链路追踪** —— xhttp / xgorm / xredis / xlog 会自动关联，一般无需手动操作：
 
 ```go
-import "github.com/xiaoshicae/xone/v2/xtrace"
+import "github.com/xiaoshicae/xone/v3/xtrace"
 
 ctx, span := xtrace.GetTracer("my-service").Start(ctx, "my-operation")
 defer span.End()
@@ -200,7 +200,7 @@ TLS、HTTP/2、超时与优雅退出都通过 YAML 配置，见 [配置参考](.
 ## 生命周期 Hook
 
 ```go
-import "github.com/xiaoshicae/xone/v2/xhook"
+import "github.com/xiaoshicae/xone/v3/xhook"
 
 func init() {
 	// 在所有框架模块初始化之后执行

@@ -12,7 +12,7 @@ import (
 	. "github.com/bytedance/mockey"
 	c "github.com/smartystreets/goconvey/convey"
 
-	"github.com/xiaoshicae/xone/v2/xlog"
+	"github.com/xiaoshicae/xone/v3/xlog"
 )
 
 // captureXLog 拦截 xlog 的四个级别，返回按级别收集到的消息

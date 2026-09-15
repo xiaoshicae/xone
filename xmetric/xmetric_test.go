@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/xiaoshicae/xone/v2/xlog"
+	"github.com/xiaoshicae/xone/v3/xlog"
 	"sync"
 	"testing"
 	"time"
@@ -13,8 +13,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/xiaoshicae/xone/v2/xconfig"
-	"github.com/xiaoshicae/xone/v2/xutil"
+	"github.com/xiaoshicae/xone/v3/xconfig"
+	"github.com/xiaoshicae/xone/v3/xutil"
 )
 
 var errTest = errors.New("test error")

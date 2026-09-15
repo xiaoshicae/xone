@@ -159,7 +159,7 @@ func TestTrace_ValidSpan(t *testing.T) {
 }
 
 func TestTracerNameConstant(t *testing.T) {
-	expected := "github.com/xiaoshicae/xone/v2/xgin"
+	expected := "github.com/xiaoshicae/xone/v3/xgin"
 	if tracerName != expected {
 		t.Errorf("tracerName should be %s, got %s", expected, tracerName)
 	}

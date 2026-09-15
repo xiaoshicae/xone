@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/xiaoshicae/xone/v2/xerror"
+	"github.com/xiaoshicae/xone/v3/xerror"
 )
 
 // Future 表示一个异步计算的结果，支持阻塞等待和超时等待

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/xiaoshicae/xone/v2/internal/hookorder"
+	"github.com/xiaoshicae/xone/v3/internal/hookorder"
 )
 
 const (

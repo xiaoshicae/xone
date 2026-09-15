@@ -71,8 +71,8 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/xiaoshicae/xone/v2/xgin"
-	"github.com/xiaoshicae/xone/v2/xgin/options"
+	"github.com/xiaoshicae/xone/v3/xgin"
+	"github.com/xiaoshicae/xone/v3/xgin/options"
 )
 
 func main() {
@@ -96,8 +96,8 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/xiaoshicae/xone/v2/xgin"
-	"github.com/xiaoshicae/xone/v2/xgin/options"
+	"github.com/xiaoshicae/xone/v3/xgin"
+	"github.com/xiaoshicae/xone/v3/xgin/options"
 	"your-project/docs" // swag init 生成的文档
 )
 

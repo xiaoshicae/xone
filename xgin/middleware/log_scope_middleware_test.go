@@ -10,7 +10,7 @@ import (
 	"github.com/bytedance/mockey"
 	"github.com/gin-gonic/gin"
 	"github.com/smartystreets/goconvey/convey"
-	"github.com/xiaoshicae/xone/v2/xlog"
+	"github.com/xiaoshicae/xone/v3/xlog"
 )
 
 func TestLogScope(t *testing.T) {

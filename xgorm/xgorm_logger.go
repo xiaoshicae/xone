@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/xiaoshicae/xone/v2/xlog"
-	"github.com/xiaoshicae/xone/v2/xutil"
+	"github.com/xiaoshicae/xone/v3/xlog"
+	"github.com/xiaoshicae/xone/v3/xutil"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"

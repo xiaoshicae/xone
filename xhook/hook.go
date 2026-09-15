@@ -10,8 +10,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/xiaoshicae/xone/v2/xerror"
-	"github.com/xiaoshicae/xone/v2/xutil"
+	"github.com/xiaoshicae/xone/v3/xerror"
+	"github.com/xiaoshicae/xone/v3/xutil"
 )
 
 const (

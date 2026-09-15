@@ -65,8 +65,8 @@ xtrace.AddSpanProcessor(sp sdktrace.SpanProcessor)
 import (
     "context"
 
-    "github.com/xiaoshicae/xone/v2/xconfig"
-    "github.com/xiaoshicae/xone/v2/xtrace"
+    "github.com/xiaoshicae/xone/v3/xconfig"
+    "github.com/xiaoshicae/xone/v3/xtrace"
     "go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
     sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
@@ -100,7 +100,7 @@ package main
 
 import (
     "context"
-    "github.com/xiaoshicae/xone/v2/xtrace"
+    "github.com/xiaoshicae/xone/v3/xtrace"
 )
 
 func main() {

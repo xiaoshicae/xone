@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xiaoshicae/xone/v2/xgorm"
-	"github.com/xiaoshicae/xone/v2/xserver"
-	"github.com/xiaoshicae/xone/v2/xutil"
+	"github.com/xiaoshicae/xone/v3/xgorm"
+	"github.com/xiaoshicae/xone/v3/xserver"
+	"github.com/xiaoshicae/xone/v3/xutil"
 
 	. "github.com/bytedance/mockey"
 	. "github.com/smartystreets/goconvey/convey"

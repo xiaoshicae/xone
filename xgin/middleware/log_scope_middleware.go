@@ -2,7 +2,7 @@ package middleware
 
 import (
 	"github.com/gin-gonic/gin"
-	"github.com/xiaoshicae/xone/v2/xlog"
+	"github.com/xiaoshicae/xone/v3/xlog"
 )
 
 // LogScope 请求入口中间件，为本次请求开启日志 KV 作用域

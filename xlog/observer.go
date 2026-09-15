@@ -3,7 +3,7 @@ package xlog
 import (
 	"context"
 
-	"github.com/xiaoshicae/xone/v2/xutil"
+	"github.com/xiaoshicae/xone/v3/xutil"
 	"sync"
 	"sync/atomic"
 )

@@ -4,7 +4,7 @@ import (
 	"context"
 	"sync"
 
-	"github.com/xiaoshicae/xone/v2/xutil"
+	"github.com/xiaoshicae/xone/v3/xutil"
 )
 
 // ctxKVScopeKey KV 作用域在 context 中的 key

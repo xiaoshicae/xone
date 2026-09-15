@@ -51,7 +51,7 @@ allowed-tools: Bash, Read, Grep, Glob, AskUserQuestion
 - 推送分支：`git push origin <current-branch>`
 
 #### 9. 触发 pkg.go.dev 索引
-- 运行 `GOPROXY=https://proxy.golang.org GO111MODULE=on go list -m github.com/xiaoshicae/xone/v2@<version>` 触发模块索引
+- 运行 `GOPROXY=https://proxy.golang.org GO111MODULE=on go list -m github.com/xiaoshicae/xone/v3@<version>` 触发模块索引
 - 如果命令失败，提示用户手动访问 pkg.go.dev 页面
 
 #### 10. 创建 GitHub Release
@@ -61,7 +61,7 @@ allowed-tools: Bash, Read, Grep, Glob, AskUserQuestion
 
 #### 11. 输出结果
 - 显示发布成功信息
-- 输出 pkg.go.dev 链接：`https://pkg.go.dev/github.com/xiaoshicae/xone/v2@<version>`
+- 输出 pkg.go.dev 链接：`https://pkg.go.dev/github.com/xiaoshicae/xone/v3@<version>`
 - 输出 GitHub Release 链接：`https://github.com/xiaoshicae/xone/releases/tag/<version>`
 
 ### 用法

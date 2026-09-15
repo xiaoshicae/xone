@@ -1,6 +1,6 @@
 package xredis
 
-import "github.com/xiaoshicae/xone/v2/xutil"
+import "github.com/xiaoshicae/xone/v3/xutil"
 
 const XRedisConfigKey = "XRedis"
 

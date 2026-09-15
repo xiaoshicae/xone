@@ -5,7 +5,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/xiaoshicae/xone/v2/xerror"
+	"github.com/xiaoshicae/xone/v3/xerror"
 )
 
 var argKeyPattern = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_.-]*$`)

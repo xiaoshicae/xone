@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xiaoshicae/xone/v2/xhook"
-	"github.com/xiaoshicae/xone/v2/xutil"
+	"github.com/xiaoshicae/xone/v3/xhook"
+	"github.com/xiaoshicae/xone/v3/xutil"
 
 	. "github.com/bytedance/mockey"
 	. "github.com/smartystreets/goconvey/convey"

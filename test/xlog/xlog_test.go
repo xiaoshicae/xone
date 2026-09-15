@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/xiaoshicae/xone/v2/xlog"
-	"github.com/xiaoshicae/xone/v2/xserver"
+	"github.com/xiaoshicae/xone/v3/xlog"
+	"github.com/xiaoshicae/xone/v3/xserver"
 )
 
 func TestXLog(t *testing.T) {

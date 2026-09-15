@@ -186,7 +186,7 @@ package main
 import (
     "context"
 
-    "github.com/xiaoshicae/xone/v2/xlog"
+    "github.com/xiaoshicae/xone/v3/xlog"
 )
 
 func main() {

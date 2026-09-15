@@ -1,56 +1,77 @@
-## XConfig配置文件解析模块
+## XConfig 配置文件解析模块
 
 ### 1. 模块简介
 
 * 负责配置文件的解析，是其它模块的基础
-* XConfig提供的方法请参考util.go
-* 配置文件不同环境启用原则:
-  > 参考了spring设计方式，采用 _application{-profiles}.yml_ 区分不同环境
-    * 启用优先级: 启动参数 > 环境变量 > application.yml中的配置
-    * 各启用方式举例:
-        * 启动参数方式：
-            ```shell
-            --server.profiles.active=dev
-            ```
-        * 环境变量方式:
-            ```shell
-            export SERVER_PROFILES_ACTIVE=prod
-            ```
-        * application.yml 配置文件方式:
-            ```yaml
-            Server:
-              Profiles:
-                Active: test
-            ```
-    * `Active` 只允许字母、数字、下划线和短横线 —— 它会被拼进配置文件路径，非法字符会导致初始化失败
-    * application{-profiles}.yml 合并到 application.yml 的覆盖原则：**逐层深合并**
-        * 环境配置文件里只写要改的字段即可，同一块下未提及的字段保留基础配置的值
-        * 列表整体替换（半个列表没有意义）
-        * `Server.Profiles` 不参与合并：激活的环境由基础配置/启动参数/环境变量决定，环境配置文件不能反过来改写它
+* 参考 Spring 的设计方式，用 `application{-profiles}.yml` 区分不同环境
+* 支持的文件格式：`.yml` / `.yaml` / `.json`
 
-        ```yaml
-        # application.yml
-        XLog: {Level: info, File: {Enable: true, Path: ./log}}
-        # application-dev.yml
-        XLog: {Level: debug}
-        # 合并结果：Level=debug，File.Enable=true，File.Path=./log 都保留
+#### 加载流程
+
+加载过程是一条直线，每一步只做一件事，产物就是下一步的唯一输入：
+
+```
+定位 → 解析 → 分层 → 合并 → 展开 → 存储
+```
+
+| 步骤 | 做什么 |
+|------|--------|
+| 定位 | 找到主配置文件（启动参数 > 环境变量 > 约定路径） |
+| 解析 | 把每个文件读成 `map[string]any`，key 统一转小写 |
+| 分层 | 按优先级从低到高排出所有配置层（主配置、导入的文件、环境变体） |
+| 合并 | 逐层深合并成一棵树 |
+| 展开 | 统一展开一次 `${VAR}` 占位符 |
+| 存储 | 交给 viper 作为只读存储，对外提供读取 API |
+
+中间各步都是 `map[string]any` 上的纯函数，viper 只出现在最后一步。
+
+#### 配置文件路径查找
+
+* 查找优先级: 启动参数 > 环境变量 > `./application.yml` > `./conf/application.yml` > `./config/application.yml` > `./../conf/application.yml` > `./../config/application.yml`
+* 各查找方式举例:
+    * 启动参数方式：
+        ```shell
+        --server.config.location=/x/y/z/application.yml
         ```
-
-* 配置文件路径查找原则:
-    * 查找优先级: 启动参数 > 环境变量 > ./application.yml > ./conf/application.yml > ./config/application.yml > ./../conf/application.yml > ./../config/application.yml
-    * 各查找方式举例:
-        * 启动参数方式：
-            ```shell
-            --server.config.location=/x/y/z/application.yml
-            ```
-        * 环境变量方式:
-            ```shell
-            export SERVER_CONFIG_LOCATION=/x/y/z/application.yml
-            ```
-        * 配置文件application.yml，默认优先级 ./ > ./conf > ./config
-    * 相对路径基于**进程的工作目录**，容器里取决于镜像的 WORKDIR；路径不确定时请用启动参数或环境变量显式指定
-
+    * 环境变量方式:
+        ```shell
+        export SERVER_CONFIG_LOCATION=/x/y/z/application.yml
+        ```
+* 相对路径基于**进程的工作目录**，容器里取决于镜像的 WORKDIR；路径不确定时请用启动参数或环境变量显式指定
 * 同目录下若存在 `.env` 文件会先被加载，其中的变量可供占位符引用
+
+#### 环境（Profiles）启用
+
+* 启用优先级: 启动参数 > 环境变量 > `application.yml` 中的配置
+* 各启用方式举例:
+    * 启动参数方式：
+        ```shell
+        --server.profiles.active=dev
+        ```
+    * 环境变量方式:
+        ```shell
+        export SERVER_PROFILES_ACTIVE=prod
+        ```
+    * 配置文件方式:
+        ```yaml
+        Server:
+          Profiles:
+            Active: test
+        ```
+* `Active` 只允许字母、数字、下划线和短横线 —— 它会被拼进配置文件路径，非法字符会导致初始化失败
+* `application{-profiles}.yml` 合并到 `application.yml` 的覆盖原则：**逐层深合并**
+    * 环境配置文件里只写要改的字段即可，同一块下未提及的字段保留基础配置的值
+    * 列表整体替换（半个列表没有意义）
+    * `Server.Profiles` 不参与合并：激活的环境由基础配置/启动参数/环境变量决定，环境配置文件不能反过来改写它
+
+    ```yaml
+    # application.yml
+    XLog: {Level: info, File: {Enable: true, Path: ./log}}
+    # application-dev.yml
+    XLog: {Level: debug}
+    # 合并结果：Level=debug，File.Enable=true，File.Path=./log 都保留
+    ```
+* 最终配置中的 `Server.Profiles.Active` 是**实际生效的那个值**：用 `--server.profiles.active=prod` 启动时读到的就是 `prod`，而不是配置文件里写的值
 
 ### 2. 配置参数
 
@@ -144,6 +165,10 @@ Server:
 
 环境变量**显式设为空串是一个有效取值**，会覆盖默认值 —— 判断的是"有没有设置"，不是"是不是空"。
 
+在合并之后才展开，是为了让一个被后续层覆盖掉的值不必为它引用的变量负责：
+`application.yml` 里写 `DSN: ${DB_DSN}`、`application-dev.yml` 里把它改成本地地址时，
+dev 环境不需要设置 `DB_DSN` 也能启动。
+
 > **分隔符是 `:`，与 Spring 一致。** POSIX shell 的 `${VAR:-default}` 写法不再支持，
 > 冒号之后的内容一律作为默认值 —— 即 `${VAR:-1}` 的默认值是 `-1`。
 >
@@ -171,14 +196,46 @@ XRedis:                          # 多实例：列表里嵌套 map
 
 ### 5. 配置打印与脱敏
 
-开启 `XONE_ENABLE_DEBUG` 时会打印最终生效的完整配置，其中字段名命中
-`password / passwd / secret / token / apikey / accesskey / privatekey / credential / dsn`
+开启 `XONE_ENABLE_DEBUG` 时会打印最终生效的完整配置，以及它的全部来源（按优先级从低到高）：
+
+```
+************************************** XOne load config **************************************
+sources (low -> high precedence):
+  1. conf/application.yml
+  2. conf/db.yml
+  3. conf/application-dev.yml
+----------------------------------------------------------------------------------------------
+{ ... }
+**********************************************************************************************
+```
+
+其中字段名命中 `password / passwd / secret / token / apikey / accesskey / privatekey / credential / dsn`
 （大小写不敏感）的值会被替换为 `******`，不会输出凭证明文。
 
 脱敏同样是递归的，会穿过列表：xgorm / xredis 的多实例配置是一个 map 列表，
 里面的 `DSN`、`Password` 与单实例形态一样被替换。
 
-### 6. 使用demo
+排查「这个值到底从哪来」时，也可以在代码里调用 `xconfig.Sources()` 拿到同一份来源列表。
+
+### 6. 对外 API
+
+| 方法 | 说明 |
+|------|------|
+| `UnmarshalConfig(key string, conf any) error` | 把 key 对应的配置反序列化到结构体，**模块配置一律走这个入口** |
+| `GetConfig(key string) any` | 读取原始值，key 不存在时返回 nil |
+| `ContainKey(key string) bool` | 判断 key 是否存在 |
+| `GetString(key string) string` | 按 string 读取 |
+| `GetInt(key string) int` | 按 int 读取 |
+| `GetBool(key string) bool` | 按 bool 读取 |
+| `GetServerName() string` | `Server.Name`，未配置时返回默认值 |
+| `GetServerVersion() string` | `Server.Version`，未配置时返回 `v0.0.1` |
+| `GetProfilesActive() string` | 实际激活的环境，未启用时返回空串 |
+| `Sources() []string` | 本次实际加载的配置文件，按优先级从低到高 |
+
+> 模块内部**不要**用 `GetXxx()` 散落读取配置：初始化时通过 `UnmarshalConfig` 一次性读进
+> Config 结构体，运行时从结构体里取。理由见 `.claude/rules/config-conventions.md`。
+
+### 7. 使用 demo
 
 * 配置
   ```yaml
@@ -192,26 +249,28 @@ XRedis:                          # 多实例：列表里嵌套 map
 
   import "github.com/xiaoshicae/xone/v2/xconfig"
 
-  // 如果结构体名称, 如果字段名称有特殊命名方式(驼峰映射成下划线等)，需要tag mapstructure 进行映射
-  // 具体使用方法请参考: https://github.com/spf13/viper
-  type MyConfig  struct {
-      X int    `mapstructure:"x"`
-      Y string
+  // 字段名有特殊命名方式（驼峰映射成下划线等）时，需要用 tag mapstructure 映射
+  type MyConfig struct {
+      X int    `mapstructure:"X"`
+      Y string `mapstructure:"Y"`
   }
 
   func main() {
-      x := xconfig.GetInt("MyConfig.X")
-      println("get config x: ", x)
-
-      y := xconfig.GetString("MyConfig.Y")
-      println("get config y: ", y)
-
       myConfig := &MyConfig{}
       _ = xconfig.UnmarshalConfig("MyConfig", myConfig)
-      println("get config myConfig: ", myConfig)
+      println("get config myConfig: ", myConfig.X, myConfig.Y)
   }
   ```
 
-### 7. 其它模块配置参数说明
+* 配置 key 里可以含 `.`（如 OpenTelemetry 的 `service.name`），它会被当成一个完整的 key，
+  不会被拆成两层嵌套：
 
-* 其它块配置参数，参考相应模块的README.md
+  ```yaml
+  XMetric:
+    ConstLabels:
+      service.name: "demo"        # map[string]string 里的一个 key
+  ```
+
+### 8. 其它模块配置参数说明
+
+* 其它块配置参数，参考相应模块的 README.md

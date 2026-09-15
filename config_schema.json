@@ -38,7 +38,7 @@
         },
         "Port": {
           "type": ["integer", "string"],
-          "description": "服务监听的端口，默认8000"
+          "description": "服务监听的端口，默认8080"
         },
         "UseH2C": {
           "type": ["boolean", "string"],

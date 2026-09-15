@@ -127,7 +127,7 @@ Server:
 
 XGin:
   Host: "0.0.0.0"              # 监听地址（默认 0.0.0.0）
-  Port: 8000                   # 监听端口（默认 8000）
+  Port: 8080                   # 监听端口（默认 8080）
   UseH2C: false                # 非 TLS 下启用 h2c（HTTP/2 Cleartext）
   CertFile: ""                 # TLS 证书路径（配置后自动启用 HTTPS，需与 KeyFile 同时配置）
   KeyFile: ""                  # TLS 私钥路径

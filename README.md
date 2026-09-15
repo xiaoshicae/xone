@@ -38,7 +38,7 @@ Server:
   Version: "v1.0.0"
 
 XGin:
-  Port: 8000
+  Port: 8080
 
 XLog:
   Level: "info"

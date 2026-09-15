@@ -447,7 +447,7 @@ func TestGetProfilesActiveWithEnvPlaceholder(t *testing.T) {
 			os.Unsetenv("PROFILES_ACTIVE_NOT_SET")
 
 			vp := viper.New()
-			vp.Set("Server.Profiles.Active", "${PROFILES_ACTIVE_NOT_SET:-dev}")
+			vp.Set("Server.Profiles.Active", "${PROFILES_ACTIVE_NOT_SET:dev}")
 
 			So(getProfilesActiveFromViperConfig(vp), ShouldEqual, "dev")
 		})
@@ -743,7 +743,11 @@ func TestMergeProfilesViperConfig(t *testing.T) {
 		vp2.Set("x", "x2")
 		vp2.Set("z", "z2")
 
-		vp := mergeProfilesViperConfig(vp1, vp2)
+		merged := deepMerge(vp1.AllSettings(), profileSettingsOf(vp2))
+		vp := viper.New()
+		for k, v := range merged {
+			vp.Set(k, v)
+		}
 		So(vp.AllSettings(), ShouldResemble, map[string]any{
 			"server": map[string]any{
 				"s1": 11,
@@ -767,55 +771,87 @@ func TestExpandEnvPlaceholder(t *testing.T) {
 	PatchConvey("TestExpandEnvPlaceholder", t, func() {
 		PatchConvey("WithEnvVar", func() {
 			t.Setenv("TEST_EXPAND", "expanded")
-			got, missing := expandEnvPlaceholder("${TEST_EXPAND}")
+			got, iss := expandEnvPlaceholder("${TEST_EXPAND}")
 			So(got, ShouldEqual, "expanded")
-			So(missing, ShouldBeEmpty)
+			So(iss.missing, ShouldBeEmpty)
+			So(iss.unsupported, ShouldBeEmpty)
 		})
 
 		PatchConvey("WithDefault", func() {
 			os.Unsetenv("NONEXISTENT_VAR")
-			got, missing := expandEnvPlaceholder("${NONEXISTENT_VAR:-fallback}")
+			got, iss := expandEnvPlaceholder("${NONEXISTENT_VAR:fallback}")
 			So(got, ShouldEqual, "fallback")
-			So(missing, ShouldBeEmpty)
+			So(iss.missing, ShouldBeEmpty)
+			So(iss.unsupported, ShouldBeEmpty)
 		})
 
 		PatchConvey("NoPlaceholder", func() {
-			got, missing := expandEnvPlaceholder("plain_value")
+			got, iss := expandEnvPlaceholder("plain_value")
 			So(got, ShouldEqual, "plain_value")
-			So(missing, ShouldBeEmpty)
+			So(iss.missing, ShouldBeEmpty)
+			So(iss.unsupported, ShouldBeEmpty)
 		})
 
 		PatchConvey("显式设为空串的环境变量应覆盖默认值", func() {
 			t.Setenv("TEST_EXPAND_EMPTY", "")
-			got, missing := expandEnvPlaceholder("${TEST_EXPAND_EMPTY:-fallback}")
+			got, iss := expandEnvPlaceholder("${TEST_EXPAND_EMPTY:fallback}")
 			So(got, ShouldEqual, "")
-			So(missing, ShouldBeEmpty)
+			So(iss.missing, ShouldBeEmpty)
+			So(iss.unsupported, ShouldBeEmpty)
 		})
 
-		PatchConvey("空默认值写法 ${VAR:-} 表示可选且默认为空", func() {
+		PatchConvey("空默认值写法 ${VAR:} 表示可选且默认为空", func() {
 			os.Unsetenv("TEST_EXPAND_OPTIONAL")
-			got, missing := expandEnvPlaceholder("${TEST_EXPAND_OPTIONAL:-}")
+			got, iss := expandEnvPlaceholder("${TEST_EXPAND_OPTIONAL:}")
 			So(got, ShouldEqual, "")
-			So(missing, ShouldBeEmpty)
+			So(iss.missing, ShouldBeEmpty)
+			So(iss.unsupported, ShouldBeEmpty)
 		})
 
 		PatchConvey("无默认值且未设置时报告为缺失，并保留原样", func() {
 			os.Unsetenv("TEST_EXPAND_REQUIRED")
-			got, missing := expandEnvPlaceholder("prefix-${TEST_EXPAND_REQUIRED}-suffix")
+			got, iss := expandEnvPlaceholder("prefix-${TEST_EXPAND_REQUIRED}-suffix")
 			So(got, ShouldEqual, "prefix-${TEST_EXPAND_REQUIRED}-suffix")
-			So(missing, ShouldResemble, []string{"TEST_EXPAND_REQUIRED"})
+			So(iss.missing, ShouldResemble, []string{"TEST_EXPAND_REQUIRED"})
 		})
 
 		PatchConvey("同一个字符串里多个占位符", func() {
 			t.Setenv("TEST_EXPAND_A", "a")
 			os.Unsetenv("TEST_EXPAND_B")
-			got, missing := expandEnvPlaceholder("${TEST_EXPAND_A}/${TEST_EXPAND_B}/${TEST_EXPAND_C:-c}")
+			got, iss := expandEnvPlaceholder("${TEST_EXPAND_A}/${TEST_EXPAND_B}/${TEST_EXPAND_C:c}")
 			So(got, ShouldEqual, "a/${TEST_EXPAND_B}/c")
-			So(missing, ShouldResemble, []string{"TEST_EXPAND_B"})
+			So(iss.missing, ShouldResemble, []string{"TEST_EXPAND_B"})
+		})
+
+		PatchConvey("默认值里可以含冒号", func() {
+			// 判断是否写了默认值靠正则分组而不是查字符串里有没有冒号，
+			// 否则 ${ADDR:127.0.0.1:6379} 这种会解析错
+			os.Unsetenv("TEST_EXPAND_ADDR")
+			got, iss := expandEnvPlaceholder("${TEST_EXPAND_ADDR:127.0.0.1:6379}")
+			So(got, ShouldEqual, "127.0.0.1:6379")
+			So(iss.empty(), ShouldBeTrue)
+		})
+
+		PatchConvey("默认值可以以 - 开头", func() {
+			os.Unsetenv("TEST_EXPAND_NEG")
+			got, iss := expandEnvPlaceholder("${TEST_EXPAND_NEG:-1}")
+			So(got, ShouldEqual, "-1")
+			So(iss.empty(), ShouldBeTrue)
+		})
+
+		PatchConvey("${VAR:} 表示默认为空", func() {
+			os.Unsetenv("TEST_EXPAND_E")
+			got, iss := expandEnvPlaceholder("${TEST_EXPAND_E:}")
+			So(got, ShouldEqual, "")
+			So(iss.empty(), ShouldBeTrue)
+		})
+
+		PatchConvey("空占位符 ${} 同样报出来", func() {
+			_, iss := expandEnvPlaceholder("${}")
+			So(iss.unsupported, ShouldResemble, []string{"${}"})
 		})
 	})
 }
-
 func TestExpandEnvPlaceholders(t *testing.T) {
 	PatchConvey("TestExpandEnvPlaceholders", t, func() {
 		PatchConvey("WithEnvVar", func() {
@@ -829,7 +865,7 @@ func TestExpandEnvPlaceholders(t *testing.T) {
 		PatchConvey("WithDefault", func() {
 			os.Unsetenv("NONEXISTENT_VAR")
 			vp := viper.New()
-			vp.Set("key", "${NONEXISTENT_VAR:-default_value}")
+			vp.Set("key", "${NONEXISTENT_VAR:default_value}")
 			So(expandEnvPlaceholders(vp), ShouldBeNil)
 			So(vp.GetString("key"), ShouldEqual, "default_value")
 		})
@@ -1147,5 +1183,431 @@ func TestToProfilesActiveConfigLocationNoExtension(t *testing.T) {
 		So(loc, ShouldBeEmpty)
 		So(err, ShouldNotBeNil)
 		So(err.Error(), ShouldContainSubstring, "no extension found")
+	})
+}
+
+// ==================== xconfig_import.go ====================
+
+// TestImportPrecedence 被导入文件覆盖主配置，环境配置仍有最终决定权
+//
+// 与 Spring Boot 的 spring.config.import 同向：db.yml 是数据库配置的权威，
+// 不会被 application.yml 里一个忘删的残留字段悄悄压过。
+func TestImportPrecedence(t *testing.T) {
+	PatchConvey("TestImportPrecedence", t, func() {
+		dir := t.TempDir()
+		writeTempConfig(t, dir, "db.yml", `
+XGorm:
+  Driver: "postgres"
+  MaxOpenConns: 999
+  MaxIdleConns: 7
+`)
+		writeTempConfig(t, dir, "application-dev.yml", `
+XGorm:
+  MaxIdleConns: 3
+`)
+		base := writeTempConfig(t, dir, "application.yml", `
+Server:
+  Name: "xone.demo.app"
+  Profiles:
+    Active: "dev"
+  Config:
+    Import:
+      - db.yml
+XGorm:
+  MaxOpenConns: 10
+`)
+		vp, err := parseConfig(base)
+		So(err, ShouldBeNil)
+		So(vp.GetString("XGorm.Driver"), ShouldEqual, "postgres") // 只有导入的写了
+		So(vp.GetInt("XGorm.MaxOpenConns"), ShouldEqual, 999)     // 导入的压过主配置
+		So(vp.GetInt("XGorm.MaxIdleConns"), ShouldEqual, 3)       // 环境配置压过导入的
+	})
+}
+
+// TestImportOrderWithinList 导入列表内后声明的覆盖先声明的
+func TestImportOrderWithinList(t *testing.T) {
+	PatchConvey("TestImportOrderWithinList", t, func() {
+		dir := t.TempDir()
+		writeTempConfig(t, dir, "a.yml", "XGorm:\n  Driver: \"mysql\"\n")
+		writeTempConfig(t, dir, "b.yml", "XGorm:\n  Driver: \"postgres\"\n")
+		base := writeTempConfig(t, dir, "application.yml", `
+Server:
+  Name: "xone.demo.app"
+  Config:
+    Import:
+      - a.yml
+      - b.yml
+`)
+		vp, err := parseConfig(base)
+		So(err, ShouldBeNil)
+		So(vp.GetString("XGorm.Driver"), ShouldEqual, "postgres") // 后声明的赢
+	})
+}
+
+// TestImportProfileVariant 被导入文件同样支持 {name}-{env}.yml 变体
+func TestImportProfileVariant(t *testing.T) {
+	PatchConvey("TestImportProfileVariant", t, func() {
+		dir := t.TempDir()
+		writeTempConfig(t, dir, "db.yml", "XGorm:\n  DSN: \"host=base\"\n  Driver: \"mysql\"\n")
+		writeTempConfig(t, dir, "db-dev.yml", "XGorm:\n  DSN: \"host=dev\"\n")
+		base := writeTempConfig(t, dir, "application.yml", `
+Server:
+  Name: "xone.demo.app"
+  Profiles:
+    Active: "dev"
+  Config:
+    Import:
+      - db.yml
+`)
+		vp, err := parseConfig(base)
+		So(err, ShouldBeNil)
+		So(vp.GetString("XGorm.DSN"), ShouldEqual, "host=dev") // 环境变体覆盖
+		So(vp.GetString("XGorm.Driver"), ShouldEqual, "mysql") // 未提及的字段保留
+	})
+}
+
+// TestImportListIsUnion base 与 env 的导入列表取并集而不是替换
+func TestImportListIsUnion(t *testing.T) {
+	PatchConvey("TestImportListIsUnion", t, func() {
+		// Import 是加载指令不是配置数据：按「列表整体替换」处理的话，
+		// 环境配置想多加一个文件就得把整张列表抄一遍
+		dir := t.TempDir()
+		writeTempConfig(t, dir, "db.yml", "XGorm:\n  Driver: \"postgres\"\n")
+		writeTempConfig(t, dir, "extra.yml", "XCache:\n  MaxCost: 12345\n")
+		writeTempConfig(t, dir, "application-dev.yml", `
+Server:
+  Config:
+    Import:
+      - extra.yml
+`)
+		base := writeTempConfig(t, dir, "application.yml", `
+Server:
+  Name: "xone.demo.app"
+  Profiles:
+    Active: "dev"
+  Config:
+    Import:
+      - db.yml
+`)
+		vp, err := parseConfig(base)
+		So(err, ShouldBeNil)
+		So(vp.GetString("XGorm.Driver"), ShouldEqual, "postgres") // base 列表里的
+		So(vp.GetInt("XCache.MaxCost"), ShouldEqual, 12345)       // env 列表里的
+	})
+}
+
+// TestImportMissingFileFails 显式声明要导入的文件不存在时必须失败
+func TestImportMissingFileFails(t *testing.T) {
+	PatchConvey("TestImportMissingFileFails", t, func() {
+		// 与 application-{env}.yml 不存在只告警不同：那是约定俗成的可选项，
+		// 这个是使用者点名要的，静默忽略会让配置莫名其妙地缺一块
+		dir := t.TempDir()
+		base := writeTempConfig(t, dir, "application.yml", `
+Server:
+  Name: "xone.demo.app"
+  Config:
+    Import:
+      - nope.yml
+`)
+		_, err := parseConfig(base)
+		So(err, ShouldNotBeNil)
+		So(err.Error(), ShouldContainSubstring, "imported config file not found")
+	})
+}
+
+// TestImportNoNesting 被导入文件里的 Import 不生效，且不污染最终配置
+func TestImportNoNesting(t *testing.T) {
+	PatchConvey("TestImportNoNesting", t, func() {
+		dir := t.TempDir()
+		writeTempConfig(t, dir, "deep.yml", "XCache:\n  MaxCost: 777\n")
+		writeTempConfig(t, dir, "db.yml", `
+Server:
+  Config:
+    Import:
+      - deep.yml
+XGorm:
+  Driver: "postgres"
+`)
+		base := writeTempConfig(t, dir, "application.yml", `
+Server:
+  Name: "xone.demo.app"
+  Config:
+    Import:
+      - db.yml
+`)
+		vp, err := parseConfig(base)
+		So(err, ShouldBeNil)
+		So(vp.GetString("XGorm.Driver"), ShouldEqual, "postgres")
+		So(vp.IsSet("XCache.MaxCost"), ShouldBeFalse) // 嵌套导入未生效
+	})
+}
+
+// TestImportCannotChangeProfilesActive 被导入文件不能改写激活环境
+func TestImportCannotChangeProfilesActive(t *testing.T) {
+	PatchConvey("TestImportCannotChangeProfilesActive", t, func() {
+		dir := t.TempDir()
+		writeTempConfig(t, dir, "db.yml", `
+Server:
+  Profiles:
+    Active: "prod"
+XGorm:
+  Driver: "postgres"
+`)
+		base := writeTempConfig(t, dir, "application.yml", `
+Server:
+  Name: "xone.demo.app"
+  Profiles:
+    Active: "dev"
+  Config:
+    Import:
+      - db.yml
+`)
+		vp, err := parseConfig(base)
+		So(err, ShouldBeNil)
+		So(vp.GetString(profilesActiveConfigKey), ShouldEqual, "dev")
+	})
+}
+
+// TestImportPathPlaceholderAndAbs 导入路径支持占位符与绝对路径
+func TestImportPathPlaceholderAndAbs(t *testing.T) {
+	PatchConvey("TestImportPathPlaceholderAndAbs", t, func() {
+		dir := t.TempDir()
+		abs := writeTempConfig(t, dir, "redis.yml", "XRedis:\n  Addr: \"127.0.0.1:6379\"\n")
+
+		PatchConvey("占位符在导入前展开", func() {
+			t.Setenv("XONE_TEST_DB_FILE", "db.yml")
+			writeTempConfig(t, dir, "db.yml", "XGorm:\n  Driver: \"postgres\"\n")
+			base := writeTempConfig(t, dir, "application.yml",
+				"Server:\n  Name: \"a.b.c\"\n  Config:\n    Import:\n      - ${XONE_TEST_DB_FILE}\n")
+
+			vp, err := parseConfig(base)
+			So(err, ShouldBeNil)
+			So(vp.GetString("XGorm.Driver"), ShouldEqual, "postgres")
+		})
+
+		PatchConvey("必填占位符缺失时报错", func() {
+			base := writeTempConfig(t, dir, "application.yml",
+				"Server:\n  Name: \"a.b.c\"\n  Config:\n    Import:\n      - ${XONE_TEST_ABSENT_FILE}\n")
+
+			_, err := parseConfig(base)
+			So(err, ShouldNotBeNil)
+			So(err.Error(), ShouldContainSubstring, "required env placeholder not set")
+		})
+
+		PatchConvey("绝对路径不拼接基准目录", func() {
+			base := writeTempConfig(t, filepath.Join(dir), "application.yml",
+				"Server:\n  Name: \"a.b.c\"\n  Config:\n    Import:\n      - "+abs+"\n")
+
+			vp, err := parseConfig(base)
+			So(err, ShouldBeNil)
+			So(vp.GetString("XRedis.Addr"), ShouldEqual, "127.0.0.1:6379")
+		})
+	})
+}
+
+// TestImportNotDeclared 未声明 Import 时行为完全不变
+func TestImportNotDeclared(t *testing.T) {
+	PatchConvey("TestImportNotDeclared", t, func() {
+		dir := t.TempDir()
+		base := writeTempConfig(t, dir, "application.yml", "Server:\n  Name: \"a.b.c\"\nXGorm:\n  Driver: \"mysql\"\n")
+
+		vp, err := parseConfig(base)
+		So(err, ShouldBeNil)
+		So(vp.GetString("XGorm.Driver"), ShouldEqual, "mysql")
+	})
+}
+
+// TestImportErrorPaths 导入过程中的各条失败路径
+func TestImportErrorPaths(t *testing.T) {
+	PatchConvey("TestImportErrorPaths", t, func() {
+		dir := t.TempDir()
+
+		PatchConvey("被导入文件内容非法", func() {
+			writeTempConfig(t, dir, "db.yml", "XGorm:\n  : : bad yaml : :\n")
+			base := writeTempConfig(t, dir, "application.yml",
+				"Server:\n  Name: \"a.b.c\"\n  Config:\n    Import:\n      - db.yml\n")
+
+			_, err := parseConfig(base)
+			So(err, ShouldNotBeNil)
+			So(err.Error(), ShouldContainSubstring, "load imported config file failed")
+		})
+
+		PatchConvey("被导入文件的环境变体内容非法", func() {
+			writeTempConfig(t, dir, "db2.yml", "XGorm:\n  Driver: \"mysql\"\n")
+			writeTempConfig(t, dir, "db2-dev.yml", "XGorm:\n  : : bad yaml : :\n")
+			base := writeTempConfig(t, dir, "application.yml",
+				"Server:\n  Name: \"a.b.c\"\n  Profiles:\n    Active: \"dev\"\n  Config:\n    Import:\n      - db2.yml\n")
+
+			_, err := parseConfig(base)
+			So(err, ShouldNotBeNil)
+			So(err.Error(), ShouldContainSubstring, "load imported env config file failed")
+		})
+
+		PatchConvey("导入路径无扩展名", func() {
+			// 报「导入列表里这一项没有扩展名」，而不是 viper 的 Unsupported Config Type
+			base := writeTempConfig(t, dir, "application.yml",
+				"Server:\n  Name: \"a.b.c\"\n  Config:\n    Import:\n      - noext\n")
+
+			_, err := parseConfig(base)
+			So(err, ShouldNotBeNil)
+			So(err.Error(), ShouldContainSubstring, "imported config file has no extension")
+		})
+	})
+}
+
+// TestDropImport 剔除 Server.Config.Import 时的各种结构形态
+func TestDropImport(t *testing.T) {
+	PatchConvey("TestDropImport", t, func() {
+		PatchConvey("没有 Server 块", func() {
+			s := map[string]any{"xgorm": map[string]any{"driver": "mysql"}}
+			dropImport(s)
+			So(s, ShouldContainKey, "xgorm")
+		})
+
+		PatchConvey("Server 下没有 Config 块", func() {
+			s := map[string]any{"server": map[string]any{"name": "a.b.c"}}
+			dropImport(s)
+			So(s["server"].(map[string]any)["name"], ShouldEqual, "a.b.c")
+		})
+
+		PatchConvey("Config 下只有 Import 时整块移除", func() {
+			s := map[string]any{"server": map[string]any{
+				"config": map[string]any{"import": []any{"db.yml"}},
+			}}
+			dropImport(s)
+			So(s, ShouldBeEmpty) // server 与 config 都空了，一并移除
+		})
+
+		PatchConvey("Config 下还有别的字段时只删 Import", func() {
+			s := map[string]any{"server": map[string]any{
+				"name":   "a.b.c",
+				"config": map[string]any{"import": []any{"db.yml"}, "other": 1},
+			}}
+			dropImport(s)
+			cfg := s["server"].(map[string]any)["config"].(map[string]any)
+			So(cfg, ShouldNotContainKey, "import")
+			So(cfg["other"], ShouldEqual, 1)
+		})
+	})
+}
+
+// TestPlaceholderIssuesErr 两类问题各自给出可操作的提示
+func TestPlaceholderIssuesErr(t *testing.T) {
+	PatchConvey("TestPlaceholderIssuesErr", t, func() {
+		PatchConvey("写法不支持时优先报它", func() {
+			// 变量没设置往往是写法错了的连带结果，所以写法问题排在前面
+			iss := placeholderIssues{missing: []string{"A"}, unsupported: []string{"${}"}}
+			err := iss.err("test")
+			So(err, ShouldNotBeNil)
+			So(err.Error(), ShouldContainSubstring, "unsupported placeholder syntax")
+			So(err.Error(), ShouldContainSubstring, "${VAR:default}")
+		})
+
+		PatchConvey("只有缺失变量时报缺失", func() {
+			err := placeholderIssues{missing: []string{"A", "A", "B"}}.err("test")
+			So(err, ShouldNotBeNil)
+			So(err.Error(), ShouldContainSubstring, "required env placeholder not set")
+			So(err.Error(), ShouldContainSubstring, "[A B]") // 去重
+		})
+
+		PatchConvey("没有问题时返回 nil", func() {
+			So(placeholderIssues{}.err("test"), ShouldBeNil)
+		})
+	})
+}
+
+// TestImportPlaceholderInPath 导入路径里的占位符两种写法都支持，非法写法要报出来
+func TestImportPlaceholderInPath(t *testing.T) {
+	PatchConvey("TestImportPlaceholderInPath", t, func() {
+		PatchConvey("Spring 写法的默认值可用", func() {
+			dir := t.TempDir()
+			writeTempConfig(t, dir, "db.yml", "XGorm:\n  Driver: \"postgres\"\n")
+			base := writeTempConfig(t, dir, "application.yml",
+				"Server:\n  Name: \"a.b.c\"\n  Config:\n    Import:\n      - ${CFG_DB_FILE:db.yml}\n")
+
+			vp, err := parseConfig(base)
+			So(err, ShouldBeNil)
+			So(vp.GetString("XGorm.Driver"), ShouldEqual, "postgres")
+		})
+
+		PatchConvey("非法占位符要报出来", func() {
+			dir := t.TempDir()
+			base := writeTempConfig(t, dir, "application.yml",
+				"Server:\n  Name: \"a.b.c\"\n  Config:\n    Import:\n      - ${}/db.yml\n")
+
+			_, err := parseConfig(base)
+			So(err, ShouldNotBeNil)
+			So(err.Error(), ShouldContainSubstring, "unsupported placeholder syntax")
+		})
+	})
+}
+
+// TestImportProfileBandBeatsPlainBand 带环境后缀的文件整体压过不带的
+//
+// 与 Spring 一致（profile-specific files always overriding the non-specific ones）。
+// 若按「每个文件加载完立刻合并自己的环境变体」的写法，db-dev.yml 会被后面声明的
+// redis.yml 压过——一个环境专属的值被非环境专属的值覆盖，说不通。
+func TestImportProfileBandBeatsPlainBand(t *testing.T) {
+	PatchConvey("TestImportProfileBandBeatsPlainBand", t, func() {
+		dir := t.TempDir()
+		// db 与 redis 都写同一个 key，redis 在导入列表里排在 db 后面
+		writeTempConfig(t, dir, "db.yml", "XGorm:\n  Driver: \"from-db\"\n")
+		writeTempConfig(t, dir, "db-dev.yml", "XGorm:\n  Driver: \"from-db-dev\"\n")
+		writeTempConfig(t, dir, "redis.yml", "XGorm:\n  Driver: \"from-redis\"\n")
+
+		base := writeTempConfig(t, dir, "application.yml", `
+Server:
+  Name: "xone.demo.app"
+  Profiles:
+    Active: "dev"
+  Config:
+    Import:
+      - db.yml
+      - redis.yml
+`)
+		vp, err := parseConfig(base)
+		So(err, ShouldBeNil)
+		// db-dev.yml 在带后缀的一轮，redis.yml 在不带后缀的一轮，前者整体在后
+		So(vp.GetString("XGorm.Driver"), ShouldEqual, "from-db-dev")
+	})
+}
+
+// TestImportFullOrder 六个文件的完整优先级链
+func TestImportFullOrder(t *testing.T) {
+	PatchConvey("TestImportFullOrder", t, func() {
+		dir := t.TempDir()
+		// 每个文件都写自己的 key，再各写一个公共 key 用来确认谁最终赢
+		writeTempConfig(t, dir, "db.yml", "K:\n  Own: \"db\"\n  Shared: \"db\"\n")
+		writeTempConfig(t, dir, "redis.yml", "K:\n  Own2: \"redis\"\n  Shared: \"redis\"\n")
+		writeTempConfig(t, dir, "db-dev.yml", "K:\n  Own3: \"db-dev\"\n  Shared: \"db-dev\"\n")
+		writeTempConfig(t, dir, "redis-dev.yml", "K:\n  Own4: \"redis-dev\"\n  Shared: \"redis-dev\"\n")
+		writeTempConfig(t, dir, "application-dev.yml", "K:\n  Own5: \"app-dev\"\n  Shared: \"app-dev\"\n")
+		base := writeTempConfig(t, dir, "application.yml", `
+Server:
+  Name: "xone.demo.app"
+  Profiles:
+    Active: "dev"
+  Config:
+    Import:
+      - db.yml
+      - redis.yml
+K:
+  Own6: "app"
+  Shared: "app"
+`)
+		vp, err := parseConfig(base)
+		So(err, ShouldBeNil)
+
+		// 六个文件各自独有的 key 都在：没有任何一份被整体丢弃
+		So(vp.GetString("K.Own"), ShouldEqual, "db")
+		So(vp.GetString("K.Own2"), ShouldEqual, "redis")
+		So(vp.GetString("K.Own3"), ShouldEqual, "db-dev")
+		So(vp.GetString("K.Own4"), ShouldEqual, "redis-dev")
+		So(vp.GetString("K.Own5"), ShouldEqual, "app-dev")
+		So(vp.GetString("K.Own6"), ShouldEqual, "app")
+
+		// 链条末端赢：application.yml < db.yml < redis.yml
+		//              < application-dev.yml < db-dev.yml < redis-dev.yml
+		So(vp.GetString("K.Shared"), ShouldEqual, "redis-dev")
 	})
 }

@@ -21,8 +21,8 @@ XLog:
 # 业务自定义配置示例，用于验证嵌套结构体与 map 的反序列化
 MyApp:
   Backend:
-    URL: ${MYAPP_BACKEND_URL:-http://127.0.0.1:8000}
-    APIKey: ${MYAPP_BACKEND_API_KEY:-}
+    URL: ${MYAPP_BACKEND_URL:http://127.0.0.1:8000}
+    APIKey: ${MYAPP_BACKEND_API_KEY:}
     RequestTimeout: "30s"
 
   Syncer:

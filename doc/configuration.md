@@ -56,6 +56,39 @@ go run main.go --server.profiles.active=prod
 
 `SERVER_ENABLE_DEBUG` 是 `XONE_ENABLE_DEBUG` 的旧名，仍然生效，新项目用前者。
 
+## 拆分配置文件
+
+配置都堆在 `application.yml` 里难以维护时，用 `Server.Config.Import` 拆开：
+
+```yaml
+# conf/application.yml
+Server:
+  Name: "my-service"
+  Profiles:
+    Active: "dev"
+  Config:
+    Import:
+      - db.yml       # 路径相对本文件所在目录
+      - redis.yml
+```
+
+加载顺序（后者覆盖前者）：
+
+```
+第一轮（无环境后缀）：application.yml → db.yml → redis.yml
+第二轮（带环境后缀）：application-dev.yml → db-dev.yml → redis-dev.yml
+第二轮整体覆盖第一轮
+```
+
+* 被导入的文件**同样支持** `{name}-{env}.yml` 环境变体
+* 被导入的文件**覆盖主配置**（与 Spring Boot 的 `spring.config.import` 同向）
+* **带环境后缀的文件整体压过不带的**（同 Spring：profile-specific files always overriding the non-specific ones）
+* 被导入的文件**不存在时启动失败**（与 `application-{env}.yml` 不存在只告警不同）
+* `application.yml` 与 `application-{env}.yml` 的 `Import` 列表**取并集**，环境配置只需写它额外要加的
+* **不支持嵌套导入**，被导入文件里的 `Import` 会被忽略
+
+完整说明见 [xconfig/README.md](../xconfig/README.md#3-拆分配置文件serverconfigimport)。
+
 ### 配置值的环境变量注入
 
 配置文件里的 string 叶子节点、`map[string]string` 的 value 和字符串列表元素支持占位符，
@@ -64,20 +97,23 @@ go run main.go --server.profiles.active=prod
 | 写法 | 含义 |
 |------|------|
 | `${VAR}` | **必填**，环境变量未设置时初始化失败 |
-| `${VAR:-default}` | 可选，未设置时用 `default` |
-| `${VAR:-}` | 可选，未设置时为空字符串 |
+| `${VAR:default}` | 可选，未设置时用 `default` |
+| `${VAR:}` | 可选，未设置时为空字符串 |
 
-判断依据是「有没有设置」而不是「是不是空」—— 显式设为空串的环境变量会覆盖默认值。
+判断依据是「有没有设置」而不是「是不是空」—— 显式设为空串的环境变量会覆盖默认值（与 Spring 相同）。
+
+分隔符是 `:`，与 Spring 一致，冒号之后的内容一律作为默认值（`${VAR:-1}` 的默认值就是 `-1`）。
+写不出来的占位符（如 `${}`）会直接启动失败，不会被当成普通文本留在配置值里。
 凭证类配置建议用 `${VAR}` 形式，漏配时直接启动失败，而不是静默变成空串：
 
 ```yaml
 XGorm:
   DSN: "${DB_DSN}"                                   # 漏配直接启动失败
 XRedis:
-  Addr: "${REDIS_ADDR:-127.0.0.1:6379}"              # 漏配用默认值
+  Addr: "${REDIS_ADDR:127.0.0.1:6379}"              # 漏配用默认值
 XMetric:
   ConstLabels:
-    env: "${ENV:-dev}"
+    env: "${ENV:dev}"
 ```
 
 ## IDE 配置补全与校验
@@ -124,6 +160,8 @@ Server:
   Version: "v1.0.0"           # 版本号（默认 v0.0.1）
   Profiles:
     Active: "dev"              # 环境标识
+  Config:
+    Import: []                 # 额外加载的配置文件，见「拆分配置文件」
 
 XGin:
   Host: "0.0.0.0"              # 监听地址（默认 0.0.0.0）

@@ -46,7 +46,7 @@ EnableConsole: true    # 打印到标准输出，由部署环境的日志采集�
 | 服务名 | `xone.demo.app` |
 | 域名 | `example.com` / `httpbin.org` |
 | 地址 | `127.0.0.1` / `localhost` |
-| 凭证 | 环境变量占位符，如 `${MYAPP_API_KEY:-}`，不写字面值 |
+| 凭证 | 环境变量占位符，如 `${MYAPP_API_KEY:}`，不写字面值 |
 
 ### 4. 不得在日志或测试输出中打印凭证
 

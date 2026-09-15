@@ -72,12 +72,16 @@ func toProfilesActiveConfigLocation(configLocation string, pa string) (string, e
 			"profiles active is invalid, only letters, digits, '_' and '-' are allowed, profiles_active=[%s]", pa)
 	}
 
-	ext := filepath.Ext(configLocation)
-	if ext == "" {
+	if filepath.Ext(configLocation) == "" {
 		return "", xerror.Newf("xconfig", "init", "config file name is invalid, no extension found")
 	}
+	return profileVariantPath(configLocation, pa), nil
+}
 
-	// 去掉扩展名，添加环境后缀，再加回扩展名
-	nameWithoutExt := strings.TrimSuffix(configLocation, ext)
-	return fmt.Sprintf("%s-%s%s", nameWithoutExt, pa, ext), nil
+// profileVariantPath 构造环境变体路径，要求调用方已校验扩展名与环境名
+//
+// 例如: ./conf/db.yml + dev -> ./conf/db-dev.yml
+func profileVariantPath(configLocation, pa string) string {
+	ext := filepath.Ext(configLocation)
+	return fmt.Sprintf("%s-%s%s", strings.TrimSuffix(configLocation, ext), pa, ext)
 }

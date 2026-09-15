@@ -619,7 +619,8 @@ func TestImportsOf_List(t *testing.T) {
 		s := map[string]any{"server": map[string]any{"config": map[string]any{
 			"import": []any{"db.yml", "redis.yml", "", 42},
 		}}}
-		So(importsOf(s), ShouldResemble, []string{"db.yml", "redis.yml"})
+		// 空串跳过；42 字符串化后交给扩展名校验报错，而不是被静默丢掉
+		So(importsOf(s), ShouldResemble, []string{"db.yml", "redis.yml", "42"})
 	})
 }
 
@@ -1509,5 +1510,209 @@ func TestPipeline_DotEnvFeedsPlaceholder(t *testing.T) {
 		Mock(detectConfigLocation).Return(loc).Build()
 		So(initXConfig(), ShouldBeNil)
 		So(GetServerName(), ShouldEqual, "dotenv-value")
+	})
+}
+
+// ==================== 归一化边界：map[any]any / null / 空节点 ====================
+//
+// 这一组是重构中发现的三个缺陷的回归测试。YAML 里只要有一个非字符串 key，
+// 解析器就会把整个 mapping 解成 map[any]any；而 null 与清理后变空的块若留在树里，
+// 会分别造成「整块被覆盖成 nil」和「ContainKey 误判为已配置」。
+
+func TestAnyToKey(t *testing.T) {
+	PatchConvey("TestAnyToKey-任意 key 转字符串", t, func() {
+		So(anyToKey("s"), ShouldEqual, "s")
+		So(anyToKey(404), ShouldEqual, "404")
+		So(anyToKey(true), ShouldEqual, "true")
+		So(anyToKey(1.5), ShouldEqual, "1.5")
+	})
+}
+
+func TestIsEmptyNode(t *testing.T) {
+	PatchConvey("TestIsEmptyNode-判断没有内容的节点", t, func() {
+		So(isEmptyNode(nil), ShouldBeTrue)
+		So(isEmptyNode(map[string]any{}), ShouldBeTrue)
+		So(isEmptyNode(map[string]any{"a": 1}), ShouldBeFalse)
+		So(isEmptyNode([]any{}), ShouldBeFalse) // 空列表是有意义的取值
+		So(isEmptyNode(""), ShouldBeFalse)
+		So(isEmptyNode(0), ShouldBeFalse)
+		So(isEmptyNode(false), ShouldBeFalse)
+	})
+}
+
+func TestLowerKeys_MapAnyAny(t *testing.T) {
+	PatchConvey("TestLowerKeys-非字符串 key 的 mapping 被归一化", t, func() {
+		got := lowerKeys(map[string]any{
+			"MyApp": map[any]any{
+				404:    "not found",
+				true:   "yes",
+				"Name": "demo",
+			},
+		})
+		So(got["myapp"], ShouldResemble, map[string]any{
+			"404": "not found", "true": "yes", "name": "demo",
+		})
+	})
+}
+
+func TestLowerKeys_MapAnyAnyNested(t *testing.T) {
+	PatchConvey("TestLowerKeys-归一化会继续往下递归", t, func() {
+		got := lowerKeys(map[string]any{
+			"MyApp": map[any]any{1: map[any]any{2: map[string]any{"Key": "v"}}},
+		})
+		So(lookupKeyPath(got, "myapp", "1", "2", "key"), ShouldEqual, "v")
+	})
+}
+
+func TestLowerKeys_DropNil(t *testing.T) {
+	PatchConvey("TestLowerKeys-值为 null 的 key 被丢掉", t, func() {
+		got := lowerKeys(map[string]any{"MyApp": map[string]any{"A": nil, "B": "v"}})
+		So(got["myapp"], ShouldResemble, map[string]any{"b": "v"})
+	})
+}
+
+func TestLowerKeys_DropEmptyNode(t *testing.T) {
+	PatchConvey("TestLowerKeys-清理后变空的块被丢掉", t, func() {
+		PatchConvey("整块为 null", func() {
+			So(lowerKeys(map[string]any{"XHttp": nil, "Keep": "v"}),
+				ShouldResemble, map[string]any{"keep": "v"})
+		})
+
+		PatchConvey("块内全是 null", func() {
+			So(lowerKeys(map[string]any{"XRedis": map[string]any{"Addr": nil}, "Keep": "v"}),
+				ShouldResemble, map[string]any{"keep": "v"})
+		})
+
+		PatchConvey("多层嵌套一路空到底", func() {
+			So(lowerKeys(map[string]any{
+				"A":    map[string]any{"B": map[string]any{"C": nil}},
+				"Keep": "v",
+			}), ShouldResemble, map[string]any{"keep": "v"})
+		})
+
+		PatchConvey("显式空 map 同样丢掉", func() {
+			So(lowerKeys(map[string]any{"XCache": map[string]any{}, "Keep": "v"}),
+				ShouldResemble, map[string]any{"keep": "v"})
+		})
+	})
+}
+
+func TestLowerKeys_MapAnyAnyDropsEmpty(t *testing.T) {
+	PatchConvey("TestLowerKeys-非字符串 key 下的空节点同样丢掉", t, func() {
+		got := lowerKeys(map[string]any{
+			"MyApp": map[any]any{1: nil, 2: map[string]any{}, 3: "keep"},
+		})
+		So(got["myapp"], ShouldResemble, map[string]any{"3": "keep"})
+	})
+}
+
+func TestLowerKeys_KeepEmptyList(t *testing.T) {
+	PatchConvey("TestLowerKeys-空列表是有意义的取值，保留", t, func() {
+		got := lowerKeys(map[string]any{"MyApp": map[string]any{"L": []any{}}})
+		So(lookupKeyPath(got, "myapp", "l"), ShouldResemble, []any{})
+	})
+}
+
+func TestLowerKeys_KeepFalsyScalars(t *testing.T) {
+	PatchConvey("TestLowerKeys-零值标量不是空节点，保留", t, func() {
+		got := lowerKeys(map[string]any{"MyApp": map[string]any{
+			"S": "", "I": 0, "B": false,
+		}})
+		So(got["myapp"], ShouldResemble, map[string]any{"s": "", "i": 0, "b": false})
+	})
+}
+
+func TestPipeline_NonStringKeyPlaceholder(t *testing.T) {
+	PatchConvey("TestPipeline-非字符串 key 下的占位符照样展开", t, func() {
+		Mock(xutil.GetConfigFromArgs).Return("", nil).Build()
+		os.Unsetenv(profilesActiveEnvKey)
+		os.Setenv("XCONFIG_CODE_MSG", "服务异常")
+		defer os.Unsetenv("XCONFIG_CODE_MSG")
+
+		loc := writeFile(t, t.TempDir(), "application.yml",
+			"MyApp:\n  Codes:\n    500: \"${XCONFIG_CODE_MSG}\"\n    404: \"${XCONFIG_UNSET_MSG:未找到}\"\n")
+
+		settings, _ := loadFrom(t, loc)
+		So(lookupKeyPath(settings, "myapp", "codes"), ShouldResemble, map[string]any{
+			"500": "服务异常", "404": "未找到",
+		})
+	})
+}
+
+func TestPipeline_NonStringKeySecretMasked(t *testing.T) {
+	PatchConvey("TestPipeline-非字符串 key 下的凭证同样脱敏", t, func() {
+		Mock(xutil.GetConfigFromArgs).Return("", nil).Build()
+		os.Unsetenv(profilesActiveEnvKey)
+
+		loc := writeFile(t, t.TempDir(), "application.yml",
+			"MyApp:\n  Creds:\n    1:\n      Password: \"plaintext-secret\"\n")
+
+		settings, _ := loadFrom(t, loc)
+		masked := maskSensitive(settings)
+		So(lookupKeyPath(masked, "myapp", "creds", "1", "password"), ShouldEqual, maskedValue)
+		So(xutil.ToJsonStringIndent(masked), ShouldNotContainSubstring, "plaintext-secret")
+	})
+}
+
+func TestPipeline_NonStringKeyDeepMerge(t *testing.T) {
+	PatchConvey("TestPipeline-非字符串 key 的块参与深合并而非整体替换", t, func() {
+		Mock(xutil.GetConfigFromArgs).Return("", nil).Build()
+		os.Unsetenv(profilesActiveEnvKey)
+
+		dir := t.TempDir()
+		loc := writeFile(t, dir, "application.yml",
+			"Server:\n  Profiles:\n    Active: dev\nMyApp:\n  Codes:\n    404: base-404\n    500: base-500\n")
+		writeFile(t, dir, "application-dev.yml", "MyApp:\n  Codes:\n    500: dev-500\n")
+
+		settings, _ := loadFrom(t, loc)
+		So(lookupKeyPath(settings, "myapp", "codes"), ShouldResemble, map[string]any{
+			"404": "base-404", "500": "dev-500",
+		})
+	})
+}
+
+func TestPipeline_EmptyBlockDoesNotWipeBase(t *testing.T) {
+	PatchConvey("TestPipeline-环境配置里写空的块不会抹掉基础配置", t, func() {
+		Mock(xutil.GetConfigFromArgs).Return("", nil).Build()
+		os.Unsetenv(profilesActiveEnvKey)
+
+		dir := t.TempDir()
+		loc := writeFile(t, dir, "application.yml",
+			"Server:\n  Profiles:\n    Active: dev\nXLog:\n  Level: info\n  Path: ./log\n")
+		writeFile(t, dir, "application-dev.yml", "XLog:\n") // 手滑写空
+
+		settings, _ := loadFrom(t, loc)
+		So(lookupKeyPath(settings, "xlog", "level"), ShouldEqual, "info")
+		So(lookupKeyPath(settings, "xlog", "path"), ShouldEqual, "./log")
+	})
+}
+
+func TestPipeline_NullOnlyBlockIsNotConfigured(t *testing.T) {
+	PatchConvey("TestPipeline-只写了 null 的块等同于没配，各模块据此跳过初始化", t, func() {
+		defer resetStore()
+		Mock(xutil.GetConfigFromArgs).Return("", nil).Build()
+		os.Unsetenv(profilesActiveEnvKey)
+
+		loc := writeFile(t, t.TempDir(), "application.yml",
+			"XRedis:\n  Addr: null\nXLog:\n  Level: info\n")
+		Mock(detectConfigLocation).Return(loc).Build()
+		So(initXConfig(), ShouldBeNil)
+
+		So(ContainKey("XRedis"), ShouldBeFalse)
+		So(ContainKey("XLog"), ShouldBeTrue)
+	})
+}
+
+func TestImportsOf_NonStringEntry(t *testing.T) {
+	PatchConvey("TestImportsOf-非字符串条目字符串化而不是静默丢掉", t, func() {
+		s := map[string]any{"server": map[string]any{"config": map[string]any{
+			"import": []any{"db.yml", 42, nil},
+		}}}
+		So(importsOf(s), ShouldResemble, []string{"db.yml", "42"})
+
+		// 随后会被扩展名校验拦下，而不是无声无息地少加载一个文件
+		_, err := collectImports(s, nil)
+		So(err, ShouldNotBeNil)
+		So(err.Error(), ShouldContainSubstring, "has no extension")
 	})
 }

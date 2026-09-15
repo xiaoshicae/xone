@@ -73,6 +73,25 @@
     ```
 * 最终配置中的 `Server.Profiles.Active` 是**实际生效的那个值**：用 `--server.profiles.active=prod` 启动时读到的就是 `prod`，而不是配置文件里写的值
 
+#### 空值与空块
+
+* `Timeout: null`（或 `Timeout:` 后面什么都不写）等同于**没写这个字段**，不会把下层同名的值覆盖掉
+* 一个块清理完没有任何内容时，视为**没有配置这一块**，`ContainKey` 为 false，对应模块会跳过初始化
+
+    ```yaml
+    # application-dev.yml —— 手滑写了个空块
+    XLog:
+    # 基础配置里的 XLog.Level / XLog.Path 原样保留，不会被抹掉
+    ```
+
+    ```yaml
+    XRedis:
+      Addr: null      # 整块没有有效内容，等同于没配 XRedis，xredis 模块跳过初始化
+    ```
+
+* 空列表 `[]` 不在此列，它是一个有意义的取值（「显式置空」），会被保留
+* 非字符串的 key（如 `404:`、`true:`）会被转成字符串（`"404"`、`"true"`），之后与普通 key 一视同仁 —— 占位符照常展开，敏感字段照常脱敏
+
 ### 2. 配置参数
 
   ```yaml

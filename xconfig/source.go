@@ -281,7 +281,12 @@ func importsOf(settings map[string]any) []string {
 	case []any:
 		out := make([]string, 0, len(v))
 		for _, item := range v {
-			if s, ok := item.(string); ok && s != "" {
+			if item == nil {
+				continue
+			}
+			// 非字符串条目也字符串化，让它走到后面的扩展名校验报错，
+			// 而不是被静默丢掉 —— 导入列表写错了应该说出来
+			if s := anyToKey(item); s != "" {
 				out = append(out, s)
 			}
 		}

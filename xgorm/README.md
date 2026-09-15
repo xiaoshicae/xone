@@ -11,6 +11,7 @@ XGorm 是 XOne 框架的数据库模块，基于 [GORM](https://gorm.io/) 封装
 - 集成 OpenTelemetry 链路追踪
 - 慢查询日志记录
 - 自动重试连接
+- 连接池 Prometheus 指标（需配合 xmetric 模块）
 
 ## 配置说明
 
@@ -183,6 +184,32 @@ func GetUser(ctx context.Context, id uint) (*User, error) {
 | EnableLog | bool | 否 | false | 是否启用 SQL 日志 |
 | SlowThreshold | string | 否 | 3s | 慢查询日志阈值 |
 | IgnoreRecordNotFoundErrorLog | bool | 否 | false | 是否忽略记录未找到错误的日志 |
+| EnableMetric | bool | 否 | true | 是否启用连接池 Prometheus 指标采集 |
+
+## 连接池指标
+
+默认启用（需配合 xmetric 模块），在 scrape 时实时读取 `sql.DBStats()`，不额外占用协程：
+
+| 指标 | 类型 | 说明 |
+|------|------|------|
+| `db_connections_open{name}` | Gauge | 当前已建立的连接数（使用中 + 空闲） |
+| `db_connections_in_use{name}` | Gauge | 当前正在使用的连接数 |
+| `db_connections_idle{name}` | Gauge | 当前空闲的连接数 |
+| `db_connections_max_open{name}` | Gauge | 连接数上限，0 表示不限制 |
+| `db_connections_wait_total{name}` | Counter | 累计等待连接的次数 |
+| `db_connections_wait_duration_seconds_total{name}` | Counter | 累计等待连接的时长（秒） |
+| `db_connections_closed_max_idle_total{name}` | Counter | 因超过空闲上限而关闭的连接累计数 |
+| `db_connections_closed_max_lifetime_total{name}` | Counter | 因超过存活时长而关闭的连接累计数 |
+
+`wait_total` 与 `wait_duration_seconds_total` 同时增长说明 `MaxOpenConns` 不够或
+SQL 变慢，是最值得告警的一组。
+
+关闭方式：
+
+```yaml
+XGorm:
+  EnableMetric: false
+```
 
 ## 链路追踪
 

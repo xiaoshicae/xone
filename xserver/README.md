@@ -63,12 +63,16 @@ xserver.SetWaitRunExitTimeout(10 * time.Second) // 线程安全，<= 0 时忽略
 
 ## 与 xgin 配合
 
-`*xgin.XGin` 实现了 `Server` 接口：
+用 `gx.Start()` 启动，它内部走的就是 `xserver.Run`：
 
 ```go
 gx := xgin.New().WithRouteRegister(register).Build()
-xserver.Run(gx)   // 等价于 gx.Start()
+gx.Start()
 ```
+
+`XGin` 本身不暴露 `Run` / `Stop`，`Server` 接口由 xgin 内部的类型实现 ——
+把它们挂在 `XGin` 上会让「跳过 BeforeStart 直接起服务」只差一次方法调用，
+而那条路上服务会带着一份空配置起在默认端口上（xconfig 未初始化时读配置不报错、只返回零值）。
 
 优雅退出时间由 `XGin.GracefulStopTimeout` 控制（默认 25s），
 它应当小于部署环境的进程终止宽限期（如 K8s `terminationGracePeriodSeconds`，默认 30s），

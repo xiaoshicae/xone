@@ -88,6 +88,9 @@ var (
 	cachedFieldBytes [][]byte
 	// cachedHeaderMap lowercase key → true，用于 O(1) 敏感头查找
 	cachedHeaderMap map[string]bool
+	// cachedFieldFirstByte 敏感字段名首字母（含大小写两种形态）的位图
+	// body 预检时绝大多数字节都不在其中，一次数组查表即可跳过
+	cachedFieldFirstByte [256]bool
 )
 
 // LogOptions 日志中间件配置
@@ -132,13 +135,37 @@ func rebuildFieldsCache() {
 
 	m := make(map[string]bool, len(all))
 	fb := make([][]byte, len(all))
+	var first [256]bool
 	for i, f := range all {
 		lower := strings.ToLower(f)
 		m[lower] = true
 		fb[i] = []byte(lower)
+		if len(lower) > 0 {
+			c := lower[0]
+			first[c] = true
+			first[upperASCII(c)] = true
+		}
 	}
 	cachedFieldMap = m
 	cachedFieldBytes = fb
+	cachedFieldFirstByte = first
+}
+
+// lowerASCII / upperASCII 只处理 ASCII 字母
+//
+// 敏感字段名都是 ASCII，不必为此走 unicode 表
+func lowerASCII(c byte) byte {
+	if c >= 'A' && c <= 'Z' {
+		return c + ('a' - 'A')
+	}
+	return c
+}
+
+func upperASCII(c byte) byte {
+	if c >= 'a' && c <= 'z' {
+		return c - ('a' - 'A')
+	}
+	return c
 }
 
 // rebuildHeadersCache 重建敏感头缓存（调用方已持有写锁）
@@ -184,6 +211,17 @@ func Log(opts ...LogOption) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// 检查是否跳过日志记录
 		if shouldSkipLog(c.Request.URL.Path, exactSkip, prefixSkip) {
+			c.Next()
+			return
+		}
+
+		// 级别关掉时直接放行：下面这一整套——body 快照、包装 ResponseWriter
+		// 捕获响应、请求结束后的脱敏与序列化——存在的唯一目的就是拼出这行访问日志。
+		// xlog.Info 的级别检查在它自己内部，而 requestInfo 是它的入参，
+		// 等它检查时代价已经付完了，只是结果被丢弃。
+		//
+		// 每请求判一次而不是构造中间件时判一次：级别可以在运行时随配置重载改变。
+		if !xlog.Enabled(c.Request.Context(), xlog.InfoLevel) {
 			c.Next()
 			return
 		}
@@ -475,6 +513,24 @@ func getSensitiveFieldBytes() [][]byte {
 	return cachedFieldBytes
 }
 
+// getSensitiveFieldFirstByte 获取敏感字段首字节位图（lazy 初始化，线程安全）
+func getSensitiveFieldFirstByte() [256]bool {
+	sensitiveMu.RLock()
+	fb := cachedFieldBytes
+	first := cachedFieldFirstByte
+	sensitiveMu.RUnlock()
+	if fb != nil {
+		return first
+	}
+
+	sensitiveMu.Lock()
+	defer sensitiveMu.Unlock()
+	if cachedFieldBytes == nil {
+		rebuildFieldsCache()
+	}
+	return cachedFieldFirstByte
+}
+
 // getSensitiveHeaderMap 获取敏感头 map（lazy 初始化，线程安全）
 func getSensitiveHeaderMap() map[string]bool {
 	sensitiveMu.RLock()
@@ -536,15 +592,42 @@ func filterJSONBody(bodyBytes []byte) string {
 }
 
 // bodyMayContainSensitiveField 快速预检 body 是否可能包含敏感字段
-// 使用 bytes.ToLower + bytes.Contains，比 JSON 解析+遍历+序列化 开销小得多
+//
+// 预检存在的意义是跳过「JSON 解析 + 递归遍历 + 重新序列化」这条重路径，
+// 绝大多数请求体里并没有敏感字段。
+//
+// 不用 bytes.ToLower(body)：那会为每个请求复制一份完整的 body——
+// 64KB 的请求体就是 64KB 的临时分配，只为做一次大小写不敏感的比较。
+// 改成单趟扫描：先查首字节位图（一次数组访问），命中了才逐个字段做折叠比较，
+// 因此正常 body 上摊销下来是 O(n) 且零分配。
 func bodyMayContainSensitiveField(body []byte, fieldBytes [][]byte) bool {
-	lowerBody := bytes.ToLower(body)
-	for _, fb := range fieldBytes {
-		if bytes.Contains(lowerBody, fb) {
-			return true
+	firstByte := getSensitiveFieldFirstByte()
+	for i := 0; i < len(body); i++ {
+		if !firstByte[body[i]] {
+			continue
+		}
+		for _, fb := range fieldBytes {
+			if hasPrefixFold(body[i:], fb) {
+				return true
+			}
 		}
 	}
 	return false
+}
+
+// hasPrefixFold 判断 b 是否以 lowerPrefix 开头，比较时忽略 ASCII 大小写
+//
+// lowerPrefix 必须已是小写（由 rebuildFieldsCache 保证）。
+func hasPrefixFold(b, lowerPrefix []byte) bool {
+	if len(b) < len(lowerPrefix) {
+		return false
+	}
+	for i, c := range lowerPrefix {
+		if lowerASCII(b[i]) != c {
+			return false
+		}
+	}
+	return true
 }
 
 func filterAnySensitiveFields(data any, fieldMap map[string]bool) {

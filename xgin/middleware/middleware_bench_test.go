@@ -2,6 +2,8 @@ package middleware
 
 import (
 	"bytes"
+	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -26,6 +28,9 @@ func newEngine(mw ...gin.HandlerFunc) *gin.Engine {
 		r.Use(m)
 	}
 	r.POST("/api/order/:id", func(c *gin.Context) {
+		// 必须真的把 body 读掉：中间件降级路径下 body 是在下游读取时才被捕获的，
+		// handler 不读就等于没有 body，脱敏与过滤那条路径根本跑不到
+		_, _ = io.Copy(io.Discard, c.Request.Body)
 		c.JSON(http.StatusOK, gin.H{"ok": true})
 	})
 	r.GET("/api/order/:id", func(c *gin.Context) {
@@ -111,14 +116,20 @@ func BenchmarkFullChain(b *testing.B) {
 	runN(b, newEngine(LogScope(), Trace(), Log(), Metric(), Recover(nil)), jsonReq(0))
 }
 
-// BenchmarkLog_InfoMocked 把 xlog.Info 换成空操作后，Log 中间件还剩多少开销
+// BenchmarkLog_LevelDisabled 服务跑在 warn 级别时，Log 中间件还剩多少开销
 //
-// 日志级别关闭时 xlog.Info 在内部检查后即返回，等价于空操作。
-// 所以这里剩下的就是「无论日志写不写都会白付」的构建开销：
-// requestInfo 是 Info 的入参，级别检查发生在它构建完之后
-func BenchmarkLog_InfoMocked(b *testing.B) {
-	mock := mockey.Mock(xlog.Info).Return().Build()
+// 级别关掉时 access log 不会输出，但中间件为它做的准备工作——body 快照、
+// 包装 ResponseWriter 捕获响应、请求结束后的脱敏与序列化——是否也一并省掉，
+// 决定了「调高日志级别」这个最常用的降噪手段能不能同时降开销
+func BenchmarkLog_LevelDisabled(b *testing.B) {
+	mock := mockey.Mock(xlog.Enabled).Return(false).Build()
 	defer mock.UnPatch()
+
+	// mockey 依赖 -gcflags="all=-N -l"，不带这个标志时 mock 静默失效，
+	// 测出来的会是「级别开启」的数字而看不出任何异常。宁可跳过也不要给错数
+	if xlog.Enabled(context.Background(), xlog.InfoLevel) {
+		b.Skip(`mock 未生效，本用例需要 -gcflags="all=-N -l"`)
+	}
 
 	runN(b, newEngine(Log()), jsonReq(0))
 }

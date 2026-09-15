@@ -4,9 +4,12 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
+	"github.com/bytedance/mockey"
 	"github.com/gin-gonic/gin"
+	"github.com/smartystreets/goconvey/convey"
 	"github.com/xiaoshicae/xone/v2/xlog"
 )
 
@@ -112,4 +115,90 @@ func TestLogScopeChain(t *testing.T) {
 	if !middlewareCalled {
 		t.Error("subsequent middleware should be called")
 	}
+}
+
+// TestLogSkippedWhenLevelDisabled 级别关闭时，中间件不应做任何为日志服务的准备
+//
+// body 快照、包装 ResponseWriter 捕获响应、请求结束后的脱敏与序列化，
+// 存在的唯一目的就是拼出访问日志。级别关掉还照做，等于每个请求白付一遍
+func TestLogSkippedWhenLevelDisabled(t *testing.T) {
+	mockey.PatchConvey("TestLogSkippedWhenLevelDisabled", t, func() {
+		mockey.Mock(xlog.Enabled).Return(false).Build()
+
+		infoCalled := 0
+		mockey.Mock(xlog.Info).To(func(context.Context, string, ...any) { infoCalled++ }).Build()
+
+		parsed := 0
+		mockey.Mock(ParseRequestInfoWithBody).To(func(*http.Request, []byte) map[string]any {
+			parsed++
+			return map[string]any{}
+		}).Build()
+
+		gin.SetMode(gin.TestMode)
+		r := gin.New()
+		r.Use(Log())
+
+		var writerWrapped bool
+		r.POST("/t", func(c *gin.Context) {
+			_, writerWrapped = c.Writer.(*responseBodyWriter)
+			c.String(http.StatusOK, "ok")
+		})
+
+		req := httptest.NewRequest(http.MethodPost, "/t", strings.NewReader(`{"password":"x"}`))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		convey.So(w.Code, convey.ShouldEqual, http.StatusOK)
+		convey.So(infoCalled, convey.ShouldEqual, 0)
+		convey.So(parsed, convey.ShouldEqual, 0)       // 没有构建 requestInfo
+		convey.So(writerWrapped, convey.ShouldBeFalse) // 也没有包装 ResponseWriter
+	})
+}
+
+// TestLogStillRunsWhenLevelEnabled 级别开启时行为不变
+func TestLogStillRunsWhenLevelEnabled(t *testing.T) {
+	mockey.PatchConvey("TestLogStillRunsWhenLevelEnabled", t, func() {
+		mockey.Mock(xlog.Enabled).Return(true).Build()
+
+		infoCalled := 0
+		mockey.Mock(xlog.Info).To(func(context.Context, string, ...any) { infoCalled++ }).Build()
+
+		gin.SetMode(gin.TestMode)
+		r := gin.New()
+		r.Use(Log())
+
+		var writerWrapped bool
+		r.POST("/t", func(c *gin.Context) {
+			_, writerWrapped = c.Writer.(*responseBodyWriter)
+			c.String(http.StatusOK, "ok")
+		})
+
+		req := httptest.NewRequest(http.MethodPost, "/t", strings.NewReader(`{"a":1}`))
+		req.Header.Set("Content-Type", "application/json")
+		r.ServeHTTP(httptest.NewRecorder(), req)
+
+		convey.So(infoCalled, convey.ShouldEqual, 1)
+		convey.So(writerWrapped, convey.ShouldBeTrue)
+	})
+}
+
+// TestGetSensitiveFieldFirstByte_LazyInit 缓存未建时应触发重建
+func TestGetSensitiveFieldFirstByte_LazyInit(t *testing.T) {
+	mockey.PatchConvey("TestGetSensitiveFieldFirstByte_LazyInit", t, func() {
+		sensitiveMu.Lock()
+		oldBytes, oldFirst := cachedFieldBytes, cachedFieldFirstByte
+		cachedFieldBytes, cachedFieldFirstByte = nil, [256]bool{}
+		sensitiveMu.Unlock()
+		defer func() {
+			sensitiveMu.Lock()
+			cachedFieldBytes, cachedFieldFirstByte = oldBytes, oldFirst
+			sensitiveMu.Unlock()
+		}()
+
+		first := getSensitiveFieldFirstByte()
+		convey.So(first['p'], convey.ShouldBeTrue) // password
+		convey.So(first['P'], convey.ShouldBeTrue) // 大小写两种形态都要在
+		convey.So(first['z'], convey.ShouldBeFalse)
+	})
 }

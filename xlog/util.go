@@ -15,6 +15,11 @@ import (
 // xlog.Info(ctx, "order created", xlog.KV("orderId", "1"))
 var sprintf = fmt.Sprintf
 
+// attrStackBuf 收集日志字段时栈上缓冲的容量
+//
+// 取 16：覆盖 access log 的十来个字段，绝大多数日志的字段数远小于它
+const attrStackBuf = 16
+
 func Error(ctx context.Context, msg string, args ...any) {
 	RawLog(ctx, ErrorLevel, msg, args...)
 }
@@ -76,10 +81,47 @@ func RawLog(ctx context.Context, level Level, msg string, args ...any) {
 	}
 
 	r := slog.NewRecord(time.Now(), lv, sprintf(msg, logArgs...), 0)
-	for k, v := range dos.KV {
-		r.AddAttrs(slog.Any(k, v))
+	// 一次性交给 AddAttrs 而不是每个字段调一次：slog.Record 只内联 5 个 attr，
+	// 超出后每调一次就 grow 一次底层切片。access log 这类十来个字段的日志，
+	// 逐个添加会连续扩容多次，profile 里 slices.Grow 曾占到全部分配字节的 14%。
+	//
+	// 用栈上定长数组收集：字段数不超过 attrStackBuf 时全程零分配，
+	// 超出后也只在 append 时扩容一次——直接 make 会让只带两三个字段的
+	// 普通日志平白多一次堆分配，那是绝大多数调用
+	if n := len(dos.KV); n > 0 {
+		var buf [attrStackBuf]slog.Attr
+		attrs := buf[:0]
+		if n > attrStackBuf {
+			attrs = make([]slog.Attr, 0, n)
+		}
+		for k, v := range dos.KV {
+			attrs = append(attrs, slog.Any(k, v))
+		}
+		r.AddAttrs(attrs...)
 	}
 	_ = h.Handle(ctx, r)
+}
+
+// Enabled 报告指定级别的日志此刻是否会被真正输出
+//
+// 给热路径上的调用方用：构造日志内容本身有代价（序列化、脱敏、拼 map），
+// 而 Debug/Info/... 的级别检查发生在函数内部，此时参数早已求值完毕。
+// 级别关掉时那些代价照付不误，只是结果被丢弃。
+//
+//	if xlog.Enabled(ctx, xlog.InfoLevel) {
+//	    xlog.Info(ctx, "...", xlog.KVMap(expensiveToBuild()))
+//	}
+//
+// 只在构造代价明显时才值得这样写；普通日志直接调用即可。
+func Enabled(ctx context.Context, level Level) bool {
+	h := handler.Load()
+	if h == nil {
+		return false
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return h.Enabled(ctx, level.toSlog())
 }
 
 // Handler 返回当前生效的 slog.Handler

@@ -70,3 +70,22 @@ func BenchmarkDebug_Disabled(b *testing.B) {
 		Debug(ctx, "user login success, userID=[%d]", 12345)
 	}
 }
+
+// BenchmarkInfo_WithCtxScope 请求入口装 KV 作用域后的每行日志
+//
+// 这是 xgin 的生产主路径：LogScope 中间件在入口装一次作用域，业务沿途用
+// AddKV 补字段，此后该请求的每一行日志都要把它们带上。字段数按 8 个取，
+// 是 userId / orderId / tenant 这类标注攒下来的常见规模
+func BenchmarkInfo_WithCtxScope(b *testing.B) {
+	setupBenchLogger(false, false)
+	ctx := CtxWithKVScope(context.Background())
+	AddKVs(ctx, map[string]any{
+		"userId": "u-1", "orderId": "o-1", "tenant": "t-1", "region": "r-1",
+		"channel": "web", "abTest": "B", "deviceId": "d-1", "sessionId": "s-1",
+	})
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		Info(ctx, "order created")
+	}
+}

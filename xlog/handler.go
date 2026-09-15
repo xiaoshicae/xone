@@ -30,6 +30,12 @@ const consoleTimeLayout = "2006-01-02 15:04:05.999"
 // consoleLineExtra 控制台行在日志内容之外的额外容量（颜色码、时间、文件名等）
 const consoleLineExtra = 128
 
+// recordAttrStackBuf 组装日志记录时栈上缓冲的字段数
+//
+// 比 RawLog 的 attrStackBuf 大：那里装的只是调用方的 KV，这里还要先放下
+// 7 个固定字段（servername/ip/pid/filename/lineid/traceid/spanid）
+const recordAttrStackBuf = 24
+
 // 日志固定字段名
 const (
 	fieldServerName = "servername"
@@ -134,26 +140,39 @@ func (h *xHandler) Handle(ctx context.Context, r slog.Record) error {
 	}
 
 	out := slog.NewRecord(r.Time, r.Level, r.Message, r.PC)
-	out.AddAttrs(
+
+	// 先把全部字段收集到一个切片里，最后一次性 AddAttrs
+	//
+	// slog.Record 只内联前 5 个 attr，之后每调一次 AddAttrs 都要 slices.Grow
+	// 一次底层切片。这里光固定字段就有 7 个，再逐个追加 ctx KV 与调用方 attr，
+	// 一条请求日志能连续扩容十几次。RawLog 里已经是这么收集的，Handle 漏了。
+	//
+	// 起手用栈上定长数组，装得下就不碰堆；装不下由 append 接管，也只在
+	// 越界那一次扩容。不预先 make：绝大多数日志只有固定字段，
+	// 那会给它们平白加一次堆分配。
+	var buf [recordAttrStackBuf]slog.Attr
+	attrs := buf[:0]
+
+	attrs = append(attrs,
 		slog.String(fieldServerName, serverName),
 		slog.String(fieldIP, h.ip),
 		slog.String(fieldPid, h.pidStr),
 	)
 	if caller != nil {
-		out.AddAttrs(
+		attrs = append(attrs,
 			slog.String(fieldFilename, fileName),
 			slog.String(fieldLineID, strconv.Itoa(lineNo)),
 		)
 	}
-	out.AddAttrs(
+	attrs = append(attrs,
 		slog.String(fieldTraceID, traceID),
 		slog.String(fieldSpanID, spanID),
 	)
-	out.AddAttrs(h.attrs...)
+	attrs = append(attrs, h.attrs...)
 
 	rangeCtxKV(ctx, func(k string, v any) {
 		if !isReservedField(k) {
-			out.AddAttrs(slog.Any(k, v))
+			attrs = append(attrs, slog.Any(k, v))
 		}
 	})
 	// 顺带取出 panic 栈，避免控制台输出时再遍历一次
@@ -163,10 +182,12 @@ func (h *xHandler) Handle(ctx context.Context, r slog.Record) error {
 			panicStack = a.Value.String()
 		}
 		if !isReservedField(a.Key) {
-			out.AddAttrs(a)
+			attrs = append(attrs, a)
 		}
 		return true
 	})
+
+	out.AddAttrs(attrs...)
 
 	// 仅在确有 JSON 输出目标时才序列化，两个输出目标共用同一份结果
 	var jsonLine []byte

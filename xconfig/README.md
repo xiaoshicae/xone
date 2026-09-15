@@ -150,7 +150,8 @@ Server:
 > 回退**只在变量未设置时**触发。把变量显式设为空串，拿到的就是空串 ——
 > 对配置来说「我就是要空值」是个合理表达，不该被默认值顶掉。这一点与 Spring 相同。
 
-覆盖范围为 string 叶子节点、`map` 的 value 以及**字符串列表的元素**：
+覆盖范围是**递归的**：所有 string 叶子节点都会被展开，包括 `map` 的 value、列表元素，
+以及列表里嵌套的 map —— xgorm / xredis 的多实例配置正是最后这种形状。
 
 ```yaml
 XMetric:
@@ -161,6 +162,11 @@ XTrace:
     - "${TRACE_HEADER:X-Request-Id}"   # 列表元素
 XGorm:
   Password: "${DB_PASSWORD}"    # 必填，漏配则启动失败而不是静默变成空串
+XRedis:                          # 多实例：列表里嵌套 map
+  - Name: "cache"
+    Password: "${REDIS_CACHE_PASSWORD}"
+  - Name: "session"
+    Password: "${REDIS_SESSION_PASSWORD}"
 ```
 
 ### 5. 配置打印与脱敏
@@ -168,6 +174,9 @@ XGorm:
 开启 `XONE_ENABLE_DEBUG` 时会打印最终生效的完整配置，其中字段名命中
 `password / passwd / secret / token / apikey / accesskey / privatekey / credential / dsn`
 （大小写不敏感）的值会被替换为 `******`，不会输出凭证明文。
+
+脱敏同样是递归的，会穿过列表：xgorm / xredis 的多实例配置是一个 map 列表，
+里面的 `DSN`、`Password` 与单实例形态一样被替换。
 
 ### 6. 使用demo
 

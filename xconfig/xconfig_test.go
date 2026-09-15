@@ -1611,3 +1611,93 @@ K:
 		So(vp.GetString("K.Shared"), ShouldEqual, "redis-dev")
 	})
 }
+
+// TestMaskSensitiveInsideList 多实例（map 列表）形态的凭证同样要脱敏
+//
+// xgorm / xredis 的多实例配置就是一个 map 列表，而 viper 把列表整体当作一个叶子值，
+// 只递归 map 的话列表里的 DSN、密码会原样打进启动日志
+func TestMaskSensitiveInsideList(t *testing.T) {
+	PatchConvey("TestMaskSensitiveInsideList", t, func() {
+		masked := maskSensitive(map[string]any{
+			"xgorm": []any{
+				map[string]any{"name": "master", "dsn": "user:list-pw@tcp(127.0.0.1:3306)/db"},
+				map[string]any{"name": "slave", "password": "slave-pw"},
+			},
+			"nested": []any{
+				[]any{map[string]any{"token": "deep-tk"}},
+			},
+		})
+		dumped := xutil.ToJsonStringIndent(masked)
+		for _, secret := range []string{"list-pw", "slave-pw", "deep-tk"} {
+			So(dumped, ShouldNotContainSubstring, secret)
+		}
+		So(dumped, ShouldContainSubstring, "master")
+		So(dumped, ShouldContainSubstring, "slave")
+	})
+}
+
+// TestPlaceholderInsideListOfMaps 列表里嵌套 map 中的占位符同样要展开
+//
+// 多实例配置的凭证只能写成占位符（平台中立规范要求），不展开的话
+// Password 会变成字面量 "${...}"，连接必然失败，而错误发生在很远的地方
+func TestPlaceholderInsideListOfMaps(t *testing.T) {
+	PatchConvey("TestPlaceholderInsideListOfMaps", t, func() {
+		So(os.Setenv("XONE_TEST_LIST_PW", "s3cret"), ShouldBeNil)
+		defer func() { _ = os.Unsetenv("XONE_TEST_LIST_PW") }()
+
+		dir := t.TempDir()
+		loc := filepath.Join(dir, "application.yml")
+		So(os.WriteFile(loc, []byte(`
+Server:
+  Name: demo
+XRedis:
+  - Name: r1
+    Password: "${XONE_TEST_LIST_PW}"
+  - Name: r2
+    Password: "${XONE_TEST_LIST_PW_UNSET:fallback}"
+`), 0o644), ShouldBeNil)
+
+		vp, err := parseConfig(loc)
+		So(err, ShouldBeNil)
+
+		list, ok := vp.Get("XRedis").([]any)
+		So(ok, ShouldBeTrue)
+		So(len(list), ShouldEqual, 2)
+		So(list[0].(map[string]any)["password"], ShouldEqual, "s3cret")
+		So(list[1].(map[string]any)["password"], ShouldEqual, "fallback")
+	})
+}
+
+// TestMissingPlaceholderInsideListOfMaps 列表里缺失的必填占位符同样要让启动失败
+func TestMissingPlaceholderInsideListOfMaps(t *testing.T) {
+	PatchConvey("TestMissingPlaceholderInsideListOfMaps", t, func() {
+		dir := t.TempDir()
+		loc := filepath.Join(dir, "application.yml")
+		So(os.WriteFile(loc, []byte(`
+Server:
+  Name: demo
+XRedis:
+  - Name: r1
+    Password: "${XONE_TEST_DEFINITELY_UNSET}"
+`), 0o644), ShouldBeNil)
+
+		_, err := parseConfig(loc)
+		So(err, ShouldNotBeNil)
+		So(err.Error(), ShouldContainSubstring, "XONE_TEST_DEFINITELY_UNSET")
+	})
+}
+
+// TestExpandConfigValueNonString 非字符串标量原样返回，不被误判为发生变化
+func TestExpandConfigValueNonString(t *testing.T) {
+	PatchConvey("TestExpandConfigValueNonString", t, func() {
+		_, changed, issues := expandConfigValue(42)
+		So(changed, ShouldBeFalse)
+		So(issues.empty(), ShouldBeTrue)
+
+		_, changed, _ = expandConfigValue([]any{1, true, ""})
+		So(changed, ShouldBeFalse)
+
+		_, changed, _ = expandConfigValue(map[string]any{"a": 1, "b": "plain"})
+		So(changed, ShouldBeFalse)
+	})
+}

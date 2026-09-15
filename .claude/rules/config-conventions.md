@@ -120,7 +120,7 @@ FieldName string `mapstructure:"FieldName"`
 
 ## 环境变量注入
 
-xconfig 在配置合并完成后**统一展开一次** `${VAR}` / `${VAR:default}` 占位符，覆盖 string 叶子节点、`map[string]string` 的 value 以及字符串列表的元素。展开结果不会被再次解释。
+xconfig 在配置合并完成后**统一展开一次** `${VAR}` / `${VAR:default}` 占位符，递归覆盖所有 string 叶子节点：`map` 的 value、列表元素，以及列表里嵌套的 map（xgorm / xredis 的多实例形态）。展开结果不会被再次解释。
 
 | 写法 | 含义 |
 |------|------|

@@ -12,7 +12,8 @@ const (
 	XGinSwaggerConfigKey = "XGin.Swagger"
 
 	defaultHost = "0.0.0.0"
-	defaultPort = 8000
+	// defaultPort 与 gin 自身的默认端口一致（gin 的 resolveAddress 在未指定时返回 :8080）
+	defaultPort = 8080
 
 	// defaultReadHeaderTimeout 读取请求头的超时，slowloris 类攻击的主要防线
 	defaultReadHeaderTimeout = "10s"
@@ -34,7 +35,7 @@ type Config struct {
 	Host string `mapstructure:"Host"`
 
 	// Port 服务端口号
-	// optional default 8000
+	// optional default 8080
 	Port int `mapstructure:"Port"`
 
 	// UseH2C 是否启用 h2c（HTTP/2 Cleartext，非 TLS 下的 HTTP/2）

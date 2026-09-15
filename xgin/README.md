@@ -20,7 +20,7 @@
 ```yaml
 XGin:
   Host: "0.0.0.0"        # 服务监听地址 (optional, default "0.0.0.0")
-  Port: 8000              # 服务端口号 (optional, default 8000)
+  Port: 8080              # 服务端口号 (optional, default 8080)
   UseH2C: false         # 非 TLS 下启用 h2c (optional, default false)
   CertFile: ""            # TLS 证书路径 (optional, default ""，配置后自动启用 HTTPS)
   KeyFile: ""             # TLS 私钥路径 (optional, default "")

@@ -24,18 +24,28 @@ var (
 )
 
 const (
-	// defaultValueSeparator 占位符中默认值的分隔符，如 ${VAR:-default}
-	defaultValueSeparator = ":-"
-
 	// profilesKey Server 下 Profiles 子块的 key（viper 内部统一小写）
 	profilesKey = "profiles"
+
+	// configSubKey / importSubKey Server.Config.Import 的两级子 key（viper 内部统一小写）
+	configSubKey = "config"
+	importSubKey = "import"
 
 	// maskedValue 打印配置时敏感字段的替代值
 	maskedValue = "******"
 )
 
-// 预编译正则表达式，避免重复编译
-var envPlaceholderRegex = regexp.MustCompile(`\$\{([^}:]+)(?::-([^}]*))?\}`)
+// envPlaceholderRegex 占位符语法：${VAR} / ${VAR:default}
+//
+// 分隔符是 `:`，与 Spring 一致。
+var envPlaceholderRegex = regexp.MustCompile(`\$\{([^}:]+)(?::([^}]*))?\}`)
+
+// anyPlaceholderRegex 任意 ${...} 形态，用于发现不被支持的写法
+//
+// 只靠 envPlaceholderRegex 是「匹配不上就当普通文本」，写错的占位符会原样留在
+// 配置值里：${} 这种不报错、不告警，值就真的变成了那串字面量，
+// 错误要到用它的地方才以另一副面孔出现。
+var anyPlaceholderRegex = regexp.MustCompile(`\$\{[^{}]*\}`)
 
 // sensitiveKeyPattern 需要在打印配置时脱敏的字段名（大小写不敏感）
 var sensitiveKeyPattern = regexp.MustCompile(`(?i)(password|passwd|secret|token|apikey|api_key|accesskey|access_key|privatekey|private_key|credential|dsn)`)
@@ -82,9 +92,12 @@ func parseConfig(configLocation string) (*viper.Viper, error) {
 		return nil, xerror.Newf("xconfig", "parseConfig", "load viper config failed, err=[%v]", err)
 	}
 
-	if pa := detectProfilesActive(baseViperConfig); pa != "" { // 判断激活环境
+	profilesActive := detectProfilesActive(baseViperConfig) // 判断激活环境
+
+	var envViperConfig *viper.Viper
+	if profilesActive != "" {
 		// 构造指定环境配置文件路径
-		envConfigLocation, err := toProfilesActiveConfigLocation(configLocation, pa)
+		envConfigLocation, err := toProfilesActiveConfigLocation(configLocation, profilesActive)
 		if err != nil {
 			return nil, xerror.Newf("xconfig", "parseConfig", "parse profiles active config file failed, err=[%v]", err)
 		}
@@ -93,13 +106,17 @@ func parseConfig(configLocation string) (*viper.Viper, error) {
 			xutil.WarnIfEnableDebug("XOne profiles active config file not found, ignore, env_config_location=[%s]", envConfigLocation)
 		} else {
 			// 加载指定环境配置文件
-			envViperConfig, err := loadLocalConfig(envConfigLocation)
+			envViperConfig, err = loadLocalConfig(envConfigLocation)
 			if err != nil {
 				return nil, xerror.Newf("xconfig", "parseConfig", "load config file failed, env_config_location=[%s], err=[%v]", envConfigLocation, err)
 			}
-
-			baseViperConfig = mergeProfilesViperConfig(baseViperConfig, envViperConfig)
 		}
+	}
+
+	// 合并全部来源
+	baseViperConfig, err = mergeAllConfig(baseViperConfig, envViperConfig, configLocation, profilesActive)
+	if err != nil {
+		return nil, err // mergeAllConfig 已返回 xerror
 	}
 
 	// 合并完成后统一展开一次占位符，避免同一个值被展开两遍
@@ -159,23 +176,62 @@ func maskSensitive(settings map[string]any) map[string]any {
 	return masked
 }
 
-// mergeProfilesViperConfig 将环境配置 vp2 深合并进基础配置 vp1
+// lowerKey viper 内部统一把 key 转小写，比对时同样处理
+func lowerKey(k string) string {
+	return strings.ToLower(k)
+}
+
+// mergeAllConfig 按优先级合并主配置、导入的配置与环境配置
 //
-// 逐层合并而非整块替换：环境配置文件里只写要改的字段即可，
-// 同一块下未提及的字段保留基础配置的值。列表整体替换——半个列表没有意义。
+// 两条规则决定了顺序，都与 Spring Boot 对齐：
 //
-// Server.Profiles 不参与合并：激活的环境由基础配置文件/命令行/环境变量决定，
-// 环境配置文件不应反过来改写它。
-func mergeProfilesViperConfig(vp1, vp2 *viper.Viper) *viper.Viper {
-	base := vp1.AllSettings()
-	override := vp2.AllSettings()
-	dropProfilesActive(override)
+//  1. 被导入的文件覆盖导入它的文件（官方文档：values from the imported file take
+//     precedence over the file that triggered the import）。这样 db.yml 就是数据库
+//     配置的权威，不会被 application.yml 里一个忘删的残留字段悄悄压过。
+//  2. 带环境后缀的文件整体压过不带的（官方文档：profile-specific files always
+//     overriding the non-specific ones）。因此先合完所有无后缀的，再合所有带后缀的——
+//     否则 db-dev.yml 会被后面声明的 redis.yml 压过，一个环境专属的值被非环境专属的
+//     值覆盖，说不通。
+//
+// 最终顺序（后者覆盖前者）：
+//
+//	application.yml < db.yml < redis.yml < application-{env}.yml < db-{env}.yml < redis-{env}.yml
+func mergeAllConfig(baseVp, envVp *viper.Viper, configLocation, profilesActive string) (*viper.Viper, error) {
+	paths, err := collectImportPaths(baseVp, envVp)
+	if err != nil {
+		return nil, err // collectImportPaths 已返回 xerror
+	}
+
+	// 相对路径以主配置文件所在目录为基准，而不是进程工作目录：
+	// db.yml 就放在 application.yml 旁边是最自然的布局，
+	// 而工作目录在容器里取决于镜像的 WORKDIR，不该影响配置能不能找到
+	importedPlain, importedProfile, err := loadImportedSettings(paths, filepath.Dir(configLocation), profilesActive)
+	if err != nil {
+		return nil, err // loadImportedSettings 已返回 xerror
+	}
+
+	settings := baseVp.AllSettings()
+	settings = deepMerge(settings, importedPlain)
+	if envVp != nil {
+		settings = deepMerge(settings, profileSettingsOf(envVp))
+	}
+	settings = deepMerge(settings, importedProfile)
 
 	vp := viper.New()
-	for k, v := range deepMerge(base, override) {
+	for k, v := range settings {
 		vp.Set(k, v)
 	}
-	return vp
+	return vp, nil
+}
+
+// profileSettingsOf 取出环境配置的设置并剔除 Server.Profiles
+//
+// 激活的环境由基础配置文件/命令行/环境变量决定，环境配置文件不应反过来改写它。
+// 这也与 Spring 一致：spring.profiles.active 不允许出现在 profile-specific 文件里。
+func profileSettingsOf(vp *viper.Viper) map[string]any {
+	settings := vp.AllSettings()
+	dropProfilesActive(settings)
+	return settings
 }
 
 // deepMerge 递归合并两个配置 map，override 覆盖 base，返回新 map 不改动入参
@@ -206,62 +262,103 @@ func deepMerge(base, override map[string]any) map[string]any {
 
 // dropProfilesActive 从配置中移除 Server.Profiles，避免环境配置文件改写激活环境
 func dropProfilesActive(settings map[string]any) {
-	server, ok := settings[strings.ToLower(ServerConfigKey)].(map[string]any)
+	server, ok := settings[lowerKey(ServerConfigKey)].(map[string]any)
 	if !ok {
 		return
 	}
 	delete(server, profilesKey)
 	if len(server) == 0 {
-		delete(settings, strings.ToLower(ServerConfigKey))
+		delete(settings, lowerKey(ServerConfigKey))
 	}
+}
+
+// placeholderIssues 展开占位符时发现的问题
+//
+// 分成两类而不是合成一个列表：「变量没设置」是部署环境的问题，
+// 「写法不支持」是配置文件写错了，给出的修复动作完全不同。
+type placeholderIssues struct {
+	missing     []string // 必填但环境变量未设置
+	unsupported []string // 写法不被支持，如 ${}
+}
+
+func (i *placeholderIssues) merge(o placeholderIssues) {
+	i.missing = append(i.missing, o.missing...)
+	i.unsupported = append(i.unsupported, o.unsupported...)
+}
+
+func (i placeholderIssues) empty() bool {
+	return len(i.missing) == 0 && len(i.unsupported) == 0
+}
+
+// err 把问题转成错误，两类各自给出可操作的提示
+func (i placeholderIssues) err(op string) error {
+	if len(i.unsupported) > 0 {
+		return xerror.Newf("xconfig", op,
+			"unsupported placeholder syntax, supported forms are ${VAR} and ${VAR:default}, got=%v",
+			distinct(i.unsupported))
+	}
+	if len(i.missing) > 0 {
+		return xerror.Newf("xconfig", op,
+			"required env placeholder not set, use ${VAR:default} to make it optional, missing=%v", distinct(i.missing))
+	}
+	return nil
 }
 
 // expandEnvPlaceholder 展开单个字符串中的环境变量占位符
 //
-// 返回展开结果，以及其中「未设置且没有默认值」的变量名列表。
 // 用 os.LookupEnv 而非 os.Getenv：显式设为空串的环境变量是一个有效取值，
-// 应当覆盖默认值，而不是被当作未设置。
-func expandEnvPlaceholder(val string) (string, []string) {
-	var missing []string
+// 应当覆盖默认值，而不是被当作未设置。这一点与 Spring 相同。
+func expandEnvPlaceholder(val string) (string, placeholderIssues) {
+	var issues placeholderIssues
+
+	// 写法不被支持的：它们匹配不上 envPlaceholderRegex，
+	// 不检查的话会被当成普通文本原样留下
+	for _, m := range anyPlaceholderRegex.FindAllString(val, -1) {
+		if envPlaceholderRegex.FindString(m) != m {
+			issues.unsupported = append(issues.unsupported, m)
+		}
+	}
+
 	expanded := envPlaceholderRegex.ReplaceAllStringFunc(val, func(match string) string {
-		matches := envPlaceholderRegex.FindStringSubmatch(match)
-		envKey := matches[1]
+		idx := envPlaceholderRegex.FindStringSubmatchIndex(match)
+		envKey := match[idx[2]:idx[3]]
 		if envVal, ok := os.LookupEnv(envKey); ok {
 			return envVal
 		}
-		// matches[2] 是默认值；整个 ":-default" 段缺失时该分组不参与匹配
-		if strings.Contains(match, defaultValueSeparator) {
-			return matches[2]
+		// 分组 2 参与匹配即表示写了 ":"，无论默认值是否为空。
+		// 用下标判断而不是查字符串里有没有 ":"，因为变量名里不可能有 ":"，
+		// 但默认值里可能有（如 ${ADDR:127.0.0.1:6379}）
+		if idx[4] >= 0 {
+			return match[idx[4]:idx[5]]
 		}
-		missing = append(missing, envKey)
+		issues.missing = append(issues.missing, envKey)
 		return match
 	})
-	return expanded, missing
+	return expanded, issues
 }
 
-// expandEnvPlaceholders 展开配置中的 ${VAR} 或 ${VAR:-default} 占位符
+// expandEnvPlaceholders 展开配置中的 ${VAR} 或 ${VAR:default} 占位符
 //
-// 支持的语法:
-//   - ${VAR}           必填，环境变量未设置时初始化失败
-//   - ${VAR:-default}  可选，环境变量未设置时使用 default（想要空值写 ${VAR:-}）
+// 支持的语法（分隔符是 ":"，与 Spring 一致）:
+//   - ${VAR}          必填，环境变量未设置时初始化失败
+//   - ${VAR:default}  可选，环境变量未设置时使用 default（想要空值写 ${VAR:}）
 //
 // 覆盖 string 叶子节点与字符串列表的元素；只展开一次，
 // 环境变量的值里若恰好含有 ${...} 不会被再次解释。
 func expandEnvPlaceholders(vp *viper.Viper) error {
 	expansions := make(map[string]any)
-	var missing []string
+	var issues placeholderIssues
 
 	for _, key := range vp.AllKeys() {
-		expanded, ok, keyMissing := expandConfigValue(vp.Get(key))
-		missing = append(missing, keyMissing...)
+		expanded, ok, keyIssues := expandConfigValue(vp.Get(key))
+		issues.merge(keyIssues)
 		if ok {
 			expansions[key] = expanded
 		}
 	}
 
-	if len(missing) > 0 {
-		return xerror.Newf("xconfig", "expandEnvPlaceholders",
-			"required env placeholder not set, use ${VAR:-default} to make it optional, missing=%v", distinct(missing))
+	if !issues.empty() {
+		return issues.err("expandEnvPlaceholders")
 	}
 
 	if len(expansions) == 0 {
@@ -279,20 +376,21 @@ func expandEnvPlaceholders(vp *viper.Viper) error {
 	return nil
 }
 
-// expandConfigValue 展开单个配置值，返回展开结果、是否发生变化、缺失的必填变量
+// expandConfigValue 展开单个配置值，返回展开结果、是否发生变化、发现的问题
 //
 // 只处理 string 与字符串列表：map 已被 viper 的 AllKeys 拆成独立叶子节点，
 // 其余类型（数值、布尔）不含占位符。
-func expandConfigValue(raw any) (any, bool, []string) {
+func expandConfigValue(raw any) (any, bool, placeholderIssues) {
+	var issues placeholderIssues
+
 	switch v := raw.(type) {
 	case string:
 		if v == "" {
-			return nil, false, nil
+			return nil, false, issues
 		}
-		expanded, missing := expandEnvPlaceholder(v)
-		return expanded, expanded != v, missing
+		expanded, valIssues := expandEnvPlaceholder(v)
+		return expanded, expanded != v, valIssues
 	case []any:
-		var missing []string
 		changed := false
 		items := make([]any, len(v))
 		copy(items, v)
@@ -301,16 +399,16 @@ func expandConfigValue(raw any) (any, bool, []string) {
 			if !ok || str == "" {
 				continue
 			}
-			expanded, itemMissing := expandEnvPlaceholder(str)
-			missing = append(missing, itemMissing...)
+			expanded, itemIssues := expandEnvPlaceholder(str)
+			issues.merge(itemIssues)
 			if expanded != str {
 				items[i] = expanded
 				changed = true
 			}
 		}
-		return items, changed, missing
+		return items, changed, issues
 	default:
-		return nil, false, nil
+		return nil, false, issues
 	}
 }
 

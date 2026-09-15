@@ -25,6 +25,19 @@
               "description": "指定启用的环境"
             }
           }
+        },
+        "Config": {
+          "type": "object",
+          "description": "配置文件来源",
+          "properties": {
+            "Import": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "额外加载的配置文件，路径相对主配置文件所在目录（也支持绝对路径）。优先级低于 application.yml 与 application-{env}.yml；被导入的文件同样支持 {name}-{env}.yml 环境变体；文件不存在时启动失败；不支持嵌套导入"
+            }
+          }
         }
       }
     },
@@ -433,7 +446,7 @@
   "required": [],
   "definitions": {
     "BoolOrPlaceholder": {
-      "description": "布尔值，也可写成字符串形式的布尔值，或${ENV}/${ENV:-default}环境变量占位符",
+      "description": "布尔值，也可写成字符串形式的布尔值，或${ENV}/${ENV:default}环境变量占位符",
       "anyOf": [
         { "type": "boolean" },
         {
@@ -444,11 +457,11 @@
     },
     "Duration": {
       "type": "string",
-      "description": "时间长度，支持d(天)前缀与Go duration单位(ns/us/ms/s/m/h)，如7d、1d12h、500ms；也支持${ENV}/${ENV:-default}环境变量占位符",
+      "description": "时间长度，支持d(天)前缀与Go duration单位(ns/us/ms/s/m/h)，如7d、1d12h、500ms；也支持${ENV}/${ENV:default}环境变量占位符",
       "pattern": "^(\\d+d(\\d+(\\.\\d+)?(ns|us|µs|ms|s|m|h))*|(\\d+(\\.\\d+)?(ns|us|µs|ms|s|m|h))+|\\$\\{[^}]*\\})$"
     },
     "LogConsoleFormat": {
-      "description": "控制台输出格式，也支持${ENV}/${ENV:-default}环境变量占位符",
+      "description": "控制台输出格式，也支持${ENV}/${ENV:default}环境变量占位符",
       "anyOf": [
         {
           "type": "string",
@@ -461,7 +474,7 @@
       ]
     },
     "LogLevel": {
-      "description": "日志级别，也支持${ENV}/${ENV:-default}环境变量占位符",
+      "description": "日志级别，也支持${ENV}/${ENV:default}环境变量占位符",
       "anyOf": [
         {
           "type": "string",

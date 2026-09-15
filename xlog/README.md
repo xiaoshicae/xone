@@ -37,7 +37,7 @@ XLog:
 ```
 
 时间类配置支持 `d`（天）前缀及 Go duration 单位，如 `7d`、`1d12h`、`6h`。
-所有配置项均支持环境变量占位符，如 `Enable: "${XLOG_FILE_ENABLE:-false}"`。
+所有配置项均支持环境变量占位符，如 `Enable: "${XLOG_FILE_ENABLE:false}"`。
 
 #### 输出目标
 

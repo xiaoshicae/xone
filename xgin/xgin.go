@@ -274,7 +274,7 @@ func (g *XGin) registerMiddleware(do *options.Options) {
 	}
 
 	// 中间件顺序（洋葱模型，自外向内）：
-	//   session → trace → log → metric → recover → 用户中间件 → handler
+	//   logScope → trace → log → metric → recover → 用户中间件 → handler
 	//
 	// recover 必须是框架中间件里最内层的一个。panic 会一路向外抛，
 	// 在哪一层被 recover 住，比它更内层的中间件里 c.Next() 之后的代码就都不执行。
@@ -284,8 +284,8 @@ func (g *XGin) registerMiddleware(do *options.Options) {
 	// 进程安全不依赖这个顺序：net/http 对每个连接本就有兜底 recover，
 	// 框架中间件自身 panic 不会拖垮进程。
 
-	// 提前注入一下 session 相关信息
-	g.engine.Use(middleware.Session())
+	// 最外层：为本次请求开启日志 KV 作用域，之后各层才有地方写
+	g.engine.Use(middleware.LogScope())
 
 	// 注册trace middleware，需要放在靠前的位置，保证traceid能提前生成，后续middleware和handler能正确获取到
 	if do.EnableTraceMiddleware {

@@ -80,7 +80,7 @@ func scopeFromCtx(ctx context.Context) *kvScope {
 
 // CtxWithKVScope 为 context 开启一个 KV 作用域，之后可用 AddKV 持续写入
 //
-// 典型用法是在请求入口装一次（xgin 的 Session 中间件已经这么做），
+// 典型用法是在请求入口装一次（xgin 的 LogScope 中间件已经这么做），
 // 后续任意调用层级用 AddKV 补充字段，全部会出现在这次请求的每一行日志里：
 //
 //	ctx = xlog.CtxWithKVScope(ctx)      // 入口装一次

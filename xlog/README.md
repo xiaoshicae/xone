@@ -220,7 +220,7 @@ func main() {
 `CtxWithKVScope` + `AddKV`：
 
 ```go
-// 入口开一次（xgin 用户不用自己写，Session 中间件已经做了）
+// 入口开一次（xgin 用户不用自己写，LogScope 中间件已经做了）
 ctx = xlog.CtxWithKVScope(ctx)
 
 // 调用栈任意深度，只需要 ctx

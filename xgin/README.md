@@ -3,7 +3,7 @@
 ### 1. 模块简介
 
 * 对 [Gin](https://github.com/gin-gonic/gin) 进行了封装，提供 Builder 模式构建 Web 服务
-* 内置中间件：日志（Log）、链路追踪（Trace）、异常恢复（Recover）、请求上下文（Session）、指标采集（Metric）
+* 内置中间件：日志（Log）、链路追踪（Trace）、异常恢复（Recover）、日志 KV 作用域（LogScope）、指标采集（Metric）
 * 支持 HTTP/2 (H2C) 和 TLS (HTTPS)
 * 集成 [Swagger](https://github.com/swaggo/gin-swagger) 文档
 * 支持中文验证错误翻译
@@ -155,13 +155,13 @@ XGin:
 
 | 中间件     | 说明                                  | 默认   |
 |---------|-------------------------------------|------|
-| Session | 开启请求级日志 KV 作用域，供 `xlog.AddKV` 写入        | 始终启用 |
+| LogScope | 开启请求级日志 KV 作用域，供 `xlog.AddKV` 写入       | 始终启用 |
 | Trace   | 链路追踪，生成 TraceID                     | 默认启用 |
 | Recover | panic 恢复，防止服务崩溃                     | 始终启用 |
 | Log     | 请求/响应日志记录                           | 默认启用 |
 | Metric  | Prometheus 入站请求指标（请求数 + 耗时），需配合 xmetric | 默认启用 |
 
-Session 中间件开启的 KV 作用域，让业务代码可以在任意调用层级往本次请求的日志里加字段：
+LogScope 中间件开启的 KV 作用域，让业务代码可以在任意调用层级往本次请求的日志里加字段：
 
 ```go
 func settleOrder(ctx context.Context, o *Order) error {
@@ -188,7 +188,7 @@ xgin.New(options.EnableMetricMiddleware(false)).Build()
 洋葱模型，自外向内：
 
 ```
-Session → Trace → Log → Metric → Recover → 用户中间件 → handler
+LogScope → Trace → Log → Metric → Recover → 用户中间件 → handler
 ```
 
 **Recover 是框架中间件里最内层的一个**，这一点决定了 panic 请求能不能被观测到。

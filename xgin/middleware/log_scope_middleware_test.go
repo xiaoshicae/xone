@@ -10,10 +10,10 @@ import (
 	"github.com/xiaoshicae/xone/v2/xlog"
 )
 
-func TestSession(t *testing.T) {
+func TestLogScope(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	r.Use(Session())
+	r.Use(LogScope())
 
 	var ctxReceived context.Context
 	r.GET("/test", func(c *gin.Context) {
@@ -35,16 +35,16 @@ func TestSession(t *testing.T) {
 	}
 }
 
-// TestSessionKVReachesLaterMiddleware handler 写入的 KV 必须能被 c.Next() 之后的中间件看到
+// TestLogScopeKVReachesLaterMiddleware handler 写入的 KV 必须能被 c.Next() 之后的中间件看到
 //
 // 这是整个中间件存在的理由：Log 中间件在 c.Next() 之后打访问日志，
 // 若 handler 的 KV 到不了那里，"请求入口装容器、后续一路带下去"就是句空话。
 // 旧实现注入的是不可变快照，handler 里 CtxWithKV 得到的是新 ctx，
 // 不显式写回 c.Request 就丢了——而调用栈深处根本拿不到 *gin.Context。
-func TestSessionKVReachesLaterMiddleware(t *testing.T) {
+func TestLogScopeKVReachesLaterMiddleware(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	r.Use(Session())
+	r.Use(LogScope())
 
 	var seenAfterNext map[string]any
 	r.Use(func(c *gin.Context) {
@@ -70,10 +70,10 @@ func deepInBusinessCode(ctx context.Context) {
 	xlog.AddKV(ctx, "userId", "u-1")
 }
 
-func TestSessionOpensKVScope(t *testing.T) {
+func TestLogScopeOpensKVScope(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	r.Use(Session())
+	r.Use(LogScope())
 
 	var scopeOpened bool
 	r.GET("/test", func(c *gin.Context) {
@@ -85,14 +85,14 @@ func TestSessionOpensKVScope(t *testing.T) {
 	r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", "/test", nil))
 
 	if !scopeOpened {
-		t.Error("session 中间件应在请求开始时开启 KV 作用域")
+		t.Error("LogScope 中间件应在请求开始时开启 KV 作用域")
 	}
 }
 
-func TestSessionChain(t *testing.T) {
+func TestLogScopeChain(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	r.Use(Session())
+	r.Use(LogScope())
 
 	// 测试中间件链
 	var middlewareCalled bool

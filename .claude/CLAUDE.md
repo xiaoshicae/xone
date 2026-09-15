@@ -29,7 +29,7 @@ xone/
 ├── xcache/      # 本地缓存（服务层，基于 ristretto）
 ├── xserver/     # 服务运行和生命周期管理（生命周期层）
 ├── xgin/        # Gin Web 框架集成（应用层，Builder 模式 + 内置中间件）
-│   ├── middleware/   # 中间件（Session/Trace/Log/Metric/Recover）
+│   ├── middleware/   # 中间件（LogScope/Trace/Log/Metric/Recover）
 │   ├── options/      # 选项
 │   ├── swagger/      # Swagger 集成
 │   └── trans/        # 中文翻译

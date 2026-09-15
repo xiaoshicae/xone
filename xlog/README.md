@@ -118,8 +118,15 @@ func ParseLevel(s string) (Level, bool)
 func KV(k string, v any) Option
 func KVMap(m map[string]any) Option
 
-// 在 Context 中注入 KV（后续日志自动携带），以及读取已注入的 KV
+// 开启请求级 KV 作用域，之后可在任意调用层级持续写入（写入原地生效，无需回传 ctx）
+func CtxWithKVScope(ctx context.Context) context.Context
+func AddKV(ctx context.Context, k string, v any)
+func AddKVs(ctx context.Context, kvs map[string]any)
+
+// 派生一个带额外 KV 的新 Context（快照式，不影响传入的 ctx）
 func CtxWithKV(ctx context.Context, kvs map[string]any) context.Context
+
+// 读取已写入的 KV 快照
 func KVFromCtx(ctx context.Context) map[string]any
 
 // 获取当前生效的日志级别（级别名称用 CurrentLevel().String()）
@@ -206,6 +213,38 @@ func main() {
     xlog.Info(ctx, "processing request") // 自动包含 requestId
 }
 ```
+
+### 请求级 KV：作用域 + AddKV
+
+想要「入口开一次、后续任意深度往里塞、整条请求的日志都带上」，用
+`CtxWithKVScope` + `AddKV`：
+
+```go
+// 入口开一次（xgin 用户不用自己写，LogScope 中间件已经做了）
+ctx = xlog.CtxWithKVScope(ctx)
+
+// 调用栈任意深度，只需要 ctx
+func settleOrder(ctx context.Context, o *Order) error {
+    xlog.AddKV(ctx, "orderID", o.ID)   // 原地生效，不返回新 ctx
+    xlog.Info(ctx, "settling")         // 自动带上 orderID
+    ...
+}
+
+// 请求结束时的访问日志同样带上 orderID
+```
+
+**和 `CtxWithKV` 的分工是写入方向：**
+
+|  | 写入效果 | 适用 |
+|---|---------|------|
+| `AddKV(ctx, k, v)` | 原地写入作用域，**所有持有该 ctx 的地方都看得到**，不返回新 ctx | 请求级字段：userID、orderID、租户等，希望访问日志也带上 |
+| `CtxWithKV(ctx, kvs)` | **派生**一个新 ctx，原 ctx 不受影响 | 只给某一段调用链打标，不想污染整条请求 |
+
+`AddKV` 之所以不返回新 ctx，是因为业务函数在调用栈深处只拿得到 `ctx`，
+没有办法把新 context 交还给上层中间件 —— 这正是快照式 API 覆盖不到的场景。
+
+未开启作用域就调 `AddKV`，本次写入会被丢弃并打一条 debug 日志
+（作用域必须由持有 ctx 的一方先装上，`AddKV` 无法凭空造一个让调用方看得见的）。
 
 ### 5. 日志 JSON 字段说明
 

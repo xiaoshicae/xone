@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -193,7 +194,7 @@ func TestCtxWithKV(t *testing.T) {
 			ctx := context.Background()
 			newCtx := CtxWithKV(ctx, map[string]any{"key": "value"})
 			c.So(newCtx, c.ShouldNotBeNil)
-			kv := getXLogContainerFromCtx(newCtx)
+			kv := KVFromCtx(newCtx)
 			c.So(kv["key"], c.ShouldEqual, "value")
 		})
 
@@ -201,7 +202,7 @@ func TestCtxWithKV(t *testing.T) {
 			ctx := context.Background()
 			ctx = CtxWithKV(ctx, map[string]any{"key1": "value1"})
 			ctx = CtxWithKV(ctx, map[string]any{"key2": "value2"})
-			kv := getXLogContainerFromCtx(ctx)
+			kv := KVFromCtx(ctx)
 			c.So(kv["key1"], c.ShouldEqual, "value1")
 			c.So(kv["key2"], c.ShouldEqual, "value2")
 		})
@@ -320,21 +321,39 @@ func TestCallerPretty(t *testing.T) {
 	})
 }
 
-func TestGetXLogContainerFromCtx(t *testing.T) {
-	mockey.PatchConvey("TestGetXLogContainerFromCtx", t, func() {
-		mockey.PatchConvey("TestGetXLogContainerFromCtx-Empty", func() {
-			c.So(getXLogContainerFromCtx(context.Background()), c.ShouldBeNil)
+func TestScopeFromCtx(t *testing.T) {
+	mockey.PatchConvey("TestScopeFromCtx", t, func() {
+		mockey.PatchConvey("TestScopeFromCtx-Empty", func() {
+			c.So(scopeFromCtx(context.Background()), c.ShouldBeNil)
 		})
 
-		mockey.PatchConvey("TestGetXLogContainerFromCtx-NilCtx", func() {
-			c.So(getXLogContainerFromCtx(nil), c.ShouldBeNil)
+		mockey.PatchConvey("TestScopeFromCtx-NilCtx", func() {
+			c.So(scopeFromCtx(nil), c.ShouldBeNil)
 		})
 
-		mockey.PatchConvey("TestGetXLogContainerFromCtx-WithKV", func() {
+		mockey.PatchConvey("TestScopeFromCtx-WithKV", func() {
 			ctx := CtxWithKV(context.Background(), map[string]any{"key": "value"})
-			result := getXLogContainerFromCtx(ctx)
-			c.So(result, c.ShouldNotBeNil)
-			c.So(result["key"], c.ShouldEqual, "value")
+			s := scopeFromCtx(ctx)
+			c.So(s, c.ShouldNotBeNil)
+			c.So(s.snapshot()["key"], c.ShouldEqual, "value")
+		})
+	})
+}
+
+func TestRangeCtxKV(t *testing.T) {
+	mockey.PatchConvey("TestRangeCtxKV", t, func() {
+		// 日志热路径走它而不是 KVFromCtx，避免每行日志复制一次 map
+		mockey.PatchConvey("TestRangeCtxKV-无作用域时不回调", func() {
+			called := 0
+			rangeCtxKV(context.Background(), func(string, any) { called++ })
+			c.So(called, c.ShouldEqual, 0)
+		})
+
+		mockey.PatchConvey("TestRangeCtxKV-遍历全部", func() {
+			ctx := CtxWithKV(context.Background(), map[string]any{"a": 1, "b": 2})
+			got := map[string]any{}
+			rangeCtxKV(ctx, func(k string, v any) { got[k] = v })
+			c.So(got, c.ShouldResemble, map[string]any{"a": 1, "b": 2})
 		})
 	})
 }
@@ -1239,5 +1258,127 @@ func TestRotateWriterWriteAfterFileGone(t *testing.T) {
 		n, err := w.Write([]byte("x"))
 		c.So(n, c.ShouldEqual, 0)
 		c.So(err, c.ShouldEqual, os.ErrClosed)
+	})
+}
+
+func TestCtxWithKVScope(t *testing.T) {
+	mockey.PatchConvey("TestCtxWithKVScope", t, func() {
+		mockey.PatchConvey("开启后可写入", func() {
+			ctx := CtxWithKVScope(context.Background())
+			AddKV(ctx, "userID", "u-1")
+			c.So(KVFromCtx(ctx)["userID"], c.ShouldEqual, "u-1")
+		})
+
+		mockey.PatchConvey("幂等-重复开启不丢已写入的字段", func() {
+			// 中间件可能被注册多次，重装一个空作用域会把前面写的全清掉
+			ctx := CtxWithKVScope(context.Background())
+			AddKV(ctx, "a", 1)
+
+			ctx2 := CtxWithKVScope(ctx)
+			c.So(ctx2, c.ShouldEqual, ctx) // 原样返回
+			c.So(KVFromCtx(ctx2)["a"], c.ShouldEqual, 1)
+		})
+
+		mockey.PatchConvey("写入对同一 ctx 的所有持有方可见", func() {
+			// 这正是 CtxWithKV 做不到、而访问日志需要的：
+			// 业务函数在调用栈深处拿不到 *gin.Context，没机会回传新 ctx
+			ctx := CtxWithKVScope(context.Background())
+
+			deepInBusinessCode := func(ctx context.Context) { AddKV(ctx, "orderID", "o-9") }
+			deepInBusinessCode(ctx)
+
+			c.So(KVFromCtx(ctx)["orderID"], c.ShouldEqual, "o-9") // 入口处的 ctx 看得到
+		})
+	})
+}
+
+func TestAddKV(t *testing.T) {
+	mockey.PatchConvey("TestAddKV", t, func() {
+		mockey.PatchConvey("同名 key 覆盖", func() {
+			ctx := CtxWithKVScope(context.Background())
+			AddKV(ctx, "k", "old")
+			AddKV(ctx, "k", "new")
+			c.So(KVFromCtx(ctx)["k"], c.ShouldEqual, "new")
+		})
+
+		mockey.PatchConvey("无作用域时丢弃并打日志", func() {
+			// 否则"日志里就是没有这个字段"没有任何线索
+			warned := 0
+			mockey.Mock(xutil.WarnIfEnableDebug).To(func(string, ...any) { warned++ }).Build()
+
+			AddKV(context.Background(), "k", "v")
+			c.So(warned, c.ShouldEqual, 1)
+		})
+
+		mockey.PatchConvey("AddKVs 批量写入", func() {
+			ctx := CtxWithKVScope(context.Background())
+			AddKVs(ctx, map[string]any{"a": 1, "b": 2})
+			c.So(KVFromCtx(ctx), c.ShouldResemble, map[string]any{"a": 1, "b": 2})
+		})
+
+		mockey.PatchConvey("AddKVs 空入参直接返回，不触发告警", func() {
+			warned := 0
+			mockey.Mock(xutil.WarnIfEnableDebug).To(func(string, ...any) { warned++ }).Build()
+
+			AddKVs(context.Background(), nil)
+			AddKVs(context.Background(), map[string]any{})
+			c.So(warned, c.ShouldEqual, 0)
+		})
+
+		mockey.PatchConvey("AddKVs 无作用域时丢弃并打日志", func() {
+			warned := 0
+			mockey.Mock(xutil.WarnIfEnableDebug).To(func(string, ...any) { warned++ }).Build()
+
+			AddKVs(context.Background(), map[string]any{"a": 1})
+			c.So(warned, c.ShouldEqual, 1)
+		})
+	})
+}
+
+func TestCtxWithKVIsDerived(t *testing.T) {
+	mockey.PatchConvey("TestCtxWithKVIsDerived", t, func() {
+		// CtxWithKV 与 CtxWithKVScope 的分工：前者派生快照，写入不影响传入的 ctx
+		mockey.PatchConvey("派生后原 ctx 不受影响", func() {
+			parent := CtxWithKVScope(context.Background())
+			AddKV(parent, "a", 1)
+
+			child := CtxWithKV(parent, map[string]any{"b": 2})
+
+			c.So(KVFromCtx(child), c.ShouldResemble, map[string]any{"a": 1, "b": 2}) // 继承 + 新增
+			c.So(KVFromCtx(parent), c.ShouldResemble, map[string]any{"a": 1})        // 原 ctx 不变
+		})
+
+		mockey.PatchConvey("向派生作用域写入不回流到原 ctx", func() {
+			parent := CtxWithKVScope(context.Background())
+			child := CtxWithKV(parent, nil)
+
+			AddKV(child, "onlyChild", true)
+			c.So(KVFromCtx(child)["onlyChild"], c.ShouldEqual, true)
+			c.So(KVFromCtx(parent), c.ShouldBeEmpty)
+		})
+
+		mockey.PatchConvey("同名 key 以传入的为准", func() {
+			parent := CtxWithKV(context.Background(), map[string]any{"k": "old"})
+			child := CtxWithKV(parent, map[string]any{"k": "new"})
+			c.So(KVFromCtx(child)["k"], c.ShouldEqual, "new")
+		})
+	})
+}
+
+func TestKVScopeConcurrent(t *testing.T) {
+	mockey.PatchConvey("TestKVScopeConcurrent", t, func() {
+		// handler 起协程打日志是常态：写入与日志读取会真并发
+		ctx := CtxWithKVScope(context.Background())
+
+		var wg sync.WaitGroup
+		for i := range 50 {
+			wg.Add(1)
+			go func() { defer wg.Done(); AddKV(ctx, "k"+strconv.Itoa(i), i) }()
+			wg.Add(1)
+			go func() { defer wg.Done(); rangeCtxKV(ctx, func(string, any) {}) }()
+		}
+		wg.Wait()
+
+		c.So(len(KVFromCtx(ctx)), c.ShouldEqual, 50)
 	})
 }

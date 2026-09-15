@@ -132,11 +132,11 @@ func init() {
 
 ```go
 import (
-    _ "github.com/xiaoshicae/xone/v2/xconfig" // 保留层级 -100，最先启动
-    _ "github.com/xiaoshicae/xone/v2/xlog"    // 保留层级 -50，次先启动、最后关闭
-    _ "github.com/xiaoshicae/xone/v2/xtrace"
-    _ "github.com/xiaoshicae/xone/v2/xhttp"
-    _ "github.com/xiaoshicae/xone/v2/xgorm"
+    _ "github.com/xiaoshicae/xone/v3/xconfig" // 保留层级 -100，最先启动
+    _ "github.com/xiaoshicae/xone/v3/xlog"    // 保留层级 -50，次先启动、最后关闭
+    _ "github.com/xiaoshicae/xone/v3/xtrace"
+    _ "github.com/xiaoshicae/xone/v3/xhttp"
+    _ "github.com/xiaoshicae/xone/v3/xgorm"
 )
 ```
 

@@ -8,7 +8,7 @@ import (
 	ut "github.com/go-playground/universal-translator"
 	"github.com/go-playground/validator/v10"
 	zt "github.com/go-playground/validator/v10/translations/zh"
-	"github.com/xiaoshicae/xone/v2/xutil"
+	"github.com/xiaoshicae/xone/v3/xutil"
 )
 
 // RegisterZHTranslations 注册中文翻译器（线程安全，成功后不再重试，失败后允许重试）

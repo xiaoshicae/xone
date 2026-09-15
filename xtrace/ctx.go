@@ -3,7 +3,7 @@ package xtrace
 import (
 	"context"
 
-	"github.com/xiaoshicae/xone/v2/xutil"
+	"github.com/xiaoshicae/xone/v3/xutil"
 
 	oteltrace "go.opentelemetry.io/otel/trace"
 )

@@ -3,10 +3,10 @@ package xcache
 import (
 	"github.com/dgraph-io/ristretto"
 
-	"github.com/xiaoshicae/xone/v2/xconfig"
-	"github.com/xiaoshicae/xone/v2/xerror"
-	"github.com/xiaoshicae/xone/v2/xhook"
-	"github.com/xiaoshicae/xone/v2/xutil"
+	"github.com/xiaoshicae/xone/v3/xconfig"
+	"github.com/xiaoshicae/xone/v3/xerror"
+	"github.com/xiaoshicae/xone/v3/xhook"
+	"github.com/xiaoshicae/xone/v3/xutil"
 )
 
 func init() {

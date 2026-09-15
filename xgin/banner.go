@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/xiaoshicae/xone/v2"
+	"github.com/xiaoshicae/xone/v3"
 )
 
 // PrintBanner 打印 XGin 启动 Banner（青色→紫色渐变）

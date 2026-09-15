@@ -10,7 +10,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/xiaoshicae/xone/v2/xutil"
+	"github.com/xiaoshicae/xone/v3/xutil"
 )
 
 // resetClientMetricState 重置 HTTP client metric 相关全局状态

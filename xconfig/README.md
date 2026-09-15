@@ -247,7 +247,7 @@ sources (low -> high precedence):
   ```go
   package main
 
-  import "github.com/xiaoshicae/xone/v2/xconfig"
+  import "github.com/xiaoshicae/xone/v3/xconfig"
 
   // 字段名有特殊命名方式（驼峰映射成下划线等）时，需要用 tag mapstructure 映射
   type MyConfig struct {

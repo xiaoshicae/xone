@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/xiaoshicae/xone/v2/xutil"
+	"github.com/xiaoshicae/xone/v3/xutil"
 )
 
 // 控制台颜色

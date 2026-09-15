@@ -9,10 +9,10 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/spf13/viper"
 
-	"github.com/xiaoshicae/xone/v2/internal/hookorder"
-	"github.com/xiaoshicae/xone/v2/xerror"
-	"github.com/xiaoshicae/xone/v2/xhook"
-	"github.com/xiaoshicae/xone/v2/xutil"
+	"github.com/xiaoshicae/xone/v3/internal/hookorder"
+	"github.com/xiaoshicae/xone/v3/xerror"
+	"github.com/xiaoshicae/xone/v3/xhook"
+	"github.com/xiaoshicae/xone/v3/xutil"
 )
 
 const (

@@ -9,10 +9,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/xiaoshicae/xone/v2/xerror"
-	"github.com/xiaoshicae/xone/v2/xhook"
-	_ "github.com/xiaoshicae/xone/v2/xtrace" // 默认加载trace
-	"github.com/xiaoshicae/xone/v2/xutil"
+	"github.com/xiaoshicae/xone/v3/xerror"
+	"github.com/xiaoshicae/xone/v3/xhook"
+	_ "github.com/xiaoshicae/xone/v3/xtrace" // 默认加载trace
+	"github.com/xiaoshicae/xone/v3/xutil"
 )
 
 // defaultWaitRunExitTimeout Stop 后等待 Run goroutine 退出的默认超时

@@ -4,7 +4,7 @@ import (
 	"database/sql"
 
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/xiaoshicae/xone/v2/xmetric"
+	"github.com/xiaoshicae/xone/v3/xmetric"
 )
 
 // poolMetric 一个连接池指标的完整定义

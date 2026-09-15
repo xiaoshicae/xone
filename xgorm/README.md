@@ -112,7 +112,7 @@ PG 的 `ReadTimeout` / `WriteTimeout` 协议层无对等概念，**放在 `MySQL
 ### 获取默认客户端
 
 ```go
-import "github.com/xiaoshicae/xone/v2/xgorm"
+import "github.com/xiaoshicae/xone/v3/xgorm"
 
 // 获取默认客户端（单数据库模式或多数据库模式的第一个）
 db := xgorm.C()

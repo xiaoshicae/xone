@@ -5,7 +5,7 @@ xhook 提供 `BeforeStart` 和 `BeforeStop` 两类生命周期钩子，用于管
 ## 快速开始
 
 ```go
-import "github.com/xiaoshicae/xone/v2/xhook"
+import "github.com/xiaoshicae/xone/v3/xhook"
 
 func init() {
     xhook.BeforeStart(initMyModule)

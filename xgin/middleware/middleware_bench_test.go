@@ -11,7 +11,7 @@ import (
 
 	"github.com/bytedance/mockey"
 	"github.com/gin-gonic/gin"
-	"github.com/xiaoshicae/xone/v2/xlog"
+	"github.com/xiaoshicae/xone/v3/xlog"
 )
 
 // 各中间件的热路径基准

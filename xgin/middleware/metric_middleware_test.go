@@ -11,7 +11,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/xiaoshicae/xone/v2/xmetric"
+	"github.com/xiaoshicae/xone/v3/xmetric"
 )
 
 // resetMetricMiddlewareState 重置 metric 中间件全局状态

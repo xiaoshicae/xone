@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/xiaoshicae/xone/v2/xerror"
-	"github.com/xiaoshicae/xone/v2/xutil"
+	"github.com/xiaoshicae/xone/v3/xerror"
+	"github.com/xiaoshicae/xone/v3/xutil"
 )
 
 // 日志文件名的时间后缀格式，按轮转周期选择合适的粒度

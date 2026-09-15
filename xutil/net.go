@@ -3,7 +3,7 @@ package xutil
 import (
 	"net"
 
-	"github.com/xiaoshicae/xone/v2/xerror"
+	"github.com/xiaoshicae/xone/v3/xerror"
 )
 
 // GetLocalIP 获取本机 IP，优先外网 IPv4

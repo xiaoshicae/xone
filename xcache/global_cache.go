@@ -3,7 +3,7 @@ package xcache
 import (
 	"time"
 
-	"github.com/xiaoshicae/xone/v2/xutil"
+	"github.com/xiaoshicae/xone/v3/xutil"
 )
 
 // --- 包级泛型函数，操作全局缓存 ---

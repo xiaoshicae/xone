@@ -4,7 +4,7 @@ import (
 	"os"
 	"regexp"
 
-	"github.com/xiaoshicae/xone/v2/xerror"
+	"github.com/xiaoshicae/xone/v3/xerror"
 )
 
 // 占位符语法，分隔符是 ":"，与 Spring 一致：

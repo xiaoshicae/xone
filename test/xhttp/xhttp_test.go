@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/xiaoshicae/xone/v2/xhttp"
-	"github.com/xiaoshicae/xone/v2/xserver"
-	"github.com/xiaoshicae/xone/v2/xutil"
+	"github.com/xiaoshicae/xone/v3/xhttp"
+	"github.com/xiaoshicae/xone/v3/xserver"
+	"github.com/xiaoshicae/xone/v3/xutil"
 
 	"go.opentelemetry.io/otel/trace"
 	"go.opentelemetry.io/otel/trace/noop"

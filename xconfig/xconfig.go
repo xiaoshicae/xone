@@ -7,8 +7,8 @@ import (
 
 	"github.com/spf13/viper"
 
-	"github.com/xiaoshicae/xone/v2/xerror"
-	"github.com/xiaoshicae/xone/v2/xutil"
+	"github.com/xiaoshicae/xone/v3/xerror"
+	"github.com/xiaoshicae/xone/v3/xutil"
 )
 
 // 最终配置的只读存储。三个变量在 publish 中一次性写入，读取时共用一把锁。

@@ -1,8 +1,8 @@
 package xgin
 
 import (
-	"github.com/xiaoshicae/xone/v2/xconfig"
-	"github.com/xiaoshicae/xone/v2/xutil"
+	"github.com/xiaoshicae/xone/v3/xconfig"
+	"github.com/xiaoshicae/xone/v3/xutil"
 )
 
 const (

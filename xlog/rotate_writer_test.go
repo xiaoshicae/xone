@@ -9,7 +9,7 @@ import (
 
 	"github.com/bytedance/mockey"
 	c "github.com/smartystreets/goconvey/convey"
-	"github.com/xiaoshicae/xone/v2/xutil"
+	"github.com/xiaoshicae/xone/v3/xutil"
 )
 
 // newTestWriter 在新建临时目录中创建写入器并注入可控时间源

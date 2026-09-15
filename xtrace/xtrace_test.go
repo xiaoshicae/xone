@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/xiaoshicae/xone/v2/xconfig"
-	"github.com/xiaoshicae/xone/v2/xutil"
+	"github.com/xiaoshicae/xone/v3/xconfig"
+	"github.com/xiaoshicae/xone/v3/xutil"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/stdout/stdouttrace"

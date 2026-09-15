@@ -257,7 +257,7 @@ func TestGetHandlerSimpleName(t *testing.T) {
 			expected: "Method",
 		},
 		{
-			input:    "github.com/xiaoshicae/xone/v2/xgin/middleware.Log.func1",
+			input:    "github.com/xiaoshicae/xone/v3/xgin/middleware.Log.func1",
 			expected: "Log",
 		},
 		{

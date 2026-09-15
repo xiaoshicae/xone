@@ -9,8 +9,8 @@ import (
 
 	"go.yaml.in/yaml/v3"
 
-	"github.com/xiaoshicae/xone/v2/xerror"
-	"github.com/xiaoshicae/xone/v2/xutil"
+	"github.com/xiaoshicae/xone/v3/xerror"
+	"github.com/xiaoshicae/xone/v3/xutil"
 )
 
 const (

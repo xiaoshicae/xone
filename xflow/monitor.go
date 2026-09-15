@@ -5,8 +5,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/xiaoshicae/xone/v2/xlog"
-	"github.com/xiaoshicae/xone/v2/xutil"
+	"github.com/xiaoshicae/xone/v3/xlog"
+	"github.com/xiaoshicae/xone/v3/xutil"
 )
 
 // StepEvent 单步执行事件（Process / Rollback 共用）

@@ -110,7 +110,7 @@ func closeX{模块名}() error {
 - 内部 debug 日志使用 `xutil.InfoIfEnableDebug()` / `xutil.WarnIfEnableDebug()` / `xutil.ErrorIfEnableDebug()`
 - 正式日志记录使用 `xlog.Info(ctx, ...)` / `xlog.Warn(ctx, ...)` / `xlog.Error(ctx, ...)`，必须传递 context
 - 如需链路追踪，检查 `xtrace.TraceEnabled()`
-- import 路径使用 v2：`github.com/xiaoshicae/xone/v3/x{模块名}`
+- import 路径使用 v3：`github.com/xiaoshicae/xone/v3/x{模块名}`
 - 测试使用 mockey + goconvey，需要 `-gcflags="all=-N -l"`
 - 配置默认值需要考虑生产级别的最佳实践：
   - 如果三方库对零值有合理的默认处理（如 go-redis 的 PoolSize=0 → 10*GOMAXPROCS），应优先让三方库自身处理，不要在 `configMergeDefault` 中硬编码一个可能偏小的值

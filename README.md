@@ -26,7 +26,7 @@ Go >= 1.25
 go get github.com/xiaoshicae/xone/v3
 ```
 
-> 模块路径带 `/v2`，所有 import 也必须带，例如 `github.com/xiaoshicae/xone/v3/xlog`。
+> 模块路径带 `/v3`，所有 import 也必须带，例如 `github.com/xiaoshicae/xone/v3/xlog`。
 
 ### 2. 创建配置文件
 

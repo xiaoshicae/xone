@@ -88,7 +88,7 @@ func main() {
 | [xmetric](./xmetric/README.md) | [prometheus](https://github.com/prometheus/client_golang)           | Prometheus 指标采集（打点 + /metrics 端点） | -   | -     |
 | [xflow](./xflow/README.md)     | -                                                                   | 流程编排（强弱依赖 + 自动回滚 + 监控）           | -   | -     |
 | [xhttp](./xhttp/README.md)     | [go-resty](https://github.com/go-resty/resty)                       | HTTP 客户端（重试 + 连接池 + 出站指标）        | -   | ✅     |
-| [xgorm](./xgorm/README.md)     | [gorm](https://gorm.io/)                                            | 数据库（MySQL / PostgreSQL，多数据源）     | ✅   | ✅     |
+| [xgorm](./xgorm/README.md)     | [gorm](https://gorm.io/)                                            | 数据库（MySQL / PostgreSQL，多数据源 + 连接池指标） | ✅   | ✅     |
 | [xredis](./xredis/README.md)   | [go-redis](https://github.com/redis/go-redis)                       | Redis（多实例 + 连接池指标）               | -   | ✅     |
 | [xcache](./xcache/README.md)   | [ristretto](https://github.com/dgraph-io/ristretto)                 | 本地缓存（TTL + 泛型）                   | -   | -     |
 | [xserver](./xserver/README.md) | -                                                                   | 服务运行与生命周期管理                      | -   | -     |

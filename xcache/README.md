@@ -42,20 +42,6 @@ xcache.SetWithTTL("session:abc", token, time.Hour)
 xcache.Del("user:123")
 ```
 
-### TypedCache 类型安全封装
-
-```go
-// 创建类型安全的缓存视图
-userCache := xcache.Of[*User]()
-userCache.Set("user:123", user)
-user, ok := userCache.Get("user:123") // 直接返回 *User，无需断言
-
-// 多实例 + 类型安全
-productCache := xcache.Of[*Product]("product-cache")
-productCache.Set("product:456", product)
-product, ok := productCache.Get("product:456")
-```
-
 ### 原始 Cache API
 
 ```go
@@ -109,6 +95,7 @@ defaultCache := xcache.C()
 | `Del(key)` | 删除 |
 | `Clear()` | 清空 |
 | `Wait()` | 等待缓冲写入完成（ristretto 是环形缓冲，Set 后不一定立即可读，主要用于测试） |
+| `Has(name...) bool` | 指定名称的缓存实例是否已配置，供可选依赖判断，避免 `C()` panic |
 
 需要操作具名实例时用 `C("name")` 取到 `*Cache`，方法名与上表一致。
 
@@ -140,18 +127,16 @@ XOne xcache: no cache found for name=[typo], configured=[hot cold]
 
 ## 注意事项
 
-- ristretto 内部使用环形缓冲区，`Set` 后值不一定立即可通过 `Get` 读取。在测试场景下可调用 `Wait()` 确保写入完成，生产环境下通常无需关注。
-- `Set` 方法默认 cost=1，此时 `MaxCost` 等价于最大缓存条目数。如需按实际大小淘汰，请使用 `SetWithCost` 或 `SetWithCostAndTTL`。
-- `NumCounters` 建议设置为期望缓存条目数量的 10 倍，以获得最佳的频率追踪效果。
-- 泛型 `Get[V]` 在类型不匹配时返回零值和 `false`，不会 panic。
+- ristretto 内部使用环形缓冲区，`Set` 后值不一定立即可通过 `Get` 读取。测试场景下调用 `Wait()` 确保写入完成，生产环境通常无需关注。
+- `Set` 默认 cost=1，此时 `MaxCost` 等价于最大缓存条目数。需要按实际大小淘汰用 `SetWithCost` / `SetWithCostAndTTL`。
+- `NumCounters` 建议设为期望缓存条目数的 10 倍，以获得最佳的频率追踪效果。
 
-## 注意事项
+**类型不匹配表现为永久 miss。** `Get[V]` 在类型不匹配时返回零值与 `false`，
+与 cache miss 的返回值完全相同 —— 存的是 `*User` 却用 `Get[User]` 取，
+表现就是「明明 Set 了却永远读不到」。这种情况会额外打一条 warn 日志，排查时先看它。
+不会 panic。
 
-`Get[V]` 在类型不匹配时返回零值与 `false`，与 cache miss 的返回值完全相同 ——
-存的是 `*User` 却用 `Get[User]` 取，表现就是「明明 Set 了却永远 miss」。
-这种情况会额外打一条 warn 日志，排查时先看它。
-
-模块关闭（BeforeStop）之后，`global()` 不再懒初始化新实例，包级的
-`Get` / `Set` / `Del` 安全返回零值。否则新建的缓存再也不会有人来关，等于永久泄漏 ——
+**模块关闭后包级函数安全降级。** BeforeStop 之后不再懒初始化新实例，包级的
+`Get` / `Set` / `Del` 返回零值。否则新建的缓存再也不会有人来关，等于永久泄漏 ——
 用户自己的 BeforeStop hook 在 xcache 之后执行（同为默认 Order，按 LIFO 反序），
 里面读一次缓存就会触发。

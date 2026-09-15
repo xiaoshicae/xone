@@ -151,11 +151,11 @@ func (h *xHandler) Handle(ctx context.Context, r slog.Record) error {
 	)
 	out.AddAttrs(h.attrs...)
 
-	for k, v := range getXLogContainerFromCtx(ctx) {
+	rangeCtxKV(ctx, func(k string, v any) {
 		if !isReservedField(k) {
 			out.AddAttrs(slog.Any(k, v))
 		}
-	}
+	})
 	// 顺带取出 panic 栈，避免控制台输出时再遍历一次
 	var panicStack string
 	r.Attrs(func(a slog.Attr) bool {
@@ -353,15 +353,4 @@ func callerPretty(f *runtime.Frame) string {
 		return "???"
 	}
 	return fmt.Sprintf("%s:%d", path.Base(f.File), f.Line)
-}
-
-func getXLogContainerFromCtx(ctx context.Context) map[string]any {
-	if ctx == nil {
-		return nil
-	}
-	kvContainer, ok := ctx.Value(xLogCtxKVContainerKey).(map[string]any)
-	if !ok || kvContainer == nil {
-		return nil
-	}
-	return kvContainer
 }

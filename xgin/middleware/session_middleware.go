@@ -5,12 +5,16 @@ import (
 	"github.com/xiaoshicae/xone/v2/xlog"
 )
 
-// Session session中间件
-// 提前注入一些请求上下文(log上下文容器等，保证日志kv tag能从一开始就初始化好，后续能在整个请求带下去)
+// Session 请求入口中间件，为本次请求开启日志 KV 作用域
+//
+// 装上作用域之后，业务代码在任意调用层级都可以用 xlog.AddKV(ctx, ...) 补充字段，
+// 无需把新 context 逐层回传——调用栈深处拿不到 *gin.Context，本来也没机会回传。
+// 写入对整条请求可见，因此 Log 中间件在 c.Next() 之后打的访问日志也会带上这些字段。
+//
+// 必须排在所有中间件最前面：在它之后才有作用域可写。
 func Session() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		ctx := c.Request.Context()
-		ctx = xlog.CtxWithKV(ctx, nil)
+		ctx := xlog.CtxWithKVScope(c.Request.Context())
 		c.Request = c.Request.WithContext(ctx)
 
 		c.Next() // 继续处理

@@ -3,7 +3,7 @@
 ### 1. 模块简介
 
 * 对 [Gin](https://github.com/gin-gonic/gin) 进行了封装，提供 Builder 模式构建 Web 服务
-* 内置中间件：日志（Log）、链路追踪（Trace）、异常恢复（Recover）、会话（Session）、指标采集（Metric）
+* 内置中间件：日志（Log）、链路追踪（Trace）、异常恢复（Recover）、请求上下文（Session）、指标采集（Metric）
 * 支持 HTTP/2 (H2C) 和 TLS (HTTPS)
 * 集成 [Swagger](https://github.com/swaggo/gin-swagger) 文档
 * 支持中文验证错误翻译
@@ -155,11 +155,23 @@ XGin:
 
 | 中间件     | 说明                                  | 默认   |
 |---------|-------------------------------------|------|
-| Session | 注入请求会话信息                            | 始终启用 |
+| Session | 开启请求级日志 KV 作用域，供 `xlog.AddKV` 写入        | 始终启用 |
 | Trace   | 链路追踪，生成 TraceID                     | 默认启用 |
 | Recover | panic 恢复，防止服务崩溃                     | 始终启用 |
 | Log     | 请求/响应日志记录                           | 默认启用 |
 | Metric  | Prometheus 入站请求指标（请求数 + 耗时），需配合 xmetric | 默认启用 |
+
+Session 中间件开启的 KV 作用域，让业务代码可以在任意调用层级往本次请求的日志里加字段：
+
+```go
+func settleOrder(ctx context.Context, o *Order) error {
+    xlog.AddKV(ctx, "orderID", o.ID) // 只需要 ctx，不必回传
+    ...
+}
+```
+
+`orderID` 会出现在这次请求之后的每一行日志里，包括请求结束时 Log 中间件打的访问日志。
+详见 [xlog 的请求级 KV](../xlog/README.md#请求级-kv作用域--addkv)。
 
 Metric 中间件采集指标：
 - `http_requests_total{method, path, status}` — 入站请求总数

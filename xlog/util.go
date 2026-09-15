@@ -15,13 +15,6 @@ import (
 // xlog.Info(ctx, "order created", xlog.KV("orderId", "1"))
 var sprintf = fmt.Sprintf
 
-// ctxKVContainerKey xlog 注入 context 的 KV 容器 key 类型
-// 使用私有类型而非字符串常量，避免与其他包的 context key 发生冲突
-type ctxKVContainerKey struct{}
-
-// xLogCtxKVContainerKey KV 容器在 context 中的 key
-var xLogCtxKVContainerKey = ctxKVContainerKey{}
-
 func Error(ctx context.Context, msg string, args ...any) {
 	RawLog(ctx, ErrorLevel, msg, args...)
 }
@@ -87,44 +80,6 @@ func RawLog(ctx context.Context, level Level, msg string, args ...any) {
 		r.AddAttrs(slog.Any(k, v))
 	}
 	_ = h.Handle(ctx, r)
-}
-
-// CtxWithKV 向ctx注入kv，在记录日志时会以json格式同时记录下来
-// 每次调用都会创建新的map副本，保证并发安全
-func CtxWithKV(ctx context.Context, kvs map[string]any) context.Context {
-	kvContainer, ok := ctx.Value(xLogCtxKVContainerKey).(map[string]any)
-	if !ok || kvContainer == nil {
-		// 创建副本避免外部修改影响
-		newKvs := make(map[string]any, len(kvs))
-		for k, v := range kvs {
-			newKvs[k] = v
-		}
-		return context.WithValue(ctx, xLogCtxKVContainerKey, newKvs)
-	}
-
-	// 合并已有的和新的kv，创建新map保证并发安全
-	newContainer := make(map[string]any, len(kvContainer)+len(kvs))
-	for k, v := range kvContainer {
-		newContainer[k] = v
-	}
-	for k, v := range kvs {
-		newContainer[k] = v
-	}
-	return context.WithValue(ctx, xLogCtxKVContainerKey, newContainer)
-}
-
-// KVFromCtx 返回 context 中已注入的 KV 副本
-// 未注入过任何 KV 容器时返回 nil；返回副本避免调用方修改影响后续日志
-func KVFromCtx(ctx context.Context) map[string]any {
-	kvContainer := getXLogContainerFromCtx(ctx)
-	if kvContainer == nil {
-		return nil
-	}
-	out := make(map[string]any, len(kvContainer))
-	for k, v := range kvContainer {
-		out[k] = v
-	}
-	return out
 }
 
 // Handler 返回当前生效的 slog.Handler

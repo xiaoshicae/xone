@@ -63,7 +63,7 @@ func TestLogger_SQLAsStructuredFields(t *testing.T) {
 	if got[0]["sql"] != "SELECT * FROM users WHERE id = ?" {
 		t.Errorf("SQL 应是独立字段，got=%v", got[0])
 	}
-	if got[0]["elapsed"] == nil || got[0]["rows_affected"] != float64(1) {
+	if got[0]["elapsed_ms"] == nil || got[0]["rows_affected"] != float64(1) {
 		t.Errorf("耗时和行数也该是字段，got=%v", got[0])
 	}
 }
@@ -78,8 +78,12 @@ func TestLogger_SlowQueryLogsWarn(t *testing.T) {
 	if len(got) != 1 || got[0]["level"] != "WARN" {
 		t.Fatalf("超过阈值应记 warn，got=%v", got)
 	}
-	if got[0]["threshold"] == nil {
-		t.Errorf("该带上阈值，否则看不出为什么算慢，got=%v", got[0])
+	// 两个都是毫秒：慢了 1s、阈值 10ms
+	if got[0]["threshold_ms"] != float64(10) {
+		t.Errorf("该带上毫秒的阈值，否则看不出为什么算慢，got=%v", got[0])
+	}
+	if ms, _ := got[0]["elapsed_ms"].(float64); ms < 1000 || ms > 2000 {
+		t.Errorf("elapsed_ms 该是毫秒（约 1000），got=%v", got[0]["elapsed_ms"])
 	}
 }
 

@@ -87,10 +87,22 @@ mutate("跳过日志的路径读的是配置", "xgin/xgin.go", "./xgin", "TestLo
 # 接反了的话，只开了请求体的人，响应体（可能带着令牌）进了日志
 mutate("请求体和响应体的开关各管各的", "xgin/xgin.go", "./xgin", "TestLogBody",
        swap('middleware.WithBody(c.LogRequestBody, c.LogResponseBody)', 'middleware.WithBody(c.LogResponseBody, c.LogRequestBody)'))
+# 开关各自接到对应的选项上：接成 true 就是默认把查询串、Authorization、Set-Cookie 写进日志
+mutate("查询串的开关读的是配置", "xgin/xgin.go", "./xgin", "TestLogQueryAndHeaders",
+       swap('middleware.WithQuery(c.LogQuery)', 'middleware.WithQuery(true)'))
+mutate("请求头和响应头的开关各管各的", "xgin/xgin.go", "./xgin", "TestLogQueryAndHeaders",
+       swap('middleware.WithHeaders(c.LogRequestHeaders, c.LogResponseHeaders)', 'middleware.WithHeaders(c.LogResponseHeaders, c.LogRequestHeaders)'))
 mutate("中文翻译的开关读的是配置", "xgin/xgin.go", "./xgin", "TestZHTranslations",
        swap('\t\tif c.ZHTranslations {', '\t\tif false {'))
 mutate("查询串不进访问日志", "xgin/middleware/log.go", "./xgin", "TestLog",
        swap('slog.String("path", c.Request.URL.Path),', 'slog.String("path", c.Request.URL.RequestURI()),'))
+# 开了 LogQuery 也得逐字段遮：?access_token= 原样进日志就是凭证落盘
+mutate("记下的查询串脱过敏", "xgin/middleware/log.go", "./xgin", "TestLog_Query",
+       swap('slog.String("query", redactForm(c.Request.URL.RawQuery))', 'slog.String("query", c.Request.URL.RawQuery)'))
+mutate("记下的请求头脱过敏", "xgin/middleware/log.go", "./xgin", "TestLog_RedactsRequestHeaders",
+       swap('Value: RedactHeaders(c.Request.Header)}', 'Value: slog.AnyValue(c.Request.Header)}'))
+mutate("记下的响应头脱过敏", "xgin/middleware/log.go", "./xgin", "TestLog_ResponseHeaders",
+       swap('Value: RedactHeaders(c.Writer.Header())}', 'Value: slog.AnyValue(c.Writer.Header())}'))
 mutate("请求体只缓存前缀", "xgin/middleware/log.go", "./xgin", "TestSnapshotBody",
        swap('io.ReadAll(io.LimitReader(req.Body, maxRequestBody))','io.ReadAll(req.Body)',1))
 mutate("预读时的错误接回下游", "xgin/middleware/log.go", "./xgin", "TestSnapshotBody",
@@ -200,3 +212,15 @@ section("链路")
 # 全局的 TracerProvider 就一直是 noop：Span 什么都不记、日志没有 trace_id，而且没有任何报错
 mutate("用了 xgin 不另外 import xtrace 也有链路", "xgin/xgin.go", "./xgin", "TestTracingWorksWithoutImportingXtrace",
        swap('\t_ "github.com/xiaoshicae/xone/xtrace"\n', ''))
+
+section("访问日志的字段")
+# slog 的 JSON 把 Duration 写成纳秒整数：字段叫 elapsed_ms、值却是纳秒的话，照毫秒配的告警差出一百万倍
+mutate("访问日志的耗时是毫秒", "xgin/middleware/log.go", "./xgin", "TestLog_ElapsedIsMilliseconds",
+       swap('slog.Float64("elapsed_ms", millis(elapsed))', 'slog.Float64("elapsed_ms", float64(elapsed))'))
+# 没匹配上路由时填真实路径，日志里分不出 /nope 是路由还是 404，也和指标、Span 对不上
+# gin 在没写响应体时 Size() 返回 -1：原样记下来，204 看着像出了错，按 bytes_out 求和还会少算
+mutate("没写响应体时 bytes_out 记 0", "xgin/middleware/log.go", "./xgin", "TestLog_BytesOut",
+       swap('slog.Int("bytes_out", max(c.Writer.Size(), 0))', 'slog.Int("bytes_out", c.Writer.Size())'))
+mutate("访问日志里没匹配上的路由记 unmatched", "xgin/middleware/log.go", "./xgin", "TestLog_UnmatchedRouteIsUnmatched",
+       swap('\t\t\t\troute = "unmatched"\n\t\t\t}\n\n\t\t\t// 直接给', '\t\t\t\troute = c.Request.URL.Path\n\t\t\t}\n\n\t\t\t// 直接给'))
+

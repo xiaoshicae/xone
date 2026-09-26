@@ -76,8 +76,9 @@ func sdkTracing(b *testing.B) {
 //	                 noop               SDK采样
 //	1_只LogScope     1.06µs  12 allocs  （不含 Trace，同一个数）
 //	2_加Trace        2.0µs   22 allocs  4.7µs  29 allocs
-//	5_全量           5.4µs   33 allocs  9.4µs  40 allocs
+//	5_全量           6.6µs   28 allocs  12.4µs 35 allocs
 //
+// 访问日志默认记 host、proto、user_agent、bytes_in、bytes_out 这五项，实测 +1.2µs、不多分配。
 // Trace 这一项 noop 下 +0.9µs，真实 SDK 下 +3.6µs，约 4 倍。真实进程里还有
 // b3 / 透传 Header 的 Extract、Span 攒批导出和多核争用，e2e 量到的 +7–10µs 比这里再高一些
 func runChain(b *testing.B, mw ...gin.HandlerFunc) {

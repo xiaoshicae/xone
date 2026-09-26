@@ -28,6 +28,9 @@ type logOptions struct {
 	skipPrefix []string
 	reqBody    bool
 	respBody   bool
+	query      bool
+	reqHeader  bool
+	respHeader bool
 }
 
 // WithSkipPaths 指定不记访问日志的路径。
@@ -52,6 +55,20 @@ func WithSkipPaths(paths ...string) LogOption {
 // 需要排查时再打开，并确认脱敏字段配全了。
 func WithBody(request, response bool) LogOption {
 	return func(o *logOptions) { o.reqBody, o.respBody = request, response }
+}
+
+// WithQuery 是否记录查询串。默认不记：查询串里常有凭证（?token=、签名、OAuth 的 code）。
+// 打开后按字段脱敏，规则同表单 body。
+func WithQuery(on bool) LogOption {
+	return func(o *logOptions) { o.query = on }
+}
+
+// WithHeaders 是否记录请求头和响应头。默认都不记。
+//
+// 打开后凭证类的值遮掉：Authorization、Cookie、Set-Cookie 等名单里的，
+// 名字带敏感词的（X-Csrf-Token），值是 URL 的去掉查询串（Referer）。
+func WithHeaders(request, response bool) LogOption {
+	return func(o *logOptions) { o.reqHeader, o.respHeader = request, response }
 }
 
 // writerPool 复用截响应用的 writer
@@ -121,9 +138,11 @@ func Log(opts ...LogOption) gin.HandlerFunc {
 		defer func() {
 			elapsed := time.Since(start)
 
+			// 没匹配上路由时和指标、Span 一样记 unmatched：填真实路径的话，
+			// 日志里分不出 /nope 是一个路由还是一次 404。真实路径在 path 里
 			route := c.FullPath()
 			if route == "" {
-				route = c.Request.URL.Path
+				route = "unmatched"
 			}
 
 			// 直接给 slog.Attr，不给交替的 key、value：后者每个值都要先装进 any
@@ -136,9 +155,28 @@ func Log(opts ...LogOption) gin.HandlerFunc {
 				// 都像是「把日志记全一点」，实际是把凭证明文写进日志
 				slog.String("path", c.Request.URL.Path),
 				slog.Int("status", status(c)),
-				slog.Duration("elapsed", elapsed),
+				// 字段名带单位：slog 的 JSON 把 Duration 写成纳秒整数，51130 看不出是 51µs。
+				// 浮点在 slog 的 JSON 里走 json.Marshal，实测每条多 2 次分配、约 0.5µs——
+				// 换成整数微秒能省掉，但日志是给人读的，毫秒更顺手
+				slog.Float64("elapsed_ms", millis(elapsed)),
 				slog.String("client_ip", c.ClientIP()),
-				{Key: "request_headers", Value: RedactHeaders(c.Request.Header)}, // 已是 slog.Value，slog.Any 会再装一次箱
+				slog.String("host", c.Request.Host),
+				slog.String("proto", c.Request.Proto),
+				slog.String("user_agent", c.Request.UserAgent()),
+				// 请求头里的 Content-Length；分块上传时没有，记 -1，和 net/http 的约定一致
+				slog.Int64("bytes_in", c.Request.ContentLength),
+				// 写出的响应体字节数，不含响应头；一个字节都没写时 gin 给的是 -1，记成 0
+				slog.Int("bytes_out", max(c.Writer.Size(), 0)),
+			}
+			if o.reqHeader {
+				// 已是 slog.Value，slog.Any 会再装一次箱
+				attrs = append(attrs, slog.Attr{Key: "request_headers", Value: RedactHeaders(c.Request.Header)})
+			}
+			if o.query && c.Request.URL.RawQuery != "" {
+				attrs = append(attrs, slog.String("query", redactForm(c.Request.URL.RawQuery)))
+			}
+			if o.respHeader {
+				attrs = append(attrs, slog.Attr{Key: "response_headers", Value: RedactHeaders(c.Writer.Header())})
 			}
 			if o.reqBody {
 				attrs = append(attrs, slog.String("request_body", RedactBody(reqBody, c.Request.Header.Get("Content-Type"))))
@@ -261,3 +299,6 @@ func (b *prefixedBody) Read(p []byte) (int, error) {
 }
 
 func (b *prefixedBody) Close() error { return b.rest.Close() }
+
+// millis 耗时换成毫秒，保留到微秒
+func millis(d time.Duration) float64 { return float64(d.Microseconds()) / 1000 }

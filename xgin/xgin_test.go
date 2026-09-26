@@ -150,8 +150,8 @@ func TestConfig_Defaults(t *testing.T) {
 	if !c.Log || !c.Trace || !c.Metric {
 		t.Errorf("三个内置中间件默认都该开着，got=%+v", c)
 	}
-	if c.LogRequestBody || c.LogResponseBody || c.ZHTranslations {
-		t.Errorf("记 body 和中文翻译默认都该关着（代价和风险都不小），got=%+v", c)
+	if c.LogRequestBody || c.LogResponseBody || c.LogQuery || c.LogRequestHeaders || c.LogResponseHeaders || c.ZHTranslations {
+		t.Errorf("记 body、查询串、请求头、响应头和中文翻译默认都该关着（代价和风险都不小），got=%+v", c)
 	}
 	if c.MetricPath != "/metrics" {
 		t.Errorf("指标路径默认应为 /metrics，got=%q", c.MetricPath)
@@ -471,6 +471,49 @@ func TestLogBody_TogglesAreIndependent(t *testing.T) {
 		}
 		if got := strings.Contains(out, "response_body") && strings.Contains(out, "hi-bob"); got != c.resp {
 			t.Errorf("%s：响应体进了日志=%v，want %v\n%s", c.name, got, c.resp, out)
+		}
+	}
+}
+
+func TestLogQueryAndHeaders_TogglesReachMiddleware(t *testing.T) {
+	// 三个开关各自一路传到 middleware.Log：接反了或接成常量，关着的那项照样进日志
+	for _, c := range []struct {
+		name                string
+		query, reqH, header bool
+	}{
+		{"只记查询串", true, false, false},
+		{"只记请求头", false, true, false},
+		{"只记响应头", false, false, true},
+		{"默认都不记", false, false, false},
+	} {
+		buf := captureLog(t)
+		e := New().WithConfig(configWith(func(cfg *Config) {
+			cfg.Metric, cfg.Trace = false, false
+			cfg.LogQuery, cfg.LogRequestHeaders, cfg.LogResponseHeaders = c.query, c.reqH, c.header
+		})).WithRoutes(func(e *gin.Engine) {
+			e.GET("/search", func(c *gin.Context) {
+				c.Header("X-Page-Total", "7")
+				c.Header("Set-Cookie", "sid=abc123")
+				c.Status(200)
+			})
+		}).Engine()
+		req := httptest.NewRequest("GET", "/search?page=2&token=t0p", nil)
+		req.Header.Set("X-Visible", "keep-me")
+		req.Header.Set("Authorization", "Bearer h0rse")
+		e.ServeHTTP(httptest.NewRecorder(), req)
+
+		out := buf.String()
+		if got := strings.Contains(out, `"query":"page=2`); got != c.query {
+			t.Errorf("%s：查询串进了日志=%v，want %v\n%s", c.name, got, c.query, out)
+		}
+		if got := strings.Contains(out, "request_headers") && strings.Contains(out, "keep-me"); got != c.reqH {
+			t.Errorf("%s：请求头进了日志=%v，want %v\n%s", c.name, got, c.reqH, out)
+		}
+		if got := strings.Contains(out, "response_headers") && strings.Contains(out, "X-Page-Total"); got != c.header {
+			t.Errorf("%s：响应头进了日志=%v，want %v\n%s", c.name, got, c.header, out)
+		}
+		if strings.Contains(out, "t0p") || strings.Contains(out, "h0rse") || strings.Contains(out, "abc123") {
+			t.Errorf("%s：查询串里的 token、Authorization、Set-Cookie 该被遮掉\n%s", c.name, out)
 		}
 	}
 }

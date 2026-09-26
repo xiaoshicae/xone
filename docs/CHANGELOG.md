@@ -8,6 +8,26 @@
 
 ## [未发布]
 
+### 不兼容变更
+
+- xgin 访问日志默认不再记请求头（字段 `request_headers`），和查询串、body、响应头一样由开关控制。
+  迁移：要保留原来的输出，配 `XGin.LogRequestHeaders: true`；直接用 `middleware.Log` 的，加 `middleware.WithHeaders(true, false)`。
+
+### 新增
+
+- xgin 访问日志可以记查询串和响应头：`XGin.LogQuery: true` 加字段 `query`（逐字段脱敏），
+  `XGin.LogResponseHeaders: true` 加字段 `response_headers`（`Set-Cookie` 等凭证类脱敏）。默认都关。
+- xgin 访问日志默认多记五个字段：`host`、`proto`、`user_agent`、`bytes_in`（请求的 `Content-Length`，分块上传是 `-1`）、
+  `bytes_out`（响应体字节数）。实测每个请求多约 1µs，不多分配。
+  词表里没有的敏感参数名（比如 OAuth 的 `code`）用 `middleware.AddSensitiveFields` 补上。
+
+### 修复
+
+- 日志里的耗时带上单位：xgin 访问日志、xgorm 的 SQL 日志、xflow 的流程 / 步骤日志的 `elapsed` 改名为 `elapsed_ms`，
+  值是毫秒（保留到微秒，如 `0.051`）；xgorm 慢查询的 `threshold` 改名为 `threshold_ms`。原来 JSON 里是没有单位的纳秒整数。
+  迁移：日志平台里按 `elapsed` / `threshold` 查询、告警、做看板的，换成新字段名，阈值按毫秒写。
+- xgin 访问日志里没匹配上路由的请求，`route` 记成 `unmatched`，和指标、Span 一致；原来填的是请求路径，分不出是路由还是 404。
+
 ## [v1.10.0] - 2026-09-26
 
 首个版本。所有模块同时发布、共用这个版本号。

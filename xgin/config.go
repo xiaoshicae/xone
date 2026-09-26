@@ -137,6 +137,24 @@ type Config struct {
 	// LogResponseBody 是否把响应体记进访问日志。默认不记。
 	LogResponseBody bool `yaml:"LogResponseBody"`
 
+	// LogQuery 是否把查询串记进访问日志（字段 query）。默认不记。
+	//
+	// 查询串里常有凭证：GET /login?token=...、签名链接、OAuth 回调的 code。
+	// 打开后按字段脱敏，规则同表单 body；词表里没有的名字（比如 code）照样明文，
+	// 用 middleware.AddSensitiveFields 补上。
+	LogQuery bool `yaml:"LogQuery"`
+
+	// LogRequestHeaders 是否把请求头记进访问日志（字段 request_headers）。默认不记。
+	//
+	// 打开后凭证类的值遮掉：Authorization、Cookie、X-Api-Key 等名单里的、名字带敏感词的；
+	// 值是 URL 的（Referer）去掉查询串。名单外的业务头用 middleware.AddSensitiveHeaders 补上。
+	LogRequestHeaders bool `yaml:"LogRequestHeaders"`
+
+	// LogResponseHeaders 是否把响应头记进访问日志（字段 response_headers）。默认不记。
+	//
+	// 脱敏规则同请求头：Set-Cookie 等名单里的、名字带敏感词的，值都遮掉。
+	LogResponseHeaders bool `yaml:"LogResponseHeaders"`
+
 	// Trace 是否为入站请求开服务端 Span。默认启用。
 	//
 	// 只管 Span。关掉之后照样接上游传来的 traceparent、baggage 和透传 Header

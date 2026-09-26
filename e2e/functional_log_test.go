@@ -9,6 +9,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
+	"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -21,18 +22,18 @@ import (
 const redacted = "***REDACTED***"
 
 // 访问日志一条请求一行 JSON，字段以 xgin/middleware/log.go 为准：
-// method、route、path、status、elapsed、client_ip、request_headers，外加 xtrace 注入的 trace_id / span_id。
+// method、route、path、status、elapsed_ms、client_ip，外加 xtrace 注入的 trace_id / span_id。
 // 业务日志（slog.InfoContext）和访问日志在同一条链路上，trace_id 相同、且就是 Span 的 trace_id
 func TestFunctional_AccessLogFieldsComplete_TraceIDSharedWithAppLogAndSpan(t *testing.T) {
 	harness.Require(t)
 	t.Parallel()
 
-	// 下面要核对「body 日志默认不记」这个框架默认值：service/application.yml 没写这两项，读到的就是 xgin.DefaultConfig
+	// 下面要核对「查询串、头、body 默认不记」这个框架默认值：service/application.yml 没写这几项，读到的就是 xgin.DefaultConfig
 	p := harness.Start(t, harness.Options{Spans: true})
 
 	start := time.Now()
 	r := p.PostJSON(t, "/users", map[string]string{"name": "logan", "email": "logan@example.com"},
-		"X-Forwarded-For", "203.0.113.9", "X-Visible", "keep-me")
+		"X-Forwarded-For", "203.0.113.9")
 	rtt := time.Since(start)
 	var u user
 	r.JSON(t, &u)
@@ -43,18 +44,28 @@ func TestFunctional_AccessLogFieldsComplete_TraceIDSharedWithAppLogAndSpan(t *te
 		for k, want := range map[string]string{
 			"level": "INFO", "method": "POST", "route": "/users", "path": "/users", "status": "201",
 			// xgin/README.md XGin.TrustedProxies：默认信私有网段，本机发来的 X-Forwarded-For 被认，client_ip 是它里面的地址
-			"client_ip":                    "203.0.113.9",
-			"request_headers.X-Visible":    "keep-me",
-			"request_headers.Content-Type": "application/json",
+			"client_ip": "203.0.113.9",
+			"proto":     "HTTP/1.1",
 		} {
 			if got := al.Str(k); got != want {
 				t.Errorf("访问日志 %s 应是 %q，实际 %q\n%s", k, want, got, al.Line)
 			}
 		}
-		// slog 的 JSON 把 Duration 写成纳秒整数
-		el, ok := num(al, "elapsed")
-		if !ok || el <= 0 || time.Duration(el) > rtt {
-			t.Errorf("elapsed 应是 (0, 客户端往返 %v] 之间的纳秒数，实际 %v", rtt, al.Str("elapsed"))
+		// xgin/README.md：host、user_agent 原样；bytes_in 是请求的 Content-Length，bytes_out 是响应体字节数
+		if al.Str("host") == "" || al.Str("user_agent") == "" {
+			t.Errorf("访问日志应带 host 和 user_agent，实际 %s", al.Line)
+		}
+		if in, _ := num(al, "bytes_in"); in <= 0 {
+			t.Errorf("POST /users 带 JSON 请求体，bytes_in 应 > 0，实际 %s", al.Line)
+		}
+		if out, _ := num(al, "bytes_out"); int(out) != len(r.Body) {
+			t.Errorf("bytes_out 应等于响应体长度 %d，实际 %v", len(r.Body), al.Str("bytes_out"))
+		}
+		// xgin/README.md：elapsed_ms 是毫秒，保留到微秒
+		el, ok := num(al, "elapsed_ms")
+		elapsed := time.Duration(el * float64(time.Millisecond))
+		if !ok || el <= 0 || elapsed > rtt {
+			t.Errorf("elapsed_ms 应是 (0, 客户端往返 %v] 之间的毫秒数，实际 %v", rtt, al.Str("elapsed_ms"))
 		}
 		if _, err := time.Parse(time.RFC3339Nano, al.Str("time")); err != nil {
 			t.Errorf("time 应是 RFC3339，实际 %q", al.Str("time"))
@@ -62,13 +73,13 @@ func TestFunctional_AccessLogFieldsComplete_TraceIDSharedWithAppLogAndSpan(t *te
 		if !hexSpanID.MatchString(al.Str("span_id")) {
 			t.Errorf("span_id 应是 16 位十六进制，实际 %q", al.Str("span_id"))
 		}
-		// xgin/README.md：LogRequestBody / LogResponseBody 默认关
-		for _, k := range []string{"request_body", "response_body"} {
+		// xgin/README.md：LogQuery / LogRequestHeaders / LogRequestBody / LogResponseHeaders / LogResponseBody 默认关
+		for _, k := range []string{"query", "request_headers", "request_body", "response_headers", "response_body"} {
 			if _, ok := al.Get(k); ok {
 				t.Errorf("文档说 %s 默认不记，实际访问日志里有：%s", k, al.Line)
 			}
 		}
-		t.Logf("数字：POST /users 客户端往返 %v，访问日志里的 elapsed %v", rtt, time.Duration(el))
+		t.Logf("数字：POST /users 客户端往返 %v，访问日志里的 elapsed_ms %v", rtt, elapsed)
 	})
 
 	t.Run("业务日志与访问日志同一个 trace_id，就是 Span 的 trace_id", func(t *testing.T) {
@@ -124,21 +135,21 @@ func TestFunctional_AccessLogFieldsComplete_TraceIDSharedWithAppLogAndSpan(t *te
 
 	t.Run("未匹配的路由也有访问日志", func(t *testing.T) {
 		l := accessLog(t, p, traceIDOf(t, p.Get(t, "/no/such/route")))
-		if l.Str("status") != "404" || l.Str("path") != "/no/such/route" {
-			t.Errorf("未匹配的路由应记 404 和原始 path，实际 %s", l.Line)
+		// xgin/README.md：没匹配上路由时 route 是 unmatched（和指标、Span 一致），真实路径看 path
+		if l.Str("status") != "404" || l.Str("route") != "unmatched" || l.Str("path") != "/no/such/route" {
+			t.Errorf("未匹配的路由应记 404、route=unmatched 和原始 path，实际 %s", l.Line)
 		}
-		t.Logf("未匹配路由的访问日志 route=%q（代码：FullPath 为空时退回原始 path；指标里收敛成 unmatched）", l.Str("route"))
 	})
 }
 
-// 打开 LogRequestBody / LogResponseBody 之后，xgin/README.md「访问日志」那一节承诺的每一条脱敏：
+// 访问日志能记的全打开之后，xgin/README.md「访问日志」那一节承诺的每一条脱敏：
 // 按敏感词「含」匹配、任意嵌套、Unicode 折叠、表单、纯文本整段遮、请求头名单与词表、
 // 值是 URL 的头去掉查询串、multipart / octet-stream 不读
 func TestFunctional_RequestBodyLogMasksAllSecrets(t *testing.T) {
 	harness.Require(t)
 	t.Parallel()
 
-	p := harness.Start(t, harness.Options{Overlay: bodyLogs})
+	p := harness.Start(t, harness.Options{Overlay: payloadLogs})
 	var secrets []string // 每个子测试用到的明文，最后在整个输出里再查一遍
 	secret := func(label string) string {
 		s := label + "-" + harness.NewID()
@@ -338,6 +349,16 @@ func TestFunctional_RequestBodyLogMasksAllSecrets(t *testing.T) {
 		mustNotContain(t, "访问日志", l.Line, s)
 	})
 
+	t.Run("查询串逐字段脱敏", func(t *testing.T) {
+		tok := secret("qtok")
+		l := accessLog(t, p, traceIDOf(t, p.Get(t, "/users/1?page=2&access_token="+tok)))
+		q, err := url.ParseQuery(l.Str("query"))
+		if err != nil || q.Get("page") != "2" || q.Get("access_token") != redacted {
+			t.Errorf("query 应留 page、遮掉 access_token，实际 %q", l.Str("query"))
+		}
+		mustNotContain(t, "访问日志", l.Line, tok)
+	})
+
 	t.Run("整个进程输出里一个明文都没有", func(t *testing.T) {
 		mustNotContain(t, "进程的 stdout / stderr", p.Output(), secrets...)
 		t.Logf("数字：核对了 %d 个明文", len(secrets))
@@ -361,7 +382,7 @@ func TestFunctional_PGPasswordNeverInLogsOrErrors(t *testing.T) {
 		pg := harness.NewProxy(t, harness.PGAddr())
 		p := harness.Start(t, harness.Options{
 			PGAddr: pg.Addr(), Spans: true, Downstream: stub.URL,
-			Overlay: sqlLog("default") + debugLogs + bodyLogs,
+			Overlay: sqlLog("default") + debugLogs + payloadLogs,
 		})
 		var bodies []string
 		keep := func(r harness.Response) { bodies = append(bodies, string(r.Body)) }
@@ -517,8 +538,8 @@ func TestFunctional_SQLLogHasPlaceholdersNotArgs(t *testing.T) {
 		t.Fatalf("POST /users 的 SQL 日志应是那条 INSERT，实际 %s", l.Line)
 	}
 	mustNotContain(t, "SQL 日志", l.Line, name, email)
-	if _, ok := num(l, "elapsed"); !ok || l.Str("rows_affected") != "1" {
-		t.Errorf("SQL 日志应带 elapsed 和 rows_affected=1，实际 %s", l.Line)
+	if _, ok := num(l, "elapsed_ms"); !ok || l.Str("rows_affected") != "1" {
+		t.Errorf("SQL 日志应带 elapsed_ms 和 rows_affected=1，实际 %s", l.Line)
 	}
 
 	t.Run("日志里的 SQL 就是发给 PG 的那条", func(t *testing.T) {

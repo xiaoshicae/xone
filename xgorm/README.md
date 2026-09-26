@@ -120,7 +120,7 @@ XGorm:
 |---|---|---|
 | `xgorm connected` | INFO | `name`、`driver`、`addr`、`db`、`tls`、`max_open_conns`、`max_idle_conns` |
 | `xgorm ready` | INFO | `instances` |
-| `SQL` / `slow SQL` / `SQL failed` | INFO / WARN / ERROR | `sql`（带占位符）、`elapsed`、`rows_affected`；失败时 `error`、`error_code`；慢查询时 `threshold`（需 `XGorm.Log: true`） |
+| `SQL` / `slow SQL` / `SQL failed` | INFO / WARN / ERROR | `sql`（带占位符）、`elapsed_ms`（毫秒）、`rows_affected`；失败时 `error`、`error_code`；慢查询时 `threshold_ms`（需 `XGorm.Log: true`） |
 
 日志的全局约定（`trace_id` 注入、`xlog.AddKV`、框架的启停日志）见 [`docs/observability.md`](../docs/observability.md#日志)。
 

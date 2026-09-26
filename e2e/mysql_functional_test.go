@@ -262,7 +262,7 @@ func TestMySQL_PasswordNeverInLogsSpansMetricsOrResponses(t *testing.T) {
 	dsn := harness.MySQLDSN(my.Addr())
 	p := harness.Start(t, harness.Options{
 		MySQLAddr: my.Addr(), Spans: true,
-		Overlay: sqlLog("mysql") + debugLogs + bodyLogs,
+		Overlay: sqlLog("mysql") + debugLogs + payloadLogs,
 	})
 	var bodies []string
 	keep := func(r harness.Response) harness.Response { bodies = append(bodies, string(r.Body)); return r }

@@ -115,7 +115,7 @@ func (slogMonitor) OnStep(ctx context.Context, e *StepEvent) {
 	if e.Rollback {
 		action = "rollback"
 	}
-	attrs := []any{"flow", e.Flow, "step", e.Processor, "dependency", e.Dependency.String(), "elapsed", e.Duration}
+	attrs := []any{"flow", e.Flow, "step", e.Processor, "dependency", e.Dependency.String(), "elapsed_ms", millis(e.Duration)}
 
 	if e.Err != nil {
 		attrs = append(attrs, "error", e.Err)
@@ -131,7 +131,7 @@ func (slogMonitor) OnStep(ctx context.Context, e *StepEvent) {
 }
 
 func (slogMonitor) OnFlow(ctx context.Context, e *FlowEvent) {
-	attrs := []any{"flow", e.Flow, "elapsed", e.Duration, "result", e.Result.String()}
+	attrs := []any{"flow", e.Flow, "elapsed_ms", millis(e.Duration), "result", e.Result.String()}
 
 	// 回滚有失败意味着有资源没补偿回来，需要人工介入——这一条必须醒目
 	if len(e.Result.RollbackErrors) > 0 {
@@ -145,3 +145,6 @@ func (slogMonitor) OnFlow(ctx context.Context, e *FlowEvent) {
 	}
 	slog.InfoContext(ctx, "xflow flow done", attrs...)
 }
+
+// millis 耗时换成毫秒，保留到微秒。字段名带单位：slog 的 JSON 把 Duration 写成纳秒整数
+func millis(d time.Duration) float64 { return float64(d.Microseconds()) / 1000 }

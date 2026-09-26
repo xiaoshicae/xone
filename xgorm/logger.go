@@ -78,7 +78,7 @@ func (l *gormLogger) Trace(ctx context.Context, begin time.Time, fc func() (stri
 
 	case l.slowThreshold > 0 && elapsed > l.slowThreshold && l.level >= logger.Warn:
 		sql, rows := l.statement(fc)
-		slog.WarnContext(ctx, "slow SQL", attrs(sql, rows, elapsed, "threshold", l.slowThreshold)...)
+		slog.WarnContext(ctx, "slow SQL", attrs(sql, rows, elapsed, "threshold_ms", ms(l.slowThreshold))...)
 
 	// 每条 SQL 都走这一支。slog 不收 info 就在这里停下：fc 要把 SQL 重新拼一遍
 	// （PG 方言即使没有参数也要过两遍正则），拼完再交给 slog 丢掉全是白干
@@ -153,7 +153,7 @@ func (l *gormLogger) skipErr(err error) bool {
 
 func attrs(sql string, rows int64, elapsed time.Duration, extra ...any) []any {
 	out := make([]any, 0, 6+len(extra))
-	out = append(out, "sql", sql, "elapsed", elapsed)
+	out = append(out, "sql", sql, "elapsed_ms", ms(elapsed))
 	if rows >= 0 {
 		// -1 是 GORM 表示「行数未知」的约定，写成 -1 会被误读成真有 -1 行
 		out = append(out, "rows_affected", rows)
@@ -174,3 +174,6 @@ func message(msg string, args []any) string {
 	}
 	return fmt.Sprintf(msg, args...)
 }
+
+// ms 耗时换成毫秒，保留到微秒。字段名带单位：slog 的 JSON 把 Duration 写成纳秒整数
+func ms(d time.Duration) float64 { return float64(d.Microseconds()) / 1000 }

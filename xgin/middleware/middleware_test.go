@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -224,8 +225,101 @@ func TestLog_RecordsKeyFields(t *testing.T) {
 	if l["status"] != float64(201) || l["method"] != "GET" {
 		t.Errorf("状态和方法不对，got=%v", l)
 	}
-	if l["elapsed"] == nil || l["client_ip"] == nil {
+	if l["elapsed_ms"] == nil || l["client_ip"] == nil {
 		t.Errorf("应记耗时和客户端，got=%v", l)
+	}
+}
+
+func TestLog_RecordsRequestAndResponseSizes(t *testing.T) {
+	// 开了 body 日志时请求体被缓存、响应被截一份，两个字节数照样得对
+	for name, opts := range map[string][]LogOption{"默认": nil, "记 body": {WithBody(true, true)}} {
+		lines := capture(t)
+		req := httptest.NewRequest("POST", "http://api.example.com/hello/1", strings.NewReader("12345"))
+		req.Header.Set("User-Agent", "probe/1.0")
+		serve(t, req, []gin.HandlerFunc{Log(opts...)}, func(c *gin.Context) { c.String(200, "hello!") })
+		l := lines()[0]
+		for k, want := range map[string]any{
+			"host": "api.example.com", "proto": "HTTP/1.1", "user_agent": "probe/1.0",
+			"bytes_in": float64(5), "bytes_out": float64(6),
+		} {
+			if l[k] != want {
+				t.Errorf("%s：%s 应是 %v，got=%v", name, k, want, l[k])
+			}
+		}
+	}
+}
+
+func TestLog_BytesOutIsZeroWhenNothingWritten(t *testing.T) {
+	// 没写响应体时 gin 的 Size() 是 -1，原样记下来像是出了错
+	lines := capture(t)
+	serve(t, get("/hello"), []gin.HandlerFunc{Log()}, func(c *gin.Context) { c.Status(204) })
+	if l := lines()[0]; l["bytes_out"] != float64(0) {
+		t.Errorf("没写响应体时 bytes_out 应是 0，got=%v", l["bytes_out"])
+	}
+}
+
+func TestLog_ElapsedIsMilliseconds(t *testing.T) {
+	// slog 的 JSON 把 Duration 写成纳秒整数：一个 20ms 的请求记成 20000000，
+	// 照着「毫秒」配的告警阈值差出一百万倍
+	lines := capture(t)
+	serve(t, get("/hello"), []gin.HandlerFunc{Log()}, func(c *gin.Context) {
+		time.Sleep(20 * time.Millisecond)
+		c.Status(200)
+	})
+	ms, ok := lines()[0]["elapsed_ms"].(float64)
+	if !ok || ms < 20 || ms > 1000 {
+		t.Errorf("elapsed_ms 该是毫秒（约 20），got=%v", lines()[0]["elapsed_ms"])
+	}
+}
+
+func TestLog_UnmatchedRouteIsUnmatched(t *testing.T) {
+	// 和指标、Span 一致：填真实路径的话，日志里分不出 /nope 是路由还是 404
+	lines := capture(t)
+	serve(t, get("/nope/1"), []gin.HandlerFunc{Log()}, func(c *gin.Context) {})
+	l := lines()[0]
+	if l["route"] != "unmatched" || l["path"] != "/nope/1" || l["status"] != float64(404) {
+		t.Errorf("没匹配上的请求 route 该是 unmatched、path 是真实路径，got=%v", l)
+	}
+}
+
+func TestLog_QueryIsRedacted(t *testing.T) {
+	// 查询串里常有凭证（access_token、签名）：打开之后也得逐字段遮
+	lines := capture(t)
+	serve(t, get("/hello?page=2&access_token=t0p"), []gin.HandlerFunc{Log(WithQuery(true))}, func(c *gin.Context) {
+		c.Status(200)
+	})
+	q, _ := lines()[0]["query"].(string)
+	if !strings.Contains(q, "page=2") || strings.Contains(q, "t0p") {
+		t.Errorf("query 该留 page、遮掉 access_token，got=%q", q)
+	}
+}
+
+func TestLog_QueryOffByDefault(t *testing.T) {
+	lines := capture(t)
+	serve(t, get("/hello?page=2"), []gin.HandlerFunc{Log()}, func(c *gin.Context) { c.Status(200) })
+	if _, ok := lines()[0]["query"]; ok {
+		t.Errorf("默认不该记 query，got=%v", lines()[0])
+	}
+}
+
+func TestLog_ResponseHeadersAreRedacted(t *testing.T) {
+	lines := capture(t)
+	serve(t, get("/hello"), []gin.HandlerFunc{Log(WithHeaders(false, true))}, func(c *gin.Context) {
+		c.Header("X-Page-Total", "7")
+		c.Header("Set-Cookie", "sid=abc123")
+		c.Status(200)
+	})
+	h, ok := lines()[0]["response_headers"].(map[string]any)
+	if !ok || fmt.Sprint(h["X-Page-Total"]) != "7" || strings.Contains(fmt.Sprint(h), "abc123") {
+		t.Errorf("response_headers 该留普通头、遮掉 Set-Cookie，got=%v", lines()[0]["response_headers"])
+	}
+}
+
+func TestLog_ResponseHeadersOffByDefault(t *testing.T) {
+	lines := capture(t)
+	serve(t, get("/hello"), []gin.HandlerFunc{Log()}, func(c *gin.Context) { c.Status(200) })
+	if _, ok := lines()[0]["response_headers"]; ok {
+		t.Errorf("默认不该记 response_headers，got=%v", lines()[0])
 	}
 }
 
@@ -292,10 +386,20 @@ func TestLog_RedactsRequestHeaders(t *testing.T) {
 	lines := capture(t)
 	req := get("/hello")
 	req.Header.Set("Authorization", "Bearer "+secret)
-	serve(t, req, []gin.HandlerFunc{Log()}, func(c *gin.Context) { c.Status(200) })
+	req.Header.Set("X-Visible", "keep-me")
+	serve(t, req, []gin.HandlerFunc{Log(WithHeaders(true, false))}, func(c *gin.Context) { c.Status(200) })
 
-	if h, _ := lines()[0]["request_headers"].(string); strings.Contains(h, secret) {
-		t.Errorf("请求头里的凭证应被遮掉，got=%v", h)
+	h, ok := lines()[0]["request_headers"].(map[string]any)
+	if !ok || fmt.Sprint(h["X-Visible"]) != "keep-me" || strings.Contains(fmt.Sprint(h), secret) {
+		t.Errorf("请求头该留普通头、遮掉凭证，got=%v", lines()[0]["request_headers"])
+	}
+}
+
+func TestLog_RequestHeadersOffByDefault(t *testing.T) {
+	lines := capture(t)
+	serve(t, get("/hello"), []gin.HandlerFunc{Log()}, func(c *gin.Context) { c.Status(200) })
+	if _, ok := lines()[0]["request_headers"]; ok {
+		t.Errorf("默认不该记 request_headers，got=%v", lines()[0])
 	}
 }
 

@@ -5,8 +5,8 @@ go 1.25.0
 require (
 	github.com/dgraph-io/ristretto/v2 v2.4.2
 	github.com/prometheus/client_golang v1.24.1
-	github.com/xiaoshicae/xone v0.1.0
-	github.com/xiaoshicae/xone/xmetric v0.1.0
+	github.com/xiaoshicae/xone v1.10.0
+	github.com/xiaoshicae/xone/xmetric v1.10.0
 )
 
 require (

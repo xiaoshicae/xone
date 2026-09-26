@@ -4,7 +4,7 @@
 
 - 每一步只写 `Process` 和 `Rollback`，写在同一个类型上：谁做的事，谁负责撤销
 - 强依赖失败就中断并回滚；弱依赖失败只记一笔，继续往下走
-- 回滚不沿用调用方的 ctx，由单独的总预算限时
+- 回滚沿用调用方 ctx 里的值（链路、日志字段、压测标、泳道标……），只去掉它的取消和截止时间，另给一份总预算
 - 默认监控写 slog：每次执行一条结果日志，失败的步骤单独一条；可以换成自己的实现或关掉
 - 不跑 `xone.Run` 也能用：核心 module，只依赖 yaml
 
@@ -84,7 +84,9 @@ XFlow:
 
 ## 注意事项
 
-- **回滚不沿用调用方的 ctx**：请求一超时，补偿最需要执行，那时原来的 ctx 已经取消了。回滚改由 `XFlow.RollbackTimeout`（默认 30s）限时，个别流程可以用 `WithRollbackTimeout` 单独定。
+- **回滚的 ctx 是调用方的 ctx 去掉取消**（`context.WithoutCancel`）：里面的值原样带着——trace、baggage、`xlog.AddKV` 的字段、
+  压测标、泳道标都在，补偿请求照样透传给下游。去掉的只有取消和截止时间：请求一超时，补偿最需要执行，那时原来的 ctx 已经取消了。
+  回滚改由 `XFlow.RollbackTimeout`（默认 30s）限时，个别流程可以用 `WithRollbackTimeout` 单独定。
 - **预算到点就不再等**：不看 ctx 的 `Rollback` 到点也会被放弃、记进 `RollbackErrors`，但它的协程仍在后台跑、仍可能读写 `data`。
 - **`Rollback` 不能假设 `Process` 成功过**：弱依赖失败之后同样会被纳入回滚范围，要写成幂等的。
 - xflow 不开 Span，要链路就在步骤里自己 `otel.Tracer(...).Start`。

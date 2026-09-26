@@ -309,6 +309,10 @@ mutate("默认监控记下 panic 的调用栈", "xflow/monitor.go", ".", "TestMo
 # 恰恰是那时候。剥掉取消之后另给一份 RollbackTimeout，是 xflow 最核心的一条承诺
 mutate("流程超时之后回滚仍有自己的预算", "xflow/xflow.go", ".", "TestRollback|TestExecute",
        swap('context.WithTimeout(context.WithoutCancel(ctx), cmp.Or(', 'context.WithTimeout(ctx, cmp.Or('))
+# 剥的是取消，不是值：换成 Background 的话，补偿请求丢了链路、压测标、泳道标，
+# 压测流量的补偿打到线上、泳道里的补偿打到主干
+mutate("回滚的 ctx 带着调用方的值", "xflow/xflow.go", ".", "TestRollback_CtxValuesPreserved",
+       swap('context.WithTimeout(context.WithoutCancel(ctx), cmp.Or(', 'context.WithTimeout(context.Background(), cmp.Or('))
 # 预算只在步骤之间查的话，一个不看 ctx 的 Rollback 能把 Execute 挂住：
 # 50ms 的预算等了 2s，挂住的那一步还不在 RollbackErrors 里
 mutate("不看 ctx 的补偿也受回滚预算约束", "xflow/xflow.go", ".", "TestRollback",

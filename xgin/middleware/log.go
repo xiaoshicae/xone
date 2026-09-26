@@ -160,6 +160,13 @@ func Log(opts ...LogOption) gin.HandlerFunc {
 				// 换成整数微秒能省掉，但日志是给人读的，毫秒更顺手
 				slog.Float64("elapsed_ms", millis(elapsed)),
 				slog.String("client_ip", c.ClientIP()),
+				slog.String("host", c.Request.Host),
+				slog.String("proto", c.Request.Proto),
+				slog.String("user_agent", c.Request.UserAgent()),
+				// 请求头里的 Content-Length；分块上传时没有，记 -1，和 net/http 的约定一致
+				slog.Int64("bytes_in", c.Request.ContentLength),
+				// 写出的响应体字节数，不含响应头；一个字节都没写时 gin 给的是 -1，记成 0
+				slog.Int("bytes_out", max(c.Writer.Size(), 0)),
 			}
 			if o.reqHeader {
 				// 已是 slog.Value，slog.Any 会再装一次箱

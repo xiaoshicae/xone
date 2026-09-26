@@ -116,7 +116,7 @@ admin := xgin.New().WithConfig(c).WithRoutes(adminRoutes)
 - **handler 里的慢操作传 `c.Request.Context()`**：`Stop` 没有单独的超时，等在途请求最多到停止预算的 2/3
   （`xone.WithStopTimeout` 的 2/3，默认 10s），到点断开连接、取消请求的 ctx；不看 ctx 的 handler 停不下来，
   `Stop` 会报 `N handler(s) still running`。要调就调 `WithStopTimeout`。
-- **访问日志默认只记请求的概要**（方法、路由、状态、耗时、客户端），查询串、请求头、body、响应头都要单独打开；
+- **访问日志默认只记请求的概要**（方法、路由、状态、耗时、客户端、大小），查询串、请求头、body、响应头都要单独打开；
   开之前用 `middleware.AddSensitiveFields(...)` 补上业务自己的敏感字段。见[「访问日志」](#访问日志)。
 - **`WithRoutes` 回调里的设置盖过配置**（如 `e.SetTrustedProxies`），但透传 Header 的可信判断只看配置里的 `TrustedProxies`，
   两边要一起改就改配置。XGin 块在装配（`Engine()` 或 `Start`）那一刻才读。
@@ -158,6 +158,11 @@ admin := xgin.New().WithConfig(c).WithRoutes(adminRoutes)
 | `status` | 状态码；中止的请求记 `499`，见[下文](#499中止的请求) |
 | `elapsed_ms` | 耗时，毫秒，保留到微秒（如 `0.051`） |
 | `client_ip` | 客户端地址：直连对端，或 `XGin.TrustedProxies` 里的代理转发来的 `X-Forwarded-For` |
+| `host` | 请求的 `Host`（HTTP/2 是 `:authority`），原样 |
+| `proto` | `HTTP/1.1`、`HTTP/2.0` |
+| `user_agent` | `User-Agent`，没有就是空串 |
+| `bytes_in` | 请求头里的 `Content-Length`；分块上传没有这个头，记 `-1` |
+| `bytes_out` | 写出的响应体字节数，不含响应头；没写响应体是 `0` |
 | `query` | `LogQuery: true` 且有查询串时，逐字段脱敏，规则同表单 body |
 | `request_headers` | `LogRequestHeaders: true` 时，凭证类已脱敏 |
 | `request_body` | `LogRequestBody: true` 时，最多前 256KB，逐字段脱敏；multipart 和 `application/octet-stream` 只记一句 `omitted` |

@@ -230,6 +230,34 @@ func TestLog_RecordsKeyFields(t *testing.T) {
 	}
 }
 
+func TestLog_RecordsRequestAndResponseSizes(t *testing.T) {
+	// 开了 body 日志时请求体被缓存、响应被截一份，两个字节数照样得对
+	for name, opts := range map[string][]LogOption{"默认": nil, "记 body": {WithBody(true, true)}} {
+		lines := capture(t)
+		req := httptest.NewRequest("POST", "http://api.example.com/hello/1", strings.NewReader("12345"))
+		req.Header.Set("User-Agent", "probe/1.0")
+		serve(t, req, []gin.HandlerFunc{Log(opts...)}, func(c *gin.Context) { c.String(200, "hello!") })
+		l := lines()[0]
+		for k, want := range map[string]any{
+			"host": "api.example.com", "proto": "HTTP/1.1", "user_agent": "probe/1.0",
+			"bytes_in": float64(5), "bytes_out": float64(6),
+		} {
+			if l[k] != want {
+				t.Errorf("%s：%s 应是 %v，got=%v", name, k, want, l[k])
+			}
+		}
+	}
+}
+
+func TestLog_BytesOutIsZeroWhenNothingWritten(t *testing.T) {
+	// 没写响应体时 gin 的 Size() 是 -1，原样记下来像是出了错
+	lines := capture(t)
+	serve(t, get("/hello"), []gin.HandlerFunc{Log()}, func(c *gin.Context) { c.Status(204) })
+	if l := lines()[0]; l["bytes_out"] != float64(0) {
+		t.Errorf("没写响应体时 bytes_out 应是 0，got=%v", l["bytes_out"])
+	}
+}
+
 func TestLog_ElapsedIsMilliseconds(t *testing.T) {
 	// slog 的 JSON 把 Duration 写成纳秒整数：一个 20ms 的请求记成 20000000，
 	// 照着「毫秒」配的告警阈值差出一百万倍

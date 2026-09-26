@@ -218,6 +218,9 @@ section("访问日志的字段")
 mutate("访问日志的耗时是毫秒", "xgin/middleware/log.go", "./xgin", "TestLog_ElapsedIsMilliseconds",
        swap('slog.Float64("elapsed_ms", millis(elapsed))', 'slog.Float64("elapsed_ms", float64(elapsed))'))
 # 没匹配上路由时填真实路径，日志里分不出 /nope 是路由还是 404，也和指标、Span 对不上
+# gin 在没写响应体时 Size() 返回 -1：原样记下来，204 看着像出了错，按 bytes_out 求和还会少算
+mutate("没写响应体时 bytes_out 记 0", "xgin/middleware/log.go", "./xgin", "TestLog_BytesOut",
+       swap('slog.Int("bytes_out", max(c.Writer.Size(), 0))', 'slog.Int("bytes_out", c.Writer.Size())'))
 mutate("访问日志里没匹配上的路由记 unmatched", "xgin/middleware/log.go", "./xgin", "TestLog_UnmatchedRouteIsUnmatched",
        swap('\t\t\t\troute = "unmatched"\n\t\t\t}\n\n\t\t\t// 直接给', '\t\t\t\troute = c.Request.URL.Path\n\t\t\t}\n\n\t\t\t// 直接给'))
 

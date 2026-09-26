@@ -17,6 +17,8 @@
 
 - xgin 访问日志可以记查询串和响应头：`XGin.LogQuery: true` 加字段 `query`（逐字段脱敏），
   `XGin.LogResponseHeaders: true` 加字段 `response_headers`（`Set-Cookie` 等凭证类脱敏）。默认都关。
+- xgin 访问日志默认多记五个字段：`host`、`proto`、`user_agent`、`bytes_in`（请求的 `Content-Length`，分块上传是 `-1`）、
+  `bytes_out`（响应体字节数）。实测每个请求多约 1µs，不多分配。
   词表里没有的敏感参数名（比如 OAuth 的 `code`）用 `middleware.AddSensitiveFields` 补上。
 
 ### 修复

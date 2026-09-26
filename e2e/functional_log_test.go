@@ -45,10 +45,21 @@ func TestFunctional_AccessLogFieldsComplete_TraceIDSharedWithAppLogAndSpan(t *te
 			"level": "INFO", "method": "POST", "route": "/users", "path": "/users", "status": "201",
 			// xgin/README.md XGin.TrustedProxies：默认信私有网段，本机发来的 X-Forwarded-For 被认，client_ip 是它里面的地址
 			"client_ip": "203.0.113.9",
+			"proto":     "HTTP/1.1",
 		} {
 			if got := al.Str(k); got != want {
 				t.Errorf("访问日志 %s 应是 %q，实际 %q\n%s", k, want, got, al.Line)
 			}
+		}
+		// xgin/README.md：host、user_agent 原样；bytes_in 是请求的 Content-Length，bytes_out 是响应体字节数
+		if al.Str("host") == "" || al.Str("user_agent") == "" {
+			t.Errorf("访问日志应带 host 和 user_agent，实际 %s", al.Line)
+		}
+		if in, _ := num(al, "bytes_in"); in <= 0 {
+			t.Errorf("POST /users 带 JSON 请求体，bytes_in 应 > 0，实际 %s", al.Line)
+		}
+		if out, _ := num(al, "bytes_out"); int(out) != len(r.Body) {
+			t.Errorf("bytes_out 应等于响应体长度 %d，实际 %v", len(r.Body), al.Str("bytes_out"))
 		}
 		// xgin/README.md：elapsed_ms 是毫秒，保留到微秒
 		el, ok := num(al, "elapsed_ms")

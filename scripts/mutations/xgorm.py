@@ -212,3 +212,8 @@ section("链路")
 # 全局的 TracerProvider 就一直是 noop：Span 什么都不记、日志没有 trace_id，而且没有任何报错
 mutate("用了 xgorm 不另外 import xtrace 也有链路", "xgorm/xgorm.go", "./xgorm", "TestTracingWorksWithoutImportingXtrace",
        swap('\t_ "github.com/xiaoshicae/xone/xtrace"\n', ''))
+
+# 慢查询的阈值和耗时都要是毫秒：写成纳秒的话 threshold_ms 看着是 10000000
+mutate("慢查询日志的阈值是毫秒", "xgorm/logger.go", "./xgorm", "TestLogger_SlowQueryLogsWarn",
+       swap('"threshold_ms", ms(l.slowThreshold))', '"threshold_ms", float64(l.slowThreshold))'))
+

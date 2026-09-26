@@ -200,3 +200,12 @@ section("链路")
 # 全局的 TracerProvider 就一直是 noop：Span 什么都不记、日志没有 trace_id，而且没有任何报错
 mutate("用了 xgin 不另外 import xtrace 也有链路", "xgin/xgin.go", "./xgin", "TestTracingWorksWithoutImportingXtrace",
        swap('\t_ "github.com/xiaoshicae/xone/xtrace"\n', ''))
+
+section("访问日志的字段")
+# slog 的 JSON 把 Duration 写成纳秒整数：字段叫 elapsed_ms、值却是纳秒的话，照毫秒配的告警差出一百万倍
+mutate("访问日志的耗时是毫秒", "xgin/middleware/log.go", "./xgin", "TestLog_ElapsedIsMilliseconds",
+       swap('slog.Float64("elapsed_ms", millis(elapsed))', 'slog.Float64("elapsed_ms", float64(elapsed))'))
+# 没匹配上路由时填真实路径，日志里分不出 /nope 是路由还是 404，也和指标、Span 对不上
+mutate("访问日志里没匹配上的路由记 unmatched", "xgin/middleware/log.go", "./xgin", "TestLog_UnmatchedRouteIsUnmatched",
+       swap('\t\t\t\troute = "unmatched"\n\t\t\t}\n\n\t\t\t// 直接给', '\t\t\t\troute = c.Request.URL.Path\n\t\t\t}\n\n\t\t\t// 直接给'))
+

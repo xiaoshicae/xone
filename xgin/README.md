@@ -150,10 +150,10 @@ admin := xgin.New().WithConfig(c).WithRoutes(adminRoutes)
 | 字段 | 内容 |
 |---|---|
 | `method` | 请求方法，原样 |
-| `route` | 路由模板，如 `/users/:id`；没匹配上路由时是请求路径 |
+| `route` | 路由模板，如 `/users/:id`；没匹配上路由时是 `unmatched`（和指标、Span 一致），真实路径看 `path` |
 | `path` | 请求路径，**不带查询串** |
 | `status` | 状态码；中止的请求记 `499`，见[下文](#499中止的请求) |
-| `elapsed` | 耗时 |
+| `elapsed_ms` | 耗时，毫秒，保留到微秒（如 `0.051`） |
 | `client_ip` | 客户端地址：直连对端，或 `XGin.TrustedProxies` 里的代理转发来的 `X-Forwarded-For` |
 | `request_headers` | 请求头，凭证类已脱敏 |
 | `request_body` | `LogRequestBody: true` 时，最多前 256KB，逐字段脱敏；multipart 和 `application/octet-stream` 只记一句 `omitted` |

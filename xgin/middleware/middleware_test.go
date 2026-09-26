@@ -224,8 +224,32 @@ func TestLog_RecordsKeyFields(t *testing.T) {
 	if l["status"] != float64(201) || l["method"] != "GET" {
 		t.Errorf("状态和方法不对，got=%v", l)
 	}
-	if l["elapsed"] == nil || l["client_ip"] == nil {
+	if l["elapsed_ms"] == nil || l["client_ip"] == nil {
 		t.Errorf("应记耗时和客户端，got=%v", l)
+	}
+}
+
+func TestLog_ElapsedIsMilliseconds(t *testing.T) {
+	// slog 的 JSON 把 Duration 写成纳秒整数：一个 20ms 的请求记成 20000000，
+	// 照着「毫秒」配的告警阈值差出一百万倍
+	lines := capture(t)
+	serve(t, get("/hello"), []gin.HandlerFunc{Log()}, func(c *gin.Context) {
+		time.Sleep(20 * time.Millisecond)
+		c.Status(200)
+	})
+	ms, ok := lines()[0]["elapsed_ms"].(float64)
+	if !ok || ms < 20 || ms > 1000 {
+		t.Errorf("elapsed_ms 该是毫秒（约 20），got=%v", lines()[0]["elapsed_ms"])
+	}
+}
+
+func TestLog_UnmatchedRouteIsUnmatched(t *testing.T) {
+	// 和指标、Span 一致：填真实路径的话，日志里分不出 /nope 是路由还是 404
+	lines := capture(t)
+	serve(t, get("/nope/1"), []gin.HandlerFunc{Log()}, func(c *gin.Context) {})
+	l := lines()[0]
+	if l["route"] != "unmatched" || l["path"] != "/nope/1" || l["status"] != float64(404) {
+		t.Errorf("没匹配上的请求 route 该是 unmatched、path 是真实路径，got=%v", l)
 	}
 }
 

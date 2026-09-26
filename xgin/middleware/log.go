@@ -121,9 +121,11 @@ func Log(opts ...LogOption) gin.HandlerFunc {
 		defer func() {
 			elapsed := time.Since(start)
 
+			// 没匹配上路由时和指标、Span 一样记 unmatched：填真实路径的话，
+			// 日志里分不出 /nope 是一个路由还是一次 404。真实路径在 path 里
 			route := c.FullPath()
 			if route == "" {
-				route = c.Request.URL.Path
+				route = "unmatched"
 			}
 
 			// 直接给 slog.Attr，不给交替的 key、value：后者每个值都要先装进 any
@@ -136,7 +138,10 @@ func Log(opts ...LogOption) gin.HandlerFunc {
 				// 都像是「把日志记全一点」，实际是把凭证明文写进日志
 				slog.String("path", c.Request.URL.Path),
 				slog.Int("status", status(c)),
-				slog.Duration("elapsed", elapsed),
+				// 字段名带单位：slog 的 JSON 把 Duration 写成纳秒整数，51130 看不出是 51µs。
+				// 浮点在 slog 的 JSON 里走 json.Marshal，实测每条多 2 次分配、约 0.5µs——
+				// 换成整数微秒能省掉，但日志是给人读的，毫秒更顺手
+				slog.Float64("elapsed_ms", millis(elapsed)),
 				slog.String("client_ip", c.ClientIP()),
 				{Key: "request_headers", Value: RedactHeaders(c.Request.Header)}, // 已是 slog.Value，slog.Any 会再装一次箱
 			}
@@ -261,3 +266,6 @@ func (b *prefixedBody) Read(p []byte) (int, error) {
 }
 
 func (b *prefixedBody) Close() error { return b.rest.Close() }
+
+// millis 耗时换成毫秒，保留到微秒
+func millis(d time.Duration) float64 { return float64(d.Microseconds()) / 1000 }

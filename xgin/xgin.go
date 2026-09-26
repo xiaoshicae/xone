@@ -191,7 +191,7 @@ func (g *XGin) build() {
 				middleware.WithSkipPaths(skip...),
 				middleware.WithBody(c.LogRequestBody, c.LogResponseBody),
 				middleware.WithQuery(c.LogQuery),
-				middleware.WithResponseHeaders(c.LogResponseHeaders),
+				middleware.WithHeaders(c.LogRequestHeaders, c.LogResponseHeaders),
 			))
 		}
 		if c.Metric {

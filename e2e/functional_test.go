@@ -170,8 +170,9 @@ func mustNotContain(t *testing.T, where, text string, secrets ...string) {
 // 开关的 Overlay 片段。顶层块各不相同的片段可以直接拼起来；同一个顶层块里的几项要写在一个片段里
 // （YAML 里同一个 key 出现两次是错误）。service/application.yml 没写这些项，不叠就是框架的默认值
 const (
-	// bodyLogs 访问日志连同请求体、响应体一起记
-	bodyLogs = "XGin:\n  LogRequestBody: true\n  LogResponseBody: true\n"
+	// payloadLogs 访问日志里能记的全打开：查询串、请求头、请求体、响应头、响应体
+	payloadLogs = "XGin:\n  LogQuery: true\n  LogRequestHeaders: true\n  LogRequestBody: true\n" +
+		"  LogResponseHeaders: true\n  LogResponseBody: true\n"
 	// debugLogs 日志级别 debug
 	debugLogs = "XLog:\n  Level: debug\n"
 )

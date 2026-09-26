@@ -144,6 +144,12 @@ type Config struct {
 	// 用 middleware.AddSensitiveFields 补上。
 	LogQuery bool `yaml:"LogQuery"`
 
+	// LogRequestHeaders 是否把请求头记进访问日志（字段 request_headers）。默认不记。
+	//
+	// 打开后凭证类的值遮掉：Authorization、Cookie、X-Api-Key 等名单里的、名字带敏感词的；
+	// 值是 URL 的（Referer）去掉查询串。名单外的业务头用 middleware.AddSensitiveHeaders 补上。
+	LogRequestHeaders bool `yaml:"LogRequestHeaders"`
+
 	// LogResponseHeaders 是否把响应头记进访问日志（字段 response_headers）。默认不记。
 	//
 	// 脱敏规则同请求头：Set-Cookie 等名单里的、名字带敏感词的，值都遮掉。

@@ -69,6 +69,7 @@ XGin:
   Log: true                # 访问日志
   LogSkipPaths: []         # 不记访问日志的路径：以 / 结尾的按前缀，其余精确匹配
   LogQuery: false          # 查询串进访问日志（逐字段脱敏），默认关
+  LogRequestHeaders: false  # 请求头进访问日志（凭证类脱敏），默认关
   LogRequestBody: false    # 请求体进访问日志（逐字段脱敏），默认关
   LogResponseHeaders: false  # 响应头进访问日志（凭证类脱敏），默认关
   LogResponseBody: false   # 响应体进访问日志，默认关
@@ -115,8 +116,8 @@ admin := xgin.New().WithConfig(c).WithRoutes(adminRoutes)
 - **handler 里的慢操作传 `c.Request.Context()`**：`Stop` 没有单独的超时，等在途请求最多到停止预算的 2/3
   （`xone.WithStopTimeout` 的 2/3，默认 10s），到点断开连接、取消请求的 ctx；不看 ctx 的 handler 停不下来，
   `Stop` 会报 `N handler(s) still running`。要调就调 `WithStopTimeout`。
-- **访问日志默认不记查询串、body 和响应头**；开 `LogQuery` / `LogRequestBody` / `LogResponseBody` 之前用 `middleware.AddSensitiveFields(...)` 补上业务自己的
-  敏感字段。见[「访问日志」](#访问日志)。
+- **访问日志默认只记请求的概要**（方法、路由、状态、耗时、客户端），查询串、请求头、body、响应头都要单独打开；
+  开之前用 `middleware.AddSensitiveFields(...)` 补上业务自己的敏感字段。见[「访问日志」](#访问日志)。
 - **`WithRoutes` 回调里的设置盖过配置**（如 `e.SetTrustedProxies`），但透传 Header 的可信判断只看配置里的 `TrustedProxies`，
   两边要一起改就改配置。XGin 块在装配（`Engine()` 或 `Start`）那一刻才读。
 - **超时**：`ReadHeaderTimeout`、`IdleTimeout` 必须 > 0；`ReadTimeout` / `WriteTimeout` 默认不限，
@@ -158,7 +159,7 @@ admin := xgin.New().WithConfig(c).WithRoutes(adminRoutes)
 | `elapsed_ms` | 耗时，毫秒，保留到微秒（如 `0.051`） |
 | `client_ip` | 客户端地址：直连对端，或 `XGin.TrustedProxies` 里的代理转发来的 `X-Forwarded-For` |
 | `query` | `LogQuery: true` 且有查询串时，逐字段脱敏，规则同表单 body |
-| `request_headers` | 请求头，凭证类已脱敏 |
+| `request_headers` | `LogRequestHeaders: true` 时，凭证类已脱敏 |
 | `request_body` | `LogRequestBody: true` 时，最多前 256KB，逐字段脱敏；multipart 和 `application/octet-stream` 只记一句 `omitted` |
 | `response_headers` | `LogResponseHeaders: true` 时，脱敏规则同请求头（`Set-Cookie` 等遮掉） |
 | `response_body` | `LogResponseBody: true` 且是文本类响应时，最多前 4KB，逐字段脱敏 |

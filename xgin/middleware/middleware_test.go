@@ -276,7 +276,7 @@ func TestLog_QueryOffByDefault(t *testing.T) {
 
 func TestLog_ResponseHeadersAreRedacted(t *testing.T) {
 	lines := capture(t)
-	serve(t, get("/hello"), []gin.HandlerFunc{Log(WithResponseHeaders(true))}, func(c *gin.Context) {
+	serve(t, get("/hello"), []gin.HandlerFunc{Log(WithHeaders(false, true))}, func(c *gin.Context) {
 		c.Header("X-Page-Total", "7")
 		c.Header("Set-Cookie", "sid=abc123")
 		c.Status(200)
@@ -358,10 +358,20 @@ func TestLog_RedactsRequestHeaders(t *testing.T) {
 	lines := capture(t)
 	req := get("/hello")
 	req.Header.Set("Authorization", "Bearer "+secret)
-	serve(t, req, []gin.HandlerFunc{Log()}, func(c *gin.Context) { c.Status(200) })
+	req.Header.Set("X-Visible", "keep-me")
+	serve(t, req, []gin.HandlerFunc{Log(WithHeaders(true, false))}, func(c *gin.Context) { c.Status(200) })
 
-	if h, _ := lines()[0]["request_headers"].(string); strings.Contains(h, secret) {
-		t.Errorf("请求头里的凭证应被遮掉，got=%v", h)
+	h, ok := lines()[0]["request_headers"].(map[string]any)
+	if !ok || fmt.Sprint(h["X-Visible"]) != "keep-me" || strings.Contains(fmt.Sprint(h), secret) {
+		t.Errorf("请求头该留普通头、遮掉凭证，got=%v", lines()[0]["request_headers"])
+	}
+}
+
+func TestLog_RequestHeadersOffByDefault(t *testing.T) {
+	lines := capture(t)
+	serve(t, get("/hello"), []gin.HandlerFunc{Log()}, func(c *gin.Context) { c.Status(200) })
+	if _, ok := lines()[0]["request_headers"]; ok {
+		t.Errorf("默认不该记 request_headers，got=%v", lines()[0])
 	}
 }
 

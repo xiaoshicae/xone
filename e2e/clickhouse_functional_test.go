@@ -352,7 +352,7 @@ func TestClickHouse_PasswordNeverInLogsSpansMetricsOrResponses(t *testing.T) {
 	dsn := harness.CHDSN(chp.Addr())
 	p := chStart(t, harness.Options{
 		CHAddr: chp.Addr(), Spans: true,
-		Overlay: sqlLog("ch") + debugLogs + bodyLogs,
+		Overlay: sqlLog("ch") + debugLogs + payloadLogs,
 	})
 	var bodies []string
 	keep := func(r harness.Response) harness.Response { bodies = append(bodies, string(r.Body)); return r }

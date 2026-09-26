@@ -8,6 +8,11 @@
 
 ## [未发布]
 
+### 不兼容变更
+
+- xgin 访问日志默认不再记请求头（字段 `request_headers`），和查询串、body、响应头一样由开关控制。
+  迁移：要保留原来的输出，配 `XGin.LogRequestHeaders: true`；直接用 `middleware.Log` 的，加 `middleware.WithHeaders(true, false)`。
+
 ### 新增
 
 - xgin 访问日志可以记查询串和响应头：`XGin.LogQuery: true` 加字段 `query`（逐字段脱敏），

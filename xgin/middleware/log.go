@@ -29,6 +29,7 @@ type logOptions struct {
 	reqBody    bool
 	respBody   bool
 	query      bool
+	reqHeader  bool
 	respHeader bool
 }
 
@@ -62,9 +63,12 @@ func WithQuery(on bool) LogOption {
 	return func(o *logOptions) { o.query = on }
 }
 
-// WithResponseHeaders 是否记录响应头。默认不记。脱敏规则同请求头（Set-Cookie 等遮掉）。
-func WithResponseHeaders(on bool) LogOption {
-	return func(o *logOptions) { o.respHeader = on }
+// WithHeaders 是否记录请求头和响应头。默认都不记。
+//
+// 打开后凭证类的值遮掉：Authorization、Cookie、Set-Cookie 等名单里的，
+// 名字带敏感词的（X-Csrf-Token），值是 URL 的去掉查询串（Referer）。
+func WithHeaders(request, response bool) LogOption {
+	return func(o *logOptions) { o.reqHeader, o.respHeader = request, response }
 }
 
 // writerPool 复用截响应用的 writer
@@ -156,7 +160,10 @@ func Log(opts ...LogOption) gin.HandlerFunc {
 				// 换成整数微秒能省掉，但日志是给人读的，毫秒更顺手
 				slog.Float64("elapsed_ms", millis(elapsed)),
 				slog.String("client_ip", c.ClientIP()),
-				{Key: "request_headers", Value: RedactHeaders(c.Request.Header)}, // 已是 slog.Value，slog.Any 会再装一次箱
+			}
+			if o.reqHeader {
+				// 已是 slog.Value，slog.Any 会再装一次箱
+				attrs = append(attrs, slog.Attr{Key: "request_headers", Value: RedactHeaders(c.Request.Header)})
 			}
 			if o.query && c.Request.URL.RawQuery != "" {
 				attrs = append(attrs, slog.String("query", redactForm(c.Request.URL.RawQuery)))

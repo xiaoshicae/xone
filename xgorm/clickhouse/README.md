@@ -102,6 +102,9 @@ clickhouse-go 用它们跑集成测试，而 `go.mod` 分不出「只测试用�
 516（AUTHENTICATION_FAILED）、192 / 193 / 194（老版本的 UNKNOWN_USER、WRONG_PASSWORD、REQUIRED_PASSWORD）。
 实测密码错、用户不存在都是 `code: 516`，只试 1 次、50ms 内失败；HTTP 协议下是 `[HTTP 403] code: 516`；
 库不存在是 81，不算认证失败，照常试满 3 次。
+报错里通常带着 `code: 81`，偶尔只有 `driver: bad connection`：库不存在时握手照样成功，服务端随后发来异常、关掉连接；
+驱动的 `database/sql` 路径在 ping 之前先从连接上读一个字节检查它还活着没有，异常要是已经到了，就被这一下读走，
+连接被当成坏的丢掉。实测 64 个协程并发各连 20 次（共 1280 次），`database/sql` 路径约 9% 是这样，驱动的原生 API 一次都没有。
 
 **TLS**（`verificationMode=relaxed`）：native 与 `https://` 都走 TLS 块，`system.query_log` 都是 `is_secure=1`；
 CA 不对、`ServerName` 对不上、客户端证书不是服务端认的 CA 签的都在 2–6ms 内失败、不重试；

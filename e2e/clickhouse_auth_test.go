@@ -15,7 +15,9 @@ import (
 //
 //	密码错 / 用户不存在  code: 516, message: <user>: Authentication failed: password is incorrect, or there is no user with such name.
 //
-// 库不存在不是认证失败（code: 81 UNKNOWN_DATABASE），照常重试、报 cannot reach
+// 库不存在不是认证失败（code: 81 UNKNOWN_DATABASE），照常重试、报 cannot reach。
+// 报错里多数是 code: 81，偶尔是 driver: bad connection（xgorm/clickhouse/README.md「认证失败」：
+// 驱动 ping 之前的连接检查把服务端的异常读走了），两种都认；并发跑整套 e2e 时后者会出现
 func TestClickHouse_BadPasswordOrUnknownUserAtStartup_NativeAuthFail_NoRetry(t *testing.T) {
 	harness.RequireCH(t)
 	t.Parallel()
@@ -62,7 +64,13 @@ func TestClickHouse_BadPasswordOrUnknownUserAtStartup_NativeAuthFail_NoRetry(t *
 		exit, p := faultStartFails(t, harness.Options{ClickHouse: true, Env: map[string]string{"E2E_CH_DSN": dsn}})
 		stderr := p.Stderr()
 		mustNotContain(t, "进程的 stdout / stderr", p.Output(), pw, dsn)
-		faultMustContain(t, "stderr", stderr, "cannot reach "+chp.Addr(), "code: 81")
+		faultMustContain(t, "stderr", stderr, "cannot reach "+chp.Addr())
+		if !strings.Contains(stderr, "code: 81") && !strings.Contains(stderr, "driver: bad connection") {
+			t.Errorf("库不存在应报服务端的 code: 81（偶尔是 driver: bad connection），实际：%s", lastLine(stderr))
+		}
+		if strings.Contains(stderr, "authentication to") {
+			t.Errorf("库不存在不是认证失败：%s", lastLine(stderr))
+		}
 		if chp.Accepted() != faultPingAttempts {
 			t.Errorf("认不出来的错误照常重试，代理应收到 %d 个连接，实际 %d 个", faultPingAttempts, chp.Accepted())
 		}

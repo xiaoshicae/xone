@@ -28,6 +28,8 @@ type logOptions struct {
 	skipPrefix []string
 	reqBody    bool
 	respBody   bool
+	query      bool
+	respHeader bool
 }
 
 // WithSkipPaths 指定不记访问日志的路径。
@@ -52,6 +54,17 @@ func WithSkipPaths(paths ...string) LogOption {
 // 需要排查时再打开，并确认脱敏字段配全了。
 func WithBody(request, response bool) LogOption {
 	return func(o *logOptions) { o.reqBody, o.respBody = request, response }
+}
+
+// WithQuery 是否记录查询串。默认不记：查询串里常有凭证（?token=、签名、OAuth 的 code）。
+// 打开后按字段脱敏，规则同表单 body。
+func WithQuery(on bool) LogOption {
+	return func(o *logOptions) { o.query = on }
+}
+
+// WithResponseHeaders 是否记录响应头。默认不记。脱敏规则同请求头（Set-Cookie 等遮掉）。
+func WithResponseHeaders(on bool) LogOption {
+	return func(o *logOptions) { o.respHeader = on }
 }
 
 // writerPool 复用截响应用的 writer
@@ -144,6 +157,12 @@ func Log(opts ...LogOption) gin.HandlerFunc {
 				slog.Float64("elapsed_ms", millis(elapsed)),
 				slog.String("client_ip", c.ClientIP()),
 				{Key: "request_headers", Value: RedactHeaders(c.Request.Header)}, // 已是 slog.Value，slog.Any 会再装一次箱
+			}
+			if o.query && c.Request.URL.RawQuery != "" {
+				attrs = append(attrs, slog.String("query", redactForm(c.Request.URL.RawQuery)))
+			}
+			if o.respHeader {
+				attrs = append(attrs, slog.Attr{Key: "response_headers", Value: RedactHeaders(c.Writer.Header())})
 			}
 			if o.reqBody {
 				attrs = append(attrs, slog.String("request_body", RedactBody(reqBody, c.Request.Header.Get("Content-Type"))))

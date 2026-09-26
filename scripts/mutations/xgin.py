@@ -87,10 +87,20 @@ mutate("跳过日志的路径读的是配置", "xgin/xgin.go", "./xgin", "TestLo
 # 接反了的话，只开了请求体的人，响应体（可能带着令牌）进了日志
 mutate("请求体和响应体的开关各管各的", "xgin/xgin.go", "./xgin", "TestLogBody",
        swap('middleware.WithBody(c.LogRequestBody, c.LogResponseBody)', 'middleware.WithBody(c.LogResponseBody, c.LogRequestBody)'))
+# 两个开关各自接到对应的选项上：接成 true 就是默认把查询串、Set-Cookie 写进日志
+mutate("查询串的开关读的是配置", "xgin/xgin.go", "./xgin", "TestLogQueryAndResponseHeaders",
+       swap('middleware.WithQuery(c.LogQuery)', 'middleware.WithQuery(true)'))
+mutate("响应头的开关读的是配置", "xgin/xgin.go", "./xgin", "TestLogQueryAndResponseHeaders",
+       swap('middleware.WithResponseHeaders(c.LogResponseHeaders)', 'middleware.WithResponseHeaders(true)'))
 mutate("中文翻译的开关读的是配置", "xgin/xgin.go", "./xgin", "TestZHTranslations",
        swap('\t\tif c.ZHTranslations {', '\t\tif false {'))
 mutate("查询串不进访问日志", "xgin/middleware/log.go", "./xgin", "TestLog",
        swap('slog.String("path", c.Request.URL.Path),', 'slog.String("path", c.Request.URL.RequestURI()),'))
+# 开了 LogQuery 也得逐字段遮：?access_token= 原样进日志就是凭证落盘
+mutate("记下的查询串脱过敏", "xgin/middleware/log.go", "./xgin", "TestLog_Query",
+       swap('slog.String("query", redactForm(c.Request.URL.RawQuery))', 'slog.String("query", c.Request.URL.RawQuery)'))
+mutate("记下的响应头脱过敏", "xgin/middleware/log.go", "./xgin", "TestLog_ResponseHeaders",
+       swap('Value: RedactHeaders(c.Writer.Header())}', 'Value: slog.AnyValue(c.Writer.Header())}'))
 mutate("请求体只缓存前缀", "xgin/middleware/log.go", "./xgin", "TestSnapshotBody",
        swap('io.ReadAll(io.LimitReader(req.Body, maxRequestBody))','io.ReadAll(req.Body)',1))
 mutate("预读时的错误接回下游", "xgin/middleware/log.go", "./xgin", "TestSnapshotBody",

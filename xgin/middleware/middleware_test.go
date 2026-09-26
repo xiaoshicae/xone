@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -250,6 +251,47 @@ func TestLog_UnmatchedRouteIsUnmatched(t *testing.T) {
 	l := lines()[0]
 	if l["route"] != "unmatched" || l["path"] != "/nope/1" || l["status"] != float64(404) {
 		t.Errorf("没匹配上的请求 route 该是 unmatched、path 是真实路径，got=%v", l)
+	}
+}
+
+func TestLog_QueryIsRedacted(t *testing.T) {
+	// 查询串里常有凭证（access_token、签名）：打开之后也得逐字段遮
+	lines := capture(t)
+	serve(t, get("/hello?page=2&access_token=t0p"), []gin.HandlerFunc{Log(WithQuery(true))}, func(c *gin.Context) {
+		c.Status(200)
+	})
+	q, _ := lines()[0]["query"].(string)
+	if !strings.Contains(q, "page=2") || strings.Contains(q, "t0p") {
+		t.Errorf("query 该留 page、遮掉 access_token，got=%q", q)
+	}
+}
+
+func TestLog_QueryOffByDefault(t *testing.T) {
+	lines := capture(t)
+	serve(t, get("/hello?page=2"), []gin.HandlerFunc{Log()}, func(c *gin.Context) { c.Status(200) })
+	if _, ok := lines()[0]["query"]; ok {
+		t.Errorf("默认不该记 query，got=%v", lines()[0])
+	}
+}
+
+func TestLog_ResponseHeadersAreRedacted(t *testing.T) {
+	lines := capture(t)
+	serve(t, get("/hello"), []gin.HandlerFunc{Log(WithResponseHeaders(true))}, func(c *gin.Context) {
+		c.Header("X-Page-Total", "7")
+		c.Header("Set-Cookie", "sid=abc123")
+		c.Status(200)
+	})
+	h, ok := lines()[0]["response_headers"].(map[string]any)
+	if !ok || fmt.Sprint(h["X-Page-Total"]) != "7" || strings.Contains(fmt.Sprint(h), "abc123") {
+		t.Errorf("response_headers 该留普通头、遮掉 Set-Cookie，got=%v", lines()[0]["response_headers"])
+	}
+}
+
+func TestLog_ResponseHeadersOffByDefault(t *testing.T) {
+	lines := capture(t)
+	serve(t, get("/hello"), []gin.HandlerFunc{Log()}, func(c *gin.Context) { c.Status(200) })
+	if _, ok := lines()[0]["response_headers"]; ok {
+		t.Errorf("默认不该记 response_headers，got=%v", lines()[0])
 	}
 }
 

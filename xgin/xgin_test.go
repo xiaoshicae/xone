@@ -150,8 +150,8 @@ func TestConfig_Defaults(t *testing.T) {
 	if !c.Log || !c.Trace || !c.Metric {
 		t.Errorf("三个内置中间件默认都该开着，got=%+v", c)
 	}
-	if c.LogRequestBody || c.LogResponseBody || c.ZHTranslations {
-		t.Errorf("记 body 和中文翻译默认都该关着（代价和风险都不小），got=%+v", c)
+	if c.LogRequestBody || c.LogResponseBody || c.LogQuery || c.LogResponseHeaders || c.ZHTranslations {
+		t.Errorf("记 body、查询串、响应头和中文翻译默认都该关着（代价和风险都不小），got=%+v", c)
 	}
 	if c.MetricPath != "/metrics" {
 		t.Errorf("指标路径默认应为 /metrics，got=%q", c.MetricPath)
@@ -471,6 +471,42 @@ func TestLogBody_TogglesAreIndependent(t *testing.T) {
 		}
 		if got := strings.Contains(out, "response_body") && strings.Contains(out, "hi-bob"); got != c.resp {
 			t.Errorf("%s：响应体进了日志=%v，want %v\n%s", c.name, got, c.resp, out)
+		}
+	}
+}
+
+func TestLogQueryAndResponseHeaders_TogglesReachMiddleware(t *testing.T) {
+	// 两个开关都要一路传到 middleware.Log：查询串里常有凭证，默认关着的时候一个字都不该进日志
+	for _, c := range []struct {
+		name          string
+		query, header bool
+	}{
+		{"只记查询串", true, false},
+		{"只记响应头", false, true},
+		{"默认都不记", false, false},
+	} {
+		buf := captureLog(t)
+		e := New().WithConfig(configWith(func(cfg *Config) {
+			cfg.Metric, cfg.Trace = false, false
+			cfg.LogQuery, cfg.LogResponseHeaders = c.query, c.header
+		})).WithRoutes(func(e *gin.Engine) {
+			e.GET("/search", func(c *gin.Context) {
+				c.Header("X-Page-Total", "7")
+				c.Header("Set-Cookie", "sid=abc123")
+				c.Status(200)
+			})
+		}).Engine()
+		e.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", "/search?page=2&token=t0p", nil))
+
+		out := buf.String()
+		if got := strings.Contains(out, `"query":"page=2`); got != c.query {
+			t.Errorf("%s：查询串进了日志=%v，want %v\n%s", c.name, got, c.query, out)
+		}
+		if got := strings.Contains(out, "response_headers") && strings.Contains(out, "X-Page-Total"); got != c.header {
+			t.Errorf("%s：响应头进了日志=%v，want %v\n%s", c.name, got, c.header, out)
+		}
+		if strings.Contains(out, "t0p") || strings.Contains(out, "abc123") {
+			t.Errorf("%s：查询串里的 token、响应头里的 Set-Cookie 该被遮掉\n%s", c.name, out)
 		}
 	}
 }

@@ -190,6 +190,8 @@ func (g *XGin) build() {
 			e.Use(middleware.Log(
 				middleware.WithSkipPaths(skip...),
 				middleware.WithBody(c.LogRequestBody, c.LogResponseBody),
+				middleware.WithQuery(c.LogQuery),
+				middleware.WithResponseHeaders(c.LogResponseHeaders),
 			))
 		}
 		if c.Metric {

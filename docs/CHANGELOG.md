@@ -8,6 +8,12 @@
 
 ## [未发布]
 
+### 新增
+
+- xgin 访问日志可以记查询串和响应头：`XGin.LogQuery: true` 加字段 `query`（逐字段脱敏），
+  `XGin.LogResponseHeaders: true` 加字段 `response_headers`（`Set-Cookie` 等凭证类脱敏）。默认都关。
+  词表里没有的敏感参数名（比如 OAuth 的 `code`）用 `middleware.AddSensitiveFields` 补上。
+
 ### 修复
 
 - 日志里的耗时带上单位：xgin 访问日志、xgorm 的 SQL 日志、xflow 的流程 / 步骤日志的 `elapsed` 改名为 `elapsed_ms`，

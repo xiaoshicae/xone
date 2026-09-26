@@ -22,6 +22,8 @@
 ## 日志
 
 xlog 把 `slog.Default()` 换成按 `XLog` 配好的 handler，业务和框架都写它。
+要写到自己的日志后端（zap、公司的日志 SDK），在 `xone.Run` 之前 `xlog.UseHandler(h)`，下面这些照样生效，
+见 [xlog「用自己的日志后端」](../xlog/README.md#用自己的日志后端)。
 
 - **`trace_id` / `span_id`**：有链路时（见[链路](#链路)），用带 ctx 的方法（`slog.InfoContext(ctx, …)`）写的每一条都自动带上；
   xlog 本身不依赖 OpenTelemetry，这一步由 xtrace 经 `xlog.SetTraceExtractor` 接上。

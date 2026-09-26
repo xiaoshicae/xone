@@ -193,11 +193,52 @@ func init() {
 // closer 由 initXLog 填好，closeXLog 用它关掉写入器
 var closer io.Closer
 
+// custom 是 UseHandler 给的后端，nil 表示按 XLog 配置建；installed 表示日志已经装好
+var (
+	custom    atomic.Pointer[slog.Handler]
+	installed atomic.Bool
+)
+
+// UseHandler 让日志写到你自己的 handler 上（zap 的 slog 桥、公司的日志 SDK……）。
+// 在 xone.Run 之前调，比如 main 的第一行。
+//
+// xlog 照样把它包一层再装成 slog.Default()：trace_id、AddKV / CtxWithKV 的字段、
+// 错误日志计数都还在，框架的访问日志、SQL 日志也都写进它，只是最后由它来写。
+//
+// 这时 XLog 块决定的是 xlog 自己怎么写，一项都不起作用；写了就启动失败，
+// 免得你以为 Level: debug 生效了。级别、格式、输出去向都由你的 handler 决定。
+// 传 nil 恢复按 XLog 配置。
+//
+// 日志装好之后（xone.Run 已经走过日志那一档）再调不会生效，只打一条 WARN。
+func UseHandler(h slog.Handler) {
+	if installed.Load() {
+		slog.Warn("xlog.UseHandler called after logging was installed, ignored; call it before xone.Run")
+		return
+	}
+	if h == nil {
+		custom.Store(nil)
+		return
+	}
+	custom.Store(&h)
+}
+
 // initXLog 读配置，然后装好日志
 func initXLog(context.Context) error {
 	c := DefaultConfig()
 	if err := xconfig.Unmarshal(ConfigKey, &c); err != nil {
 		return err
+	}
+	if h := custom.Load(); h != nil {
+		// 块写了但一项都没改默认值（比如只写了 Level: info）不算冲突：它本来就是这个意思
+		if c != DefaultConfig() {
+			return xerror.Newf("xlog", "config",
+				"%s has no effect when xlog.UseHandler is set: level, format and outputs are up to your handler; remove the %s block",
+				ConfigKey, ConfigKey)
+		}
+		closer = nil
+		slog.SetDefault(slog.New(newCtxHandler(*h)))
+		installed.Store(true)
+		return nil
 	}
 	return install(c)
 }
@@ -216,6 +257,7 @@ func install(c Config) error {
 	// 装进标准库的全局默认 logger：业务代码直接用 slog.Info / slog.InfoContext，
 	// 不需要认识本包。这与 slog.SetDefault 是同一个模式。
 	slog.SetDefault(l)
+	installed.Store(true)
 	return nil
 }
 
@@ -229,6 +271,7 @@ func install(c Config) error {
 // 原先 slog.Default() 还指着已经关掉的文件，Console 关着的话这些日志一声不响就没了，
 // 而它们恰恰是排查「为什么没有正常退出」最要紧的那几条
 func closeXLog(context.Context) error {
+	installed.Store(false) // 同一进程里再跑一次 Run（测试里常见）时，UseHandler 照样能用
 	if closer == nil {
 		return nil
 	}

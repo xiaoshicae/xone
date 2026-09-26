@@ -8,6 +8,11 @@
 
 ## [未发布]
 
+### 新增
+
+- `xlog.UseHandler(h)`：日志改由你自己的 `slog.Handler` 写（zap 的 slog 桥、公司的日志 SDK……），在 `xone.Run` 之前调。
+  `trace_id`、`AddKV` 的字段、错误日志计数和框架自己的日志都照样写进它；这时再写 `XLog` 块会启动失败。
+
 ### 修复
 
 - 只用核心（`xone.Func`、`xone.UntilSignal`，一个集成都没 import）的程序，写了 `XLog` 块会启动失败

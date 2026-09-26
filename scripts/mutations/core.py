@@ -532,6 +532,16 @@ mutate("最终配置里不带注释", "internal/config/debug.go", ".", "TestReda
 # XApp 跟着框架一起来：只 import 根包的程序写了 XApp.Name 也能启动
 mutate("根包带着 xapp", "xone.go", ".", "TestRun_XAppWorksWithCoreOnly",
        swap('\t_ "github.com/xiaoshicae/xone/xapp"\n', ''))
+# UseHandler：换了后端，xlog 那一层（AddKV、trace_id、观察者）照样包在外面
+mutate("自己的 handler 外面照样包着 xlog", "xlog/xlog.go", ".", "TestUseHandler_LogsGoToOwn",
+       swap('slog.SetDefault(slog.New(newCtxHandler(*h)))', 'slog.SetDefault(slog.New(*h))'))
+# 写了 XLog.Level: debug 却由别人的 handler 决定级别，以为生效了其实没有
+mutate("UseHandler 和 XLog 块同时写就启动失败", "xlog/xlog.go", ".", "TestUseHandler_XLogBlock",
+       swap('if c != DefaultConfig() {', 'if false {'))
+mutate("日志装好之后 UseHandler 不生效", "xlog/xlog.go", ".", "TestUseHandler_LateCall",
+       swap('\tif installed.Load() {\n', '\tif false {\n'))
+mutate("关掉之后 UseHandler 重新可用", "xlog/xlog.go", ".", "TestUseHandler_UsableAgain",
+       swap('\tinstalled.Store(false) // 同一进程里再跑一次 Run', '\t// 同一进程里再跑一次 Run'))
 # XLog 同理：只 import 根包的程序写了 XLog 也能启动，日志按它配好
 mutate("根包带着 xlog", "xone.go", ".", "TestRun_XLogWorksWithCoreOnly",
        swap('\t_ "github.com/xiaoshicae/xone/xlog"\n', ''))

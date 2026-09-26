@@ -1,0 +1,533 @@
+# core 的变异：根模块（核心） 里的承诺。写法见 scripts/mutations/__init__.py
+from . import cut, mutate, section, swap
+
+section("配置")
+mutate("日志按配置的时区渲染", "xlog/xlog.go", ".", "TestNew_RendersTimeInConfiguredTimezone|TestNew_FailsWhenTimezoneCannotLoad",
+       swap('ReplaceAttr: inLocation(loc)}', 'ReplaceAttr: nil}\n\t_ = loc'))
+mutate("时区加载不到直接失败", "xlog/xlog.go", ".", "TestNew_FailsWhenTimezoneCannotLoad",
+       swap('''\tloc, err := time.LoadLocation(name)
+\tif err != nil {''', '''\tloc, err := time.LoadLocation(name)
+\tif false {'''))
+# 文件名最细到分钟：0s 实际每分钟一个文件、30s 两个周期撞同一个名字，都是配了 A 跑的是 B
+mutate("轮转周期短于一分钟启动失败", "xlog/config.go", ".", "TestNew_FailsFastOnRotationPeriodUnderOneMinute",
+       swap('if c.RotateTime < time.Minute {', 'if c.RotateTime < 0 {'))
+mutate("MaxAge 为负启动失败", "xlog/config.go", ".", "TestNew_MaxAge", swap('if c.MaxAge < 0 {', 'if false {'))
+# 校验函数本身是对的不算数，New 得真的调它
+mutate("New 真的校验了文件输出的配置", "xlog/xlog.go", ".", "TestNew",
+       swap('\tif err := cfg.File.validate(); err != nil {\n\t\treturn nil, nil, xerror.New("xlog", "config", err)\n\t}\n', ''))
+mutate("Perm 认 0o644 写法", "xlog/xlog.go", ".", "TestParsePerm", swap('strings.TrimPrefix(s, "0o")', 's'))
+# 关掉文件之后 slog.Default() 还指着它的话，Run 返回的错误、被丢下的停止钩子打的日志全没了
+mutate("关掉日志文件之后改写 stderr", "xlog/xlog.go", ".", "TestCloseXLog",
+       swap('\tslog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, nil)))\n\treturn closer.Close()', '\treturn closer.Close()'))
+# {Name} 上已经有普通文件时，Rename 会把它原子地换成符号链接，旧日志一声不响就没了
+mutate("同名普通文件不被符号链接覆盖", "xlog/rotate.go", ".", "TestRotateWriter",
+       cut('\tif occupied(w.linkName) {\n\t\treturn nil, xerror.Newf(', 'change File.Name", w.linkName)\n\t}\n'))
+mutate("运行中链接位置被占了也不覆盖", "xlog/rotate.go", ".", "TestRotateWriter",
+       cut('\tif occupied(w.linkName) {\n\t\twarnf(', 'not updating the link", w.linkName)\n\t\treturn\n\t}\n'))
+# app.log.bak、app.log.1.gz 都匹配 base.*，按 mtime 判断就会被当成过期日志删掉
+mutate("清理只删自己命名的文件", "xlog/rotate.go", ".", "TestRotateWriter",
+       swap('\t\treturn !t.Add(period).After(cutoff)\n\t}\n\treturn false\n}', '\t\treturn !t.Add(period).After(cutoff)\n\t}\n\treturn true\n}'))
+mutate("换过粒度之后旧文件照样清", "xlog/rotate.go", ".", "TestRotateWriter",
+       swap('\t\tt, err := time.ParseInLocation(l.layout, suffix, w.clock().Location())',
+     '\t\tif l.layout != w.layout {\n\t\t\tcontinue\n\t\t}\n\t\tt, err := time.ParseInLocation(l.layout, suffix, w.clock().Location())'))
+# 旧粒度的文件按现在的 RotateTime 算周期的话，从按天改成按小时之后，
+# 今天那个还在写的按天文件零点一过就被当成过期删掉
+mutate("旧粒度的文件按它自己那一档的周期算过期", "xlog/rotate.go", ".", "TestRotateWriter",
+       swap('\t\tperiod := l.period\n\t\tif l.layout == w.layout {\n\t\t\tperiod = w.rotate\n\t\t}\n', '\t\tperiod := w.rotate\n'))
+# 只在轮转时清的话，按天轮转、一天重启几次的服务永远等不到那次轮转
+mutate("打开时就清理一次过期文件", "xlog/rotate.go", ".", "TestRotateWriter",
+       swap('\tw.purge(w.currentName)\n\treturn w, nil', '\treturn w, nil'))
+# CtxWithKV 要派生一份副本：直接往父作用域里写，兄弟之间就串了、访问日志也被污染
+mutate("CtxWithKV 不写回父 ctx", "xlog/ctx.go", ".", "TestCtxWithKV",
+       swap('return context.WithValue(ctx, ctxScopeKey{}, parent.copyWith(kvs))', 'parent.addAll(kvs)\n\treturn context.WithValue(ctx, ctxScopeKey{}, parent)'))
+mutate("CtxWithKV 带着父 ctx 已有的字段", "xlog/ctx.go", ".", "TestCtxWithKV",
+       swap('\tfor k, v := range s.kv {\n\t\tc.kv[k] = v\n\t}\n\tfor k, v := range kvs {', '\tfor k, v := range kvs {'))
+mutate("片段也有 profile 变体", "internal/config/source.go", ".", "TestLoad",
+       swap('nested, err := fileSet(target, d, false, profiles, seen, depth+1)',
+     'nested, err := withImports(target, d, profiles, seen, depth+1)'))
+mutate("重试的等待逐次翻倍", "xutil/convert.go", ".", "TestRetry", swap('\t\t\tbackoff = nextBackoff(backoff)\n', ''))
+mutate("预算按退避上界算", "xutil/convert.go", ".", "TestRetryBudget",
+       swap('''\tbudget := timeout * time.Duration(attempts)
+\tbackoff := min(interval, maxBackoff) // 与 Retry 一致：第一次也封顶
+\tfor i := 1; i < attempts; i++ {
+\t\tbudget += backoff
+\t\tbackoff = nextBackoff(backoff)
+\t}
+\treturn budget''', '\treturn timeout*time.Duration(attempts) + interval*time.Duration(attempts-1)'))
+# 文档说每次最多等 maxBackoff，第一次等待从前原样用 interval
+mutate("第一次等待也封顶", "xutil/convert.go", ".", "TestRetry_FirstWaitAlsoCapped",
+       swap('\tvar last error\n\tbackoff := min(interval, maxBackoff)', '\tvar last error\n\tbackoff := interval'))
+mutate("预算里的第一次退避也封顶", "xutil/convert.go", ".", "TestRetryBudget_FirstBackoffAlsoCapped",
+       swap('\tbackoff := min(interval, maxBackoff) // 与 Retry 一致', '\tbackoff := interval // 与 Retry 一致'))
+mutate("重试的等待带抖动", "xutil/convert.go", ".", "TestJitter",
+       swap('\treturn time.Duration(rand.Int64N(int64(d) + 1))', '\treturn d - time.Duration(rand.Int64N(2))'))
+# 密码错、库不存在也照样重试满整轮，启动白白拖长几十秒
+mutate("永久错误不再重试", "xutil/convert.go", ".", "TestRetry_NoRetryOnPermanentError|TestRetry_RecognizesWrappedPermanentError",
+       swap('errors.As(last, &p) {', 'errors.As(last, &p) && false {'))
+mutate("永久错误返回去掉标记的原错误", "xutil/convert.go", ".", "TestRetry_NoRetryOnPermanentError|TestRetry_RecognizesWrappedPermanentError",
+       swap('\t\t\treturn p.err\n\t\t}\n', '\t\t\treturn last\n\t\t}\n'))
+# 退避期间被取消时只报上一次的「连不上」，启动路径会把按要求退出当成故障
+mutate("退避期间被取消时如实报告取消", "xutil/convert.go", ".", "TestRetry",
+       swap('return fmt.Errorf("%w, last attempt failed: %w", err, last)', 'return fmt.Errorf("%v, last attempt failed: %w", err, last)'))
+# yaml.v3 对没写 tag 的字段只认全小写：照着字段名写，报的是「field Endpoint not found」，
+# 字段明明就叫这个。提示丢了的话，使用者只能对着一个自相矛盾的报错发愣
+mutate("字段没写 tag 时报错说怎么改", "internal/config/strict.go", ".", "TestDecodeStrict",
+       swap('\tif s.untagged[key] {', '\tif false {'))
+# yaml 的类型错误带着值的前几个字符，${VAR} 又是凭证的推荐写法：密码填错了字段，
+# 它的一截就进了启动日志。调用点和「记下展开了哪些值」各打一条
+mutate("占位符展开出来的值不进报错", "internal/config/strict.go", ".", "TestUnmarshal_ExpandedPlaceholderValueNotInError",
+       swap('e = c.at(n) + ": " + c.redact(n, msg)', 'e = c.at(n) + ": " + msg'))
+mutate("加载时记下占位符展开出来的值", "internal/config/config.go", ".", "TestUnmarshal_ExpandedPlaceholderValueNotInError",
+       swap('\texpand(root, &missing, values)', '\texpand(root, &missing, nil)'))
+# 变量的值恰好是 null / ~ 时，重新判定把它当成「没写」，字段悄悄留在默认值上
+mutate("展开出来的 null 写法仍是字符串", "internal/config/config.go", ".", "TestLoad_PlaceholderNullLiteralIsNotTreatedAsUnset",
+       swap('\t\tif n.ShortTag() == "!!null" {\n\t\t\tn.Tag = "!!str"\n\t\t}\n', ''))
+# 严格解码从前是把节点序列化成文本再解的：报的是那段文本的行号，也没有文件名。
+# 现在每条报错都记在节点名下——拼错记在 key 上、类型错误记在值上，
+# 「记下节点来自哪个文件」、合并出来的副本跟着第一个 key 走，各打一条
+mutate("字段拼错时报的是那个 key 的行号", "internal/config/strict.go", ".", "TestLoad_BadFieldReportsFileAndLine",
+       swap('c.errs = append(c.errs, c.at(k)+": "+s.notFound(k.Value, t))', 'c.errs = append(c.errs, c.at(n)+": "+s.notFound(k.Value, t))'))
+mutate("类型错误也报出配置文件和那一行", "internal/config/strict.go", ".", "TestLoad_BadFieldReportsFileAndLine",
+       swap('if msg, ok := strings.CutPrefix(e, fmt.Sprintf("line %d: ", n.Line)); ok {', 'if msg, ok := e, false; ok {'))
+mutate("字段写错时报出是哪个文件", "internal/config/config.go", ".", "TestLoad_BadFieldReportsFileAndLine",
+       swap('remember(f.node, f.path, from)', 'remember(f.node, "", from)'))
+mutate("合并出来的块跟着第一个 key 认文件", "internal/config/strict.go", ".", "TestLoad_BadFieldReportsFileAndLine",
+       swap('for ; n != nil; n = first(n) {', 'for ; n != nil; n = nil {'))
+mutate("字段拼错要启动失败", "internal/config/strict.go", ".", "TestLoad",
+       swap('\t\tif ft == nil {\n\t\t\tc.errs = append(c.errs, c.at(k)+": "+s.notFound(k.Value, t))\n',
+            '\t\tif ft == nil {\n'))
+# 未知字段是自己按类型查的，认字段的规则一处和 yaml.v3 不一样，要么拼错放行、要么合法的配置起不来
+mutate("<< 并进来的字段照样认", "internal/config/strict.go", ".", "TestLoad_Anchor",
+       swap('if k.Kind == yaml.ScalarNode && k.Value == "<<" && k.ShortTag() == "!!merge" {', 'if false {'))
+mutate(",inline 的结构体摊平来认", "internal/config/strict.go", ".", "TestDecodeStrict_FieldRulesMatchYAML",
+       swap('\t\t\t\ts.add(ft) //', '\t\t\t\t_ = ft //'))
+mutate(",inline 的 map 收下认不出的 key", "internal/config/strict.go", ".", "TestDecodeStrict_FieldRulesMatchYAML",
+       swap('\t\t\t\ts.inline = ft.Elem()', '\t\t\t\t_ = ft'))
+# 自己会解的元素要在检查那一遍里就试解：等到最后才解的话，外面有一处写错，
+# 元素里的问题要改完、重启一次才看得见
+mutate("集合元素里的问题和外面的一起报", "internal/config/strict.go", ".", "TestLoad_CollectionElementErrorsReportedWithOthers",
+       swap('reflect.PointerTo(t).Implements(obsoleteType):\n\t\treturn c.try(n, t)',
+            'reflect.PointerTo(t).Implements(obsoleteType):\n\t\treturn nil'))
+mutate("占位符按替换后的内容判定类型", "internal/config/config.go", ".", "TestLoad",
+       swap('\t\tif n.Value != before {\n\t\t\tretag(n)\n', '\t\tif n.Value != before {\n'))
+# 合并按名字对齐 key，重复在那一步就被吞掉了，所以只能在每个文件解析时查。
+# 打在调用点上：从前只有第一个文件的重复查得出来，profile 和 import 进来的全漏
+mutate("每个文件里的重复 key 都要报错", "internal/config/source.go", ".", "TestLoad",
+       cut('\tif err := checkDuplicates(&doc); err != nil {', 'return nil, xerror.Newf("xconfig", "config", "config %s: %w", path, err)\n\t}\n'))
+# 只有注释的 profile 文件从前把前面所有文件整个替换掉，全部配置退回默认值
+mutate("空文件叠上来不改变任何东西", "internal/config/merge.go", ".", "TestLoad",
+       swap('return n == nil || n.Kind == 0 || isNull(n)', 'return n == nil || isNull(n)'))
+mutate("叠加文件里的 null 不覆盖低优先级的值", "internal/config/merge.go", ".", "TestLoad",
+       swap('return n == nil || n.Kind == 0 || isNull(n)', 'return n == nil || n.Kind == 0'))
+mutate("占位符展开为空时保持默认值", "internal/config/config.go", ".", "TestLoad",
+       swap('\tcase n.Value == "":\n\t\tn.Tag = "!!null"\n', '\tcase n.Value == "":\n'))
+mutate("锚点可以跨顶层块引用", "internal/config/source.go", ".", "TestLoad",
+       swap('\tbudget := maxResolvedNodes\n\tout, err := resolveAliases(&doc, &budget)', '\tout, err := &doc, error(nil)'))
+mutate("XApp.Profiles 收逗号分隔的字符串", "internal/config/config.go", ".", "TestLoad",
+       swap('out = append(out, splitProfiles(a)...)', 'out = append(out, a)'))
+mutate("XApp.Profiles 里的占位符会展开", "internal/config/config.go", ".", "TestLoad",
+       swap('''\tvar missing []string
+\texpand(node, &missing, nil)
+\tif len(missing) > 0 {
+\t\treturn nil, xerror.Newf("xconfig", "config",
+\t\t\t"environment variables not set in %s.%s of %s: %s", AppKey, ProfilesKey, path, strings.Join(missing, ", "))
+\t}
+''', ''))
+mutate("被引进来的文件里写了 XApp.Profiles 就报错", "internal/config/config.go", ".", "TestLoad",
+       swap('if takeFromApp(f.node, ProfilesKey) != nil {',
+     'if p, _ := profilesOf(f.node, f.path); len(p) > 0 {'))
+# config_schema.json 从前在编辑器里一个字段拼错都标不出来，单实例 / 多实例两种写法
+# 却全被标红——下面四条各守一处它和运行时对不上的地方
+# map 的 value 从零值开始解：不逐个铺默认值，多实例里没写的字段全成了零值
+mutate("多实例写法里没写的字段保持默认", "internal/config/clients.go", ".", "TestUnmarshalClients",
+       swap('\tc := defaults()\n', '\tvar c C\n'))
+# node.Decode 不带严格检查，「字段拼错就启动失败」在多实例里悄悄失效
+mutate("多实例写法里拼错也报错", "internal/config/clients.go", ".", "TestUnmarshalClients",
+       swap('if err := DecodeStrict(n, &c); err != nil {', 'if err := n.Decode(&c); err != nil {'))
+# 实例的报错点名是哪个实例，并且用 %w 保住 yaml 的类型错误
+mutate("多实例写法里拼错时点名实例、保住类型错误", "internal/config/clients.go", ".", "TestUnmarshalClients_TypoInInstanceReportsFileAndLine",
+       swap('fmt.Errorf("%s.%s: %w", clientsKey, name, err)', 'fmt.Errorf("%s.%s: %v", clientsKey, name, err)'))
+mutate("多实例的每个实例都调一次 Validate", "internal/config/clients.go", ".", "TestUnmarshalClients_CallsValidateForEachInstance",
+       swap('any(&c).(interface{ Validate() error })', 'any(c).(interface{ Validate() error })'))
+
+section("启动与退出")
+# Stop 是可选的：实现了才调。打在调用点上——绕开类型断言，写了 Stop 的服务就停不下来
+# xone.Func / UntilSignal：不写类型也能交给 Run 的两个 Runnable
+mutate("Func 的错误就是 Run 的错误", "xone.go", ".", "TestFunc_", swap('func (f funcRunnable) Start(ctx context.Context) error { return f(ctx) }', 'func (f funcRunnable) Start(ctx context.Context) error { _ = f(ctx); return nil }'))
+mutate("Func(nil) 当场 panic", "xone.go", ".", "TestFunc_", swap('\tif fn == nil {\n\t\tpanic("xone: Func needs', '\tif false {\n\t\tpanic("xone: Func needs'))
+mutate("UntilSignal 阻塞到退出信号", "xone.go", ".", "TestUntilSignal", swap('\t\t<-ctx.Done()\n\t\treturn nil\n', '\t\treturn nil\n'))
+mutate("写了 Stop 的才调它", "xone.go", ".", "TestRun_ClosesInReverseOrder|TestRun_StartOnlyRunnableWorks",
+       swap('\tif s, ok := r.(stopper); ok {\n', '\tif s, ok := any(nil).(stopper); ok {\n'))
+# Stop 签名写错编译器不拦，那个 Stop 就永远不会被调到
+mutate("Stop 签名写错时直接报错", "xone.go", ".", "TestRun_StopWithWrongSignatureFails",
+       swap('if m, ok := t.MethodByName("Stop"); ok {', 'if m, ok := t.MethodByName("NoSuchMethod"); ok {'))
+mutate("Stop 写在指针上却传了值时直接报错", "xone.go", ".", "TestRun_StopOnPointerButValuePassedFails",
+       swap('reflect.PointerTo(t).MethodByName("Stop")', 'reflect.PointerTo(t).MethodByName("NoSuchMethod")'))
+mutate("列表整体替换不逐元素合并", "internal/config/merge.go", ".", "TestLoad",
+       swap('''\tif base.Kind != yaml.MappingNode || override.Kind != yaml.MappingNode {
+\t\treturn override
+\t}''', '''\tif base.Kind == yaml.SequenceNode && override.Kind == yaml.SequenceNode {
+\t\tout := *base
+\t\tout.Content = append(append([]*yaml.Node{}, override.Content...), base.Content[len(override.Content):]...)
+\t\treturn &out
+\t}
+\tif base.Kind != yaml.MappingNode || override.Kind != yaml.MappingNode {
+\t\treturn override
+\t}'''))
+# 把这份文档挪到它 import 的那些后面，优先级就反过来了。
+# 带上那行注释是为了锚定唯一一处：fileSet 里有一段一模一样的
+# `out = append(out, nested...)` + return
+mutate("import 进来的压过引它的", "internal/config/source.go", ".", "TestLoad",
+       swap('\tout := []loaded{{path: path, node: doc}}\n', '\tvar out []loaded\n'),
+       swap('''\t\t// import 进来的文件同样有 profile 变体，但变体不存在不算错
+\t\tnested, err := fileSet(target, d, false, profiles, seen, depth+1)
+\t\tif err != nil {
+\t\t\treturn nil, err
+\t\t}
+\t\tout = append(out, nested...)
+\t}
+\treturn out, nil''', '''\t\tnested, err := fileSet(target, d, false, profiles, seen, depth+1)
+\t\tif err != nil {
+\t\t\treturn nil, err
+\t\t}
+\t\tout = append(out, nested...)
+\t}
+\tout = append(out, loaded{path: path, node: doc})
+\treturn out, nil'''))
+# 第三个参数是 variantRequired：主文件的 profile 变体必须存在
+mutate("profile 文件不存在直接失败", "internal/config/source.go", ".", "TestLoad",
+       swap('files, err := fileSet(base, doc, true, active, seen, 0)', 'files, err := fileSet(base, doc, false, active, seen, 0)'))
+mutate("第二个信号能终止卡住的进程", "xone.go", ".", "TestRun",
+       swap('\t\t\tsignal.Stop(ch)\n\t\t\to.log().Info(','\t\t\to.log().Info(',1))
+# Stop 要能真的做事。沿用被取消的 ctx 的话，每个关闭动作一进去就被拒绝——
+# 在途请求没做完、注册中心那条记录没注销，等于没有优雅退出这回事
+mutate("Stop 拿到的 ctx 不继承那次取消", "xone.go", ".", "TestRun_StopCtxDoesNotInheritCancellation",
+       swap('context.WithTimeout(context.WithoutCancel(ctx), o.stopTimeout)','context.WithTimeout(ctx, o.stopTimeout)'))
+# Stop 收了 ctx 却不看它：同步调的话 Run 永远返回不了，一个停止钩子都轮不到
+# 到点之后不留那一截余量：看着截止时间返回的 Stop 报的错被丢掉，进程以 0 退出
+mutate("看着截止时间返回的 Stop 报的错不丢", "xone.go", ".", "TestRun_DeadlineAwareStopErrorIsKept",
+       swap('case <-time.After(stopGrace):', 'default:'))
+mutate("不看 ctx 的 Stop 挂不住退出", "xone.go", ".", "TestRun_StopIgnoringCtxDoesNotHangExit",
+       swap('errors.Join(first, stopServer(serverCtx, o, s))', 'errors.Join(first, safe("stop", func() error { return s.Stop(serverCtx) }))'))
+# 服务只能用预算的前 2/3。让它用满整份的话，不肯退出的服务把时间吃光，
+# 每个停止钩子一进去就判超时，Close() 被扔进没人等的协程，资源全留在原地
+mutate("服务吃不掉留给停止钩子的那一段", "xone.go", ".", "TestShutdown|TestRun_ClosesOthersWhenServiceWontExit",
+       swap('context.WithTimeout(stopCtx, o.stopTimeout-o.stopTimeout/3)', 'context.WithTimeout(stopCtx, o.stopTimeout)'))
+# K8s 发 SIGTERM，Ctrl-C 发 SIGINT。漏掉任何一个，那条路径上就没有优雅退出
+mutate("两种退出信号都监听", "xone.go", ".", "TestRun_ListensForBothExitSignals",
+       swap('[]os.Signal{syscall.SIGINT, syscall.SIGTERM}','[]os.Signal{syscall.SIGTERM}'))
+# xlog 是在启动钩子里换掉全局 logger 的。Run 开头把它捕获一次的话，
+# 之后所有框架日志都还写在旧的那个上——服务起来了，初始化日志一行看不到
+mutate("框架日志每次重新取全局 logger", "xone.go", ".", "TestRun_FrameworkLogsFollowGlobalLoggerSwappedByHook",
+       swap('\tctx, stopSignals := notifyShutdown(o)','\to.logger = o.log()\n\tctx, stopSignals := notifyShutdown(o)'))
+mutate("停止钩子受停止预算约束", "xone.go", ".", "TestShutdown",
+       swap('err := runWithin(hookCtx, e)', 'err := safeHook(hookCtx, e)'))
+# 一个卡住的钩子能用到整个截止时间的话，后面的钩子揣着过期的 ctx 进去当场判超时，
+# 最后关的日志连关文件都来不及
+mutate("钩子之间给排在后面的各留一份", "xone.go", ".", "TestShutdown",
+       swap('end.Add(-time.Duration(len(todo)-1-i)*reserve)', 'end.Add(-time.Duration(len(todo)-1-i)*reserve*0)'))
+mutate("启动期间收到信号就不启动服务", "xone.go", ".", "TestRun",
+       swap('started, err := runStart(ctx, o)','started, err := runStart(context.Background(), o)'))
+mutate("出错时问得出是谁报的", "xone.go", ".", "TestRun",
+       swap('xerror.Newf("xone", "start", "%s: %w", e.Name, err)', 'xerror.Newf("xone", "start", "%s: %v", e.Name, err)'))
+# Run 返回的是 errors.Join。只顺着单链往里走的话，Join 里排在后面的兄弟
+# 从来没被看过：Is(Join(xgin 的错, xgorm 的错), "xgorm") 是 false
+mutate("xerror.Is 走遍 Join 的每个分支", "xerror/xerror.go", ".", "TestIs",
+       cut('\tcase interface{ Unwrap() []error }:\n', '\t\t\t\treturn true\n\t\t\t}\n\t\t}\n'))
+# 一条错误只有一个框：从前每层都带完整的「xone {module} {op} failed, err=[...]」，
+# 根因被埋在最里面的括号里。下面三条各守一处
+mutate("同模块的里层只留 op 和原因", "xerror/xerror.go", ".", "TestNewf|TestNew_",
+       swap('\tif !n.same {\n\t\treturn n.e.render(false)\n\t}', '\tif true {\n\t\treturn n.e.render(false)\n\t}'))
+mutate("里层不再重复 xone 前缀", "xerror/xerror.go", ".", "TestNewf|TestNew_",
+       swap('return n.e.render(false)', 'return n.e.render(true)'))
+mutate("Newf 折叠参数里的 xerror", "xerror/xerror.go", ".", "TestNewf",
+       swap('\t\t\town[i] = nest(module, xe)\n', '\t\t\town[i] = xe\n'))
+# var e *Error 没判空就被包一层：报错路径上的 panic 会把真正的故障盖掉
+mutate("New 收到带类型的 nil 不 panic", "xerror/xerror.go", ".", "TestNew_TypedNilTreatedAsNoCauseNotPanic",
+       swap('\t\tif xe == nil {\n\t\t\treturn &Error{Module: module, Op: op}\n\t\t}\n', ''))
+mutate("Newf 参数里带类型的 nil 不 panic", "xerror/xerror.go", ".", "TestNewf_TypedNilArgRendersAsNilNotPanic",
+       swap('if xe, ok := a.(*Error); ok && xe != nil {', 'if xe, ok := a.(*Error); ok {'))
+mutate("Is 遇到带类型的 nil 不 panic", "xerror/xerror.go", ".", "TestNewf_TypedNilArgRendersAsNilNotPanic",
+       swap('\t\tif xe == nil {\n\t\t\treturn false // 带类型的 nil', '\t\tif false {\n\t\t\treturn false // 带类型的 nil'))
+mutate("同模块再包一层原样返回", "xerror/xerror.go", ".", "TestNew_",
+       swap('\t\tif xe.Module == module {\n\t\t\treturn xe\n\t\t}\n', ''))
+mutate("建连重试可以被取消", "xutil/convert.go", ".", "TestRetry",
+       swap('\tif err := parent.Err(); err != nil {\n\t\treturn err\n\t}\n\n',''))
+# panic 出来的是 error 时要用 %w 接住，否则 errors.Is 问不出根因。打在两个调用点上
+mutate("建实例 panic 出来的 error 留在链上", "internal/xclient/xclient.go", ".", "TestBuild_new_panic",
+       swap('"instance %q %w", name, panicked(r))', '"instance %q panicked: %v", name, r)'))
+mutate("关实例 panic 出来的 error 留在链上", "internal/xclient/xclient.go", ".", "TestClose_panic",
+       swap('"close %w", panicked(r))', '"close panicked: %v", r)'))
+mutate("同模块的错误沿用原来的 op", "internal/xclient/xclient.go", ".", "TestBuild",
+       swap('ok && xe.Module == module {', 'false && ok && xe.Module == module {'))
+
+section("流程编排")
+# 步骤只要写 Process 和 Rollback：Name 默认取类型名，Dependency 默认强依赖
+mutate("没写 Name 时用类型名", "xflow/xflow.go", ".", "TestNew_",
+       swap('name: typeName(p), dep: Strong}', 'name: "", dep: Strong}'))
+mutate("没写 Dependency 时是强依赖", "xflow/xflow.go", ".", "TestNew_",
+       swap('name: typeName(p), dep: Strong}', 'name: typeName(p), dep: Weak}'))
+mutate("写了 Dependency 就用写的", "xflow/xflow.go", ".", "TestNew_", swap('\t\ts.dep = d.Dependency()\n', '\t\t_ = d\n'))
+# 回滚的是已执行的那段前缀：失败的弱依赖算在内（它可能留下了副作用），
+# 失败的强依赖不算（它没成）
+# 单独用 xflow 时配置文件没人读，WithRollbackTimeout 是改回滚预算的唯一办法
+mutate("流程自己的回滚预算压过配置", "xflow/xflow.go", ".", "TestWithRollbackTimeout",
+       swap('cmp.Or(f.rollbackTimeout, cfg.RollbackTimeout)', 'cmp.Or(cfg.RollbackTimeout, f.rollbackTimeout)'))
+# 就地改的话，别处正在并发 Execute 的同一个流程也被改掉
+mutate("WithRollbackTimeout 返回新流程", "xflow/xflow.go", ".", "TestWithRollbackTimeout",
+       swap('\tg := *f\n\tg.rollbackTimeout = d\n\treturn &g\n', '\tf.rollbackTimeout = d\n\treturn f\n'))
+mutate("回滚预算不是正数要 panic", "xflow/xflow.go", ".", "TestWithRollbackTimeout",
+       swap('\tif d <= 0 {\n\t\tpanic(fmt.Sprintf("xflow: rollback timeout', '\tif d < 0 {\n\t\tpanic(fmt.Sprintf("xflow: rollback timeout'))
+mutate("失败的弱依赖也要回滚", "xflow/xflow.go", ".", "TestExecute", swap('\t\t\tn++ // 失败的弱依赖', '\t\t\t// 失败的弱依赖'))
+mutate("失败的强依赖那一步不回滚", "xflow/xflow.go", ".", "TestExecute",
+       swap('''\t\tf.rollback(ctx, data, f.steps[:n], res, m)
+\t\treturn res
+\t}
+\treturn res''', '''\t\tf.rollback(ctx, data, f.steps[:min(n+1, len(f.steps))], res, m)
+\t\treturn res
+\t}
+\treturn res'''))
+mutate("被取消的流程不能报成功", "xflow/xflow.go", ".", "TestExecute",
+       swap('\t\t\tif ctx.Err() == nil {\n\t\t\t\tcontinue\n\t\t\t}','\t\t\tcontinue'))
+# 两处：notifyStep 和 notifyFlow 各有一个，都去掉才算关掉隔离
+mutate("监控实现 panic 被隔离", "xflow/monitor.go", ".", "TestMonitor", swap('\tdefer recoverNotify()\n', '', count=2))
+# 一个模块边界一个 xerror：safeProcess 自己再包一层，文本就套成两层 xflow
+mutate("步骤 panic 只包一层 xflow", "xflow/xflow.go", ".", "TestExecute",
+       swap('''err = &PanicError{Value: r, Stack: debug.Stack()}
+\t\t}
+\t}()
+\treturn p.Process(ctx, data)''', '''err = xerror.New("xflow", "execute", &PanicError{Value: r, Stack: debug.Stack()})
+\t\t}
+\t}()
+\treturn p.Process(ctx, data)'''))
+mutate("步骤 panic 出来的 error 留在链上", "xflow/xflow.go", ".", "TestExecute",
+       swap('\terr, _ := e.Value.(error)\n\treturn err', '\treturn nil'))
+# 栈不进错误消息，就得有地方看得到：默认监控把它记成单独的字段
+mutate("默认监控记下 panic 的调用栈", "xflow/monitor.go", ".", "TestMonitor",
+       swap('attrs = append(attrs, "stack", string(pe.Stack))', '_ = pe'))
+# 回滚沿用调用方的 ctx 的话，请求一超时补偿就全部失败——而补偿最需要执行的
+# 恰恰是那时候。剥掉取消之后另给一份 RollbackTimeout，是 xflow 最核心的一条承诺
+mutate("流程超时之后回滚仍有自己的预算", "xflow/xflow.go", ".", "TestRollback|TestExecute",
+       swap('context.WithTimeout(context.WithoutCancel(ctx), cmp.Or(', 'context.WithTimeout(ctx, cmp.Or('))
+# 预算只在步骤之间查的话，一个不看 ctx 的 Rollback 能把 Execute 挂住：
+# 50ms 的预算等了 2s，挂住的那一步还不在 RollbackErrors 里
+mutate("不看 ctx 的补偿也受回滚预算约束", "xflow/xflow.go", ".", "TestRollback",
+       swap('err := rollbackWithin(rbCtx, s.Processor, data)', 'err := safeRollback(rbCtx, s.Processor, data)'))
+# 第一步之前就取消的流程从前也报 rolled back，让人去查一次不存在的补偿
+mutate("一步都没回滚就不报 Rolled", "xflow/xflow.go", ".", "TestExecute",
+       swap('\trbCtx, cancel := context.WithTimeout(', '\tres.Rolled = true\n\trbCtx, cancel := context.WithTimeout('))
+# 直接解进 cfg：同一进程里上一次 Run 的值带进下一次，校验失败的值也留在了 cfg 上
+mutate("配置每次从默认值解起", "xflow/config.go", ".", "TestLoadConfig",
+       swap('\tc := DefaultConfig()\n\tif err := xconfig.Unmarshal(ConfigKey, &c)', '\tc := cfg\n\tif err := xconfig.Unmarshal(ConfigKey, &c)'))
+mutate("校验失败的配置不生效", "xflow/config.go", ".", "TestLoadConfig",
+       swap('\t\treturn err\n\t}\n\tcfg = c', '\t\tcfg = c\n\t\treturn err\n\t}\n\tcfg = c'))
+
+section("登记板")
+# 档位是使用者理解生命周期的全部依据：日志最先起、链路早于客户端、
+# 服务最后起。排错一档，表现是「实例比用它的东西晚就绪」，别处都测不出来
+# 直接解进全局：前一次 Run 的服务名带进下一次，解码失败时写了一半的值也落了上去
+mutate("xapp 解进新的默认值再换上", "xapp/xapp.go", ".", "TestLoadConfig_",
+       swap('\tc := DefaultConfig()\n\tif err := xconfig.Unmarshal(ConfigKey, &c); err != nil {\n\t\treturn err\n\t}\n\tcfg = c\n\treturn nil',
+            '\treturn xconfig.Unmarshal(ConfigKey, &cfg)'))
+mutate("启动按档位升序", "internal/hook/hook.go", ".", "TestStartOrder|TestStopOrder|TestAddStart",
+       swap('sort.SliceStable(out, func(i, j int) bool { return out[i].Stage < out[j].Stage })',
+     'sort.SliceStable(out, func(i, j int) bool { return out[i].Name < out[j].Name })'))
+# 同档内谁先登记谁先起。换成不稳定排序之后顺序会随实现变化，
+# 而使用者是照着 import 的先后去理解它的
+mutate("同档内保持登记顺序", "internal/hook/hook.go", ".", "TestStartOrder", swap('sort.SliceStable(out,', 'sort.Slice(out,'))
+# 「声明一个档位就同时做到先启动、后关闭」这条承诺，全靠停止顺序是整体逆序
+mutate("停止顺序是启动顺序的整体镜像", "internal/hook/hook.go", ".", "TestStopOrder",
+       swap('''\tout := startOrder(in)
+\tfor i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+\t\tout[i], out[j] = out[j], out[i]
+\t}
+\treturn out''', '''\tout := append([]Entry(nil), in...)
+\tsort.SliceStable(out, func(i, j int) bool { return out[i].Stage > out[j].Stage })
+\treturn out'''))
+# 配对键取末段包名的话，两个末段同名的包会被当成同一个：使用者自己包一层
+# 叫 xlog 的包很常见，撞上之后它的启动钩子一失败，框架 xlog 的停止钩子
+# 就跟着被跳过，日志写入器再也不 flush
+mutate("配对键取完整 import path", "xhook/xhook.go", ".", "TestPkgOf|TestBeforeStart",
+       swap('\t\treturn full[:slash+1+i]', '\t\treturn full[slash+1 : slash+1+i]'))
+# 默认档落回 StageClient 的话，业务钩子和 xgorm 同档，谁先跑看包的初始化顺序：
+# 业务包路径排在前面时，钩子里的 xgorm.C() 当场 panic
+mutate("不写档位就落在业务那一档", "xhook/xhook.go", ".", "TestBeforeStart|TestAt",
+       swap('o := options{stage: StageBusiness}', 'o := options{stage: StageClient}'))
+# 停止钩子只在和它配对的启动钩子成功之后执行：不然启动到一半失败时，后面那些
+# 资源根本没建起来，调它们的停止钩子只会在一堆空值上出错
+mutate("启动失败的那一对不执行停止钩子", "xone.go", ".", "TestRun_InitFailureRollsBackInitialized",
+       swap('e.Pair != 0 && !started[e.Pair] {', 'e.Pair != 0 && !started[e.Pair] && false {'))
+# 之前没有启动钩子的停止钩子总会执行。Runnable 被拦下、配置读不出来时从前直接返回，
+# 日志 flush 这类钩子一次都没跑。两条提前返回的路各打一条
+mutate("Runnable 写错时不依赖启动的停止钩子照样执行", "xone.go", ".", "TestRun_RunnableInvalid_UnpairedStopHooksStillRun",
+       swap('\tif err := checkRunnable(r); err != nil {\n\t\treturn errors.Join(err, stopWithin(o, nil))',
+            '\tif err := checkRunnable(r); err != nil {\n\t\treturn err'))
+mutate("配置读不出来时不依赖启动的停止钩子照样执行", "xone.go", ".", "TestRun_ConfigLoadFails_UnpairedStopHooksStillRun",
+       swap('\tif err := config.Ensure(o.configPath, o.log()); err != nil {\n\t\treturn errors.Join(err, stopWithin(o, nil))',
+            '\tif err := config.Ensure(o.configPath, o.log()); err != nil {\n\t\treturn err'))
+# 一起登记的就是一对：配成同包里最早的那个启动钩子的话，第二对建不起来时
+# 它的停止钩子照样被调到，得处理「还没建起来」
+mutate("停止钩子配的是之前最近登记的那个启动钩子", "internal/hook/hook.go", ".", "TestRun_StopHookPairsOnlyWithItsStartHook|TestRun_StopHookPairsWithLaterOfTwoStartHooks|TestAddStop",
+       swap('for i := len(start) - 1; i >= 0; i-- {', 'for i := 0; i < len(start); i++ {'))
+# 配对只认同一个包：认错包的话，别的集成起不来时它的停止钩子被跳过，
+# 或者它自己没建起来时停止钩子照样被调到
+# Pair 为 0 表示「没有配对、总会执行」。序号从 0 编起的话，第一个登记的启动钩子
+# 失败时，它的停止钩子会被当成不依赖启动的那种照样调到
+# 只在启动钩子上写 At 的话，停止钩子从前掉回 StageBusiness：客户端先于业务被关掉
+mutate("停止钩子不写档位时跟着配对的启动钩子", "xhook/xhook.go", "./xhook", "TestBeforeStop_WithoutStageFollowsPairedStartHook",
+       swap('Run: hook.Func(f), Inherit: !o.set}', 'Run: hook.Func(f), Inherit: false}'))
+mutate("停止钩子显式写的档位以它为准", "xhook/xhook.go", "./xhook", "TestAt_OverridesDefaultStage",
+       swap('Run: hook.Func(f), Inherit: !o.set}', 'Run: hook.Func(f), Inherit: true}'))
+mutate("配上对时才继承档位", "internal/hook/hook.go", ".", "TestAddStop_WithoutExplicitStageFollowsPairedStartHook",
+       swap('\t\t\tif e.Inherit {\n\t\t\t\te.Stage = start[i].Stage\n\t\t\t}\n', ''))
+# 测试辅助和 Run 是同一条规矩：启动失败的那一对不跑停止钩子，起来了的照样关
+mutate("xonetest 只关配对的启动钩子成功了的", "xonetest/xonetest.go", ".", "TestStartHooks",
+       swap('\t\t\tif e.Pair != 0 && !started[e.Pair] {', '\t\t\tif false {'))
+mutate("xonetest 记下成功了的启动钩子", "xonetest/xonetest.go", ".", "TestStartHooks",
+       swap('\t\tstarted[e.Seq] = true\n', ''))
+mutate("xonetest 结束时清掉配置", "xonetest/xonetest.go", ".", "TestUseConfig",
+       swap('\tt.Cleanup(config.Reset)\n', ''))
+mutate("启动钩子的序号从 1 编起", "internal/hook/hook.go", ".", "TestAddStop",
+       swap('e.Seq = len(start) + 1', 'e.Seq = len(start)'))
+mutate("停止钩子只配同一个包的启动钩子", "internal/hook/hook.go", ".", "TestAddStop|TestRun_StopHookPairsOnlyWithItsStartHook",
+       swap('\t\tif start[i].Pkg == e.Pkg {', '\t\tif true {'))
+# 按钩子函数的名字认包的话，经辅助包登记的钩子全算在辅助包头上，彼此配成一团
+mutate("登记它的包按调用栈上的 init 认", "xhook/xhook.go", ".", "TestBeforeStart",
+       swap('Pkg: registrant(full)', 'Pkg: pkgOf(full)'))
+# panic 出来的是 error 时要用 %w 接住，否则 errors.Is 问不出根因
+mutate("钩子 panic 出来的 error 留在链上", "xone.go", ".", "TestRun_HookPanicWrappedOnceWithStandardOp",
+       swap('return fmt.Errorf("panicked: %w", err)', 'return fmt.Errorf("panicked: %v", err)'))
+
+section("客户端")
+# 取不到实例时把原因说准：调早了、调晚了、没配、名字写错，要查的地方各不相同。
+# 调早了从前和「没配」是同一句话，于是在 Run 之前取实例的人去翻配置文件
+mutate("调早了不说成没配", "internal/xclient/xclient.go", ".", "TestGet_", swap('\tcase p == notStarted:\n', '\tcase false:\n'))
+mutate("调晚了不说成没配", "internal/xclient/xclient.go", ".", "TestGet_", swap('\tcase p == closed:\n', '\tcase false:\n'))
+# 密码错了重试也是错，还多等两轮退避；报成 cannot reach 会让人先去查网络
+# 同一个机制（xclient.Probe）两处都要打：Probe 里认出来就不再试，xgorm 把方言的判断交给它
+mutate("认证失败不重试", "internal/xclient/probe.go", ".", "TestProbe_AuthFailureReturnsOriginalErrorAfterOneTry",
+       swap('\t\t\treturn xutil.Permanent(err)\n', '\t\t\treturn err\n'))
+mutate("实例的 Validate 错误带着文件和行号", "internal/config/clients.go", ".", "TestUnmarshalClients_CallsValidateForEachInstance",
+       swap('\t\t\treturn c, fmt.Errorf("%s: %w", newChecker().at(n), err)\n', '\t\t\treturn c, err\n'))
+# TLS 块（xtls.Config）一处定义、各模块共用：规则打在 xtls 里，
+# 「这个模块真的用了它」打在每个模块的调用点上——函数本身对，调用点绕开了照样是 bug
+# 写了 CAFile 却忘了 Enable，照明文连过去比报错更糟
+mutate("没开 TLS 却写了 TLS 字段要失败", "xtls/xtls.go", ".", "TestValidate_NonsensicalCombosFailAtConfigRead|TestBuild_ErrorsOnFieldsSetWhileDisabled",
+       swap('\t\tif c != (Config{}) {', '\t\tif false {'))
+mutate("TLS 客户端证书和私钥要成对", "xtls/xtls.go", ".", "TestValidate_NonsensicalCombosFailAtConfigRead",
+       swap('if (c.CertFile == "") != (c.KeyFile == "") {', 'if false {'))
+mutate("直接调 Build 也先校验", "xtls/xtls.go", ".", "TestBuild_ErrorsOnFieldsSetWhileDisabled",
+       swap('\tif err := c.Validate(); err != nil {\n\t\treturn nil, err\n\t}\n\tif !c.Enable', '\tif !c.Enable'))
+mutate("TLS 用上 CAFile", "xtls/xtls.go", ".", "TestBuild_CAFile",
+       swap('\t\tcfg.RootCAs = pool\n', '\t\t_ = pool\n'))
+mutate("TLS 带上客户端证书", "xtls/xtls.go", ".", "TestBuild_ClientCert",
+       swap('\t\tcfg.Certificates = []tls.Certificate{cert}\n', '\t\t_ = cert\n'))
+mutate("TLS 的 ServerName 传下去", "xtls/xtls.go", ".", "TestBuild_CAFile|TestBuild_MinTLS12AndVerifies",
+       swap('ServerName: c.ServerName}', '}'))
+mutate("TLS 最低 1.2", "xtls/xtls.go", ".", "TestBuild_MinTLS12AndVerifies",
+       swap('MinVersion: tls.VersionTLS12, ', ''))
+# 证书被拒和密码错一样：再试还是同一张证书。PG / MySQL / Redis 的建连探测都走这里
+mutate("证书被拒不重试", "internal/xclient/probe.go", ".", "TestProbe",
+       swap('(tlsRejected(err) || p.AuthFailed != nil && p.AuthFailed(err))', '(p.AuthFailed != nil && p.AuthFailed(err))'))
+mutate("对端的证书告警也算证书被拒", "internal/xclient/probe.go", ".", "TestProbe_CertRejectedReturnsAfterOneTry",
+       swap('if errors.As(err, &op) && op.Op == "remote error" && op.Err != nil {', 'if false {'))
+# 建到一半失败时把半套实例发布出去，比一个都没有更糟：C() 取得到 a
+# 取不到 b，而启动其实已经失败了
+mutate("建失败时注册表保持原样", "internal/xclient/xclient.go", ".", "TestBuild",
+       swap('''\t\tbuilt[name] = v
+\t\tclosers = append(closers, closer)''', '''\t\tbuilt[name] = v
+\t\tclosers = append(closers, closer)
+\t\tr.state.Store(&snapshot[T]{items: built, phase: running})'''))
+# 反过来的话，关到一半时 C() 还能取到正在被关闭的实例
+mutate("关实例先摘再关", "internal/xclient/xclient.go", ".", "TestClose",
+       swap('''\told := r.state.Swap(&snapshot[T]{items: map[string]T{}, phase: closed})
+\treturn closeAll(r.module, old.closers)''', '''\terr := closeAll(r.module, r.state.Load().closers)
+\tr.state.Store(&snapshot[T]{items: map[string]T{}, phase: closed})
+\treturn err'''))
+# 「XRedis:」这样的空块曾经让启动直接失败：Has 返回 false，那个包就此跳过、
+# 不再 Unmarshal，于是这个 key 没人认领，而 Unclaimed 报出来的两条原因
+# （拼错了、忘了 import）都不成立，照着查什么都查不出来
+mutate("问过配置就算认领了它", "internal/config/config.go", ".", "TestHas|TestUnclaimed",
+       swap('''\tif ensureLocked() != nil {
+\t\treturn false
+\t}
+\tclaimed[key] = true
+\tnode, ok := sections[key]''', '''\tif ensureLocked() != nil {
+\t\treturn false
+\t}
+\tnode, ok := sections[key]'''))
+# 要防的是：读得早就静默拿到空值，服务带着一套默认配置正常起来。
+# 现在第一次读就先加载，这条变异把它改回「没加载就当没配」
+mutate("读得早也拿到文件里的值", "internal/config/config.go", ".", "TestUnmarshal_LoadsFirstIfNotLoaded|TestRun_ReadingConfigBeforeRunGetsFileValues",
+       swap('''\tif err := ensureLocked(); err != nil {
+\t\treturn err
+\t}
+\tclaimed[key] = true''', '''\tif !ready {
+\t\treturn nil
+\t}
+\tclaimed[key] = true'''))
+# 从前没有配置文件时配置一直停在「还没加载」，每个集成读配置都报错，
+# 一个不需要任何配置的服务根本起不来
+mutate("没有配置文件时全用默认值", "internal/config/config.go", ".", "TestEnsure_UsesDefaultsWhenNoConfigFile|TestRun_StartsWithDefaultsWhenNoConfigFile",
+       swap('''\t\tsections, claimed, ready = nil, map[string]bool{}, true
+\t\treturn nil''', '''\t\tfailed = errors.New("no config file")
+\t\treturn failed'''))
+mutate("提前加载过的配置不会被悄悄换掉", "internal/config/config.go", ".", "TestEnsure_FailsWhenNamedFileDiffersFromEarlierLoad|TestRun_FailsWhenOtherFileNamedAfterEarlyRead",
+       swap('\tif path != "" && !sameFile(path, source) {', '\tif false {'))
+# 按字符串比的话 dir/./b.yml、相对路径、符号链接都被当成另一个文件，Run 启动失败
+mutate("同一个文件换一种写法也认得出", "internal/config/config.go", ".", "TestEnsure_SameFileSpelledDifferentlyIsFine",
+       swap('\tif path != "" && !sameFile(path, source) {', '\tif path != "" && path != source {'))
+mutate("经符号链接点名的也是同一个文件", "internal/config/config.go", ".", "TestEnsure_SameFileSpelledDifferentlyIsFine",
+       swap('errB == nil && os.SameFile(infoA, infoB)', 'errB == nil && false && os.SameFile(infoA, infoB)'))
+mutate("写坏的配置每次读都报同一个错", "internal/config/config.go", ".", "TestUnmarshal_SameErrorOnEveryReadAfterLoadFailure",
+       swap('\t\tfailed = err\n\t\treturn err', '\t\treturn err'))
+mutate("Run 结束时交还配置", "xone.go", ".", "TestRun_CanRunAgainAfterReturn", swap('\tdefer config.Reset()\n', ''))
+mutate("加载失败的 Run 也交还配置", "xone.go", ".", "TestRun_NextRunReadsOwnConfigAfterLoadFailure",
+       swap('\tdefer config.Reset()\n', ''),
+       swap('''\tif err := config.Ensure(o.configPath, o.log()); err != nil {
+\t\treturn errors.Join(err, stopWithin(o, nil))
+\t}
+''', '''\tif err := config.Ensure(o.configPath, o.log()); err != nil {
+\t\treturn errors.Join(err, stopWithin(o, nil))
+\t}
+\tdefer config.Reset()
+'''))
+
+section("启动输出")
+# banner 只在终端里打：容器、重定向、日志采集器后面，多行字符画是日志平台里解析失败的垃圾
+mutate("banner 只在终端里打", "banner.go", ".", "TestPrintBanner",
+       swap('\tif !terminal {\n\t\treturn\n\t}\n', ''))
+mutate("Run 拿 stderr 判断是不是终端", "xone.go", ".", "TestRun_StderrNotTerminal_NoBanner",
+       swap('printBanner(stderr, isTerminal(stderr))', 'printBanner(stderr, true)'))
+mutate("管道和文件不是终端", "banner.go", ".", "TestIsTerminal",
+       swap('st.Mode()&os.ModeCharDevice != 0', 'st.Mode() == st.Mode()'))
+mutate("replace 到本地时版本显示 (devel)", "banner.go", ".", "TestModuleVersion",
+       swap('\t\t\tif d.Replace != nil {\n\t\t\t\treturn "(devel)"\n\t\t\t}\n', ''))
+# XONE_DEBUG：只在明确打开时写，写的是加载经过和遮掉凭证的最终配置
+mutate("XONE_DEBUG 没开就不写", "internal/config/debug.go", ".", "TestDebug_|TestEnsure_PrintsNothingWithoutXONE_DEBUG|TestRun_NoDebugOutputWithoutXONE_DEBUG",
+       swap('\t}\n\treturn false\n}\n\n// DebugOut', '\t}\n\treturn true\n}\n\n// DebugOut'))
+mutate("加载完打出经过", "internal/config/config.go", ".", "TestEnsure_XONE_DEBUG",
+       swap('\tdebugReport(path, from, r)\n', '\t_, _ = from, r\n'))
+mutate("Run 打出启动钩子的顺序", "xone.go", ".", "TestRun_XONE_DEBUG",
+       swap('\tdebugHooks(hook.Start())\n', ''))
+mutate("key 名是凭证的值整个遮掉", "internal/config/debug.go", ".", "TestRedacted",
+       swap('if strings.Contains(k, s) {', 'if s == "" {'))
+mutate("URL 里的密码遮掉", "internal/config/debug.go", ".", "TestRedacted",
+       swap('s = urlUserinfo.ReplaceAllString(s, "$1:"+redactedValue+"@")', 's = s'))
+mutate("MySQL DSN 里的密码遮掉", "internal/config/debug.go", ".", "TestRedacted",
+       swap('s = mysqlDSN.ReplaceAllString(s, "$1:"+redactedValue+"@")', 's = s'))
+mutate("password= 写法的密码遮掉", "internal/config/debug.go", ".", "TestRedacted",
+       swap('return kvPassword.ReplaceAllString(s, "$1="+redactedValue)', 'return s'))
+mutate("遮的是拷贝，真正的配置不动", "internal/config/debug.go", ".", "TestRedacted",
+       swap('\t\tc.Content[i] = redacted(ch)\n', '\t\tc.Content[i] = ch\n\t\tredacted(ch)\n'))
+mutate("空的凭证不遮：看得出没配", "internal/config/debug.go", ".", "TestRedacted",
+       swap(' && v.Value != ""', ''))
+mutate("最终配置里不带注释", "internal/config/debug.go", ".", "TestRedacted",
+       swap('\tc.HeadComment, c.LineComment, c.FootComment = "", "", ""\n', ''))
+# XApp 跟着框架一起来：只 import 根包的程序写了 XApp.Name 也能启动
+mutate("根包带着 xapp", "xone.go", ".", "TestRun_XAppWorksWithCoreOnly",
+       swap('\t_ "github.com/xiaoshicae/xone/xapp"\n', ''))
+mutate("只剩 Profiles / Import 的 XApp 连块一起摘掉", "internal/config/source.go", ".", "TestLoad_XAppWithOnlyProfilesAndImportIsNotUnclaimed",
+       swap('if val != nil && len(app.Content) == 0 {', 'if false {'))
+mutate("XApp 里的 Import 被加载器取走", "internal/config/source.go", ".", "TestLoad_XAppNameLeftToXapp_ProfilesAndImportTakenByLoader",
+       swap('\tnode := takeFromApp(doc, ImportKey)\n', '\tnode := takeFromApp(doc.Content[0], ImportKey)\n'))

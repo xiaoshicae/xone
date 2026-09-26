@@ -1,0 +1,217 @@
+#!/bin/sh
+# 把设计约束编译成检查。趁还没东西可违反的时候加上——
+# 晚了就得豁免一堆存量，那等于没加。
+set -e
+cd "$(dirname "$0")/.."
+fail() { echo "✗ $1"; exit 1; }
+
+# 查的是仓库里的文件：签入的，加上新建了还没 git add 的。不用 find / grep -r：
+# .gitignore 挡住的副本（比如 .claude/worktrees 下的工作树）不算，也不该被检查。
+# 删了还没暂存的要排掉——index 里还有它，磁盘上已经没了，交给 gofmt 就是一个
+# 藏在 $(...) 里的失败，set -e 让脚本一声不吭地退出
+files() {
+  git ls-files -co --exclude-standard -- "$@" | while IFS= read -r f; do
+    if [ -e "$f" ]; then echo "$f"; fi
+  done
+}
+modules=$(files go.mod '*/go.mod' | xargs -n1 dirname | sort)
+gosrc=$(files '*.go' | grep -v '_test\.go$')  # 非测试的 Go 源文件
+
+# ---- 1. 核心的依赖足迹 ----
+# 使用者 import 任何一个核心里的包，都会背上核心的全部依赖约束，所以核心必须极瘦。
+# 每加一个都要先问：能不能不加。
+# GOWORK=off 是必须的：工作区里 go list -m all 会把所有模块的依赖并在一起。
+n=$(GOWORK=off go list -m all | grep -vc '^github.com/xiaoshicae/xone')
+[ "$n" -le 3 ] || fail "核心模块图 $n 个模块，超过上限 3（当前应为 yaml 及其测试依赖）"
+echo "✓ 核心模块图 $n 个（上限 3）"
+
+# ---- 2. 核心不得依赖任何集成模块 ----
+# 反过来就把集成的依赖又带回给所有人了，分模块也就白分了
+! GOWORK=off go list -m all | grep -q '^github.com/xiaoshicae/xone/' \
+  || fail "核心 require 了集成模块，分模块的意义没了"
+echo "✓ 核心不依赖任何集成模块"
+
+# ---- 3. xhook 与基础包必须零第三方依赖 ----
+# xhook 是每个集成都要认识的包（另一个是 xconfig），一旦它有依赖，所有集成都被迫背上。
+# xtls 同理：它是 xgorm / xredis / xhttp 配置结构体里的一个字段类型
+for pkg in ./xhook ./xerror ./xutil ./xtls; do
+  d=$(GOWORK=off go list -deps "$pkg" | grep -E '^[^/]*\.' | grep -vc xiaoshicae || true)
+  [ "$d" -eq 0 ] || fail "$pkg 混进了 $d 个第三方包"
+done
+echo "✓ xhook / xerror / xutil / xtls 零第三方依赖"
+
+# ---- 4. 只有集成包可以有 init() ----
+# 集成包的 init 只登记不初始化；核心自己则连登记都不该有。
+# 判据是「这个目录调没调 xhook.BeforeStart」，不是目录名也不是有没有 go.mod：
+# xlog 零依赖留在核心模块里，同样是集成包。
+# 两个登记入口：钩子登记进框架，方言登记进 xgorm。两者都只是「记下来」，
+# 不初始化任何东西，所以放在 init() 里是对的
+# xhook 自己要排掉：包注释里写着用法示例，会被这个 grep 认成集成包
+integrations=$(grep -lE 'xhook\.BeforeStart\(|xgorm\.RegisterDialect\(' $gosrc | xargs -r -n1 dirname | sort -u | grep -vx 'xhook')
+for f in $(grep -l '^func init()' $gosrc); do
+  d=$(dirname "$f")
+  echo "$integrations" | grep -qx "$d" || fail "$f 有 init()，但它不是集成包（没有 xhook.BeforeStart）"
+done
+echo "✓ init() 只出现在集成包里"
+
+# ---- 5. 核心公开 API 数量上限 ----
+# 框架的 API 是永久的。让「加一个」有代价，超了就得先砍再加。
+a=$(go doc -all . | grep -cE '^(func|type) ')
+[ "$a" -le 15 ] || fail "根包公开 API $a 个，超过上限 15"
+
+# xhook / xconfig 是每个集成都必须认识的那两个包，所以它们的上限最要紧：
+# 每加一个导出，就是一条所有第三方集成都得跟着理解的规矩。
+# 这个数曾经在几轮重构里一路涨到 15 而没人拦，所以现在把它钉死。
+r=$(go doc -all ./xhook | grep -cE '^(func|type) ')
+[ "$r" -le 6 ] || fail "xhook 公开 API $r 个，超过上限 6——先想清楚能不能砍掉一个再加"
+x=$(go doc -all ./xconfig | grep -cE '^(func|type) ')
+[ "$x" -le 6 ] || fail "xconfig 公开 API $x 个，超过上限 6"
+# xonetest 是给使用者测试用的，同样是永久 API：换配置、跑钩子，就这些。
+# 想往里加「再帮你做一件事」的，先问那件事是不是该由 xone.Run 或被测包自己做
+tt=$(go doc -all ./xonetest | grep -cE '^(func|type) ')
+[ "$tt" -le 3 ] || fail "xonetest 公开 API $tt 个，超过上限 3"
+# xtls 是各客户端集成共用的 TLS 块：一个配置类型，外加校验和装出 *tls.Config 两个方法。
+# 它出现在使用者的配置结构体里（xredis.ClientConfig.TLS），同样是永久 API。
+# 服务端那一侧（xgin 的 ClientCAFile / MinVersion）形状不同，留在 xgin 里，不往这里加
+tl=$(go doc -all ./xtls | grep -cE '^(func|type) ')
+[ "$tl" -le 3 ] || fail "xtls 公开 API $tl 个，超过上限 3"
+echo "✓ 公开 API：根包 $a（上限 15）、xhook $r（上限 6）、xconfig $x（上限 6）、xonetest $tt（上限 3）、xtls $tl（上限 3）"
+
+# ---- 6. 集成包必须导出纯构造器 New，且不得引用根包 ----
+# New 保证「零装配」永远只是默认路径，不是唯一路径：
+# 测试和特殊场景始终可以绕开框架直接造实例。
+# 不引用根包保证依赖是单向的——集成认识 registry，框架认识 registry，彼此不认识。
+[ -n "$integrations" ] || fail "一个集成包都没找到，第 4 步的判据失效了"
+for d in $integrations; do
+  # 驱动包 import 的是 xgorm 而不是框架，这条对它不适用
+  grep -rq 'xhook\.BeforeStart(' "$d"/*.go || continue
+  ! grep -rq '"github.com/xiaoshicae/xone"' "$d"/*.go || fail "$d 引用了根包（只能 import xhook / xconfig）"
+  # 只读配置、不造任何东西的包（如 xapp、xflow）没有构造器可言，这条对它是空的
+  grep -rq 'xhook\.BeforeStop(' "$d"/*.go || continue
+  # New[T any]( 也算：泛型构造器同样是「绕开框架直接造一个」的入口
+  grep -rqE '^func New[(\[]' "$d"/*.go || fail "$d 登记了组件，却没有纯构造器 New"
+done
+echo "✓ 集成包检查通过（$(echo "$integrations" | wc -w) 个）"
+
+# ---- 6.1 示例只用使用者用得到的东西 ----
+# example/ 的 module 路径在 github.com/xiaoshicae/xone 之下，Go 的 internal 规则
+# 因此放它进来——但使用者的代码进不来。示例用了 internal/config、internal/hook，
+# 使用者照抄就编译不过。测试里要换配置、跑钩子，用 xonetest
+bad=$(files 'example/*.go' | xargs grep -ln '"github.com/xiaoshicae/xone/internal/' || true)
+[ -z "$bad" ] || fail "example/ 不能 import internal/（使用者 import 不到），改用 xonetest：
+$bad"
+echo "✓ example/ 不 import internal/"
+
+# ---- 7. 配置字段都写进文档 ----
+# 配置是使用者唯一的操作界面，加了字段却没写文档，等于没加。
+# 反过来文档里多写一个不存在的 key，会让人配了半天发现不生效。
+#
+# example/ 不算：那里的配置是示例自带的，写在示例自己的注释和 application.yml 里，
+# 搬进框架的配置手册反而会让人以为它是框架的一部分。e2e/ 同理：被测服务的业务配置块
+# 是测试自己的，写在 e2e/service/application.yml 里
+#
+# 按节查，两个方向都查（见 internal/schemagen/docs.go）：每个字段要出现在它那个模块
+# README 的「## 配置」一节里（xlog/README.md 之类），每一节的 YAML 示例要过得了 schema。
+# 从前是在整份文档里 grep 字段名：Name、Timeout、Enable 总能在别的节里找到，
+# 永远通过；[A-Za-z]+ 还漏掉了 UseH2C 这种带数字的名字；反方向根本没查。
+#
+# 按节查依赖 schema 认得全部字段，所以先确认每个 yaml 标签都进了 schema——
+# 否则一个没挂到 Config 上的结构体的字段会同时躲过 schema 和这里
+missing=""
+for f in $(echo "$gosrc" | grep -vE '^(example|e2e)/' | xargs grep -hoE 'yaml:"[A-Za-z0-9]+"' | sed 's/yaml:"//; s/"//' | sort -u); do
+  grep -q "\"$f\": {" config_schema.json || missing="$missing $f"
+done
+[ -z "$missing" ] || fail "这些配置字段没进 config_schema.json（结构体没挂到 Config 上？）：$missing"
+# schemagen 是独立的工具 module，从根目录经 go.work 调它
+out=$(go test -count=1 -run TestCheckDocs ./internal/schemagen 2>&1) || fail "模块 README 的「## 配置」与 Config 结构体对不上：
+$out"
+echo "✓ 配置字段都写进文档了（按节，双向）"
+
+# ---- 8. 运行期字符串必须是英文 ----
+# 注释写给读这份代码的人，用中文；但错误和日志会落进使用者的系统——
+# 进他们的告警、他们的日志检索、他们的 issue。中文的日志字段名还会变成
+# JSON 的 key，让日志平台的索引和看板直接对不上。
+# internal/schemagen 是构建工具，输出给的是改这份代码的人，不适用。
+zh=$(GOFILES=$(files '*.go') python3 - <<'PY_EOF'
+import os, re
+zh = re.compile(r'[\u4e00-\u9fff]')
+# 整个文件一次扫完，从左往右认记号：注释、"..."（带转义）、`...`（原始字符串，
+# 可以跨行）、'...'（rune，认出来只为了 '"' 这样的不被当成字符串开头）。
+# 一个记号认完才从它后面接着找，所以注释里的引号、字符串里的 // 都不会被误认。
+# 从前是逐行 split('//') 再找 "..."：带 http:// 的字符串从 // 处被截断、
+# 反引号的字符串根本不看，里面写中文照样放过
+token = re.compile(r'//[^\n]*|/\*.*?\*/|"(?:[^"\\\n]|\\.)*"|`[^`]*`|\'(?:[^\'\\\n]|\\.)*\'', re.S)
+for f in os.environ['GOFILES'].split():
+    if f.endswith('_test.go'):
+        continue
+    # 构建工具不受这条约束：它的输出给的是改这份代码的人，
+    # 不会落进使用者的日志里，而这条规矩的全部理由就是后者
+    if f.startswith('internal/schemagen/'):
+        continue
+    src = open(f, encoding='utf-8').read()
+    seen = set()
+    for m in token.finditer(src):
+        if m.group()[0] in '"`' and zh.search(m.group()):
+            line = src.count('\n', 0, m.start()) + 1
+            if line not in seen:
+                seen.add(line)
+                print(f"{f}:{line}")
+PY_EOF
+)
+[ -z "$zh" ] || fail "这些地方的运行期字符串还是中文（错误和日志要用英文）：
+$zh"
+echo "✓ 运行期字符串都是英文"
+
+# ---- 9. config_schema.json 与结构体一致 ----
+# schema 给 IDE 用：YAML 里字段补全、拼错标红、悬停看说明。
+# 它是生成的，不是手写的——上百个字段手工同步迟早对不上，
+# 而对不上的表现是补全出一个根本不存在的字段，比没有 schema 更糟。
+go run ./internal/schemagen -check || fail "config_schema.json 与 Config 结构体对不上，跑一次：go run ./internal/schemagen"
+echo "✓ config_schema.json 与结构体一致"
+
+# ---- 10. 错误一律走 xerror ----
+# 模块对外返回的错误都带模块名和操作名，调用方因此能问「这是谁报的」，
+# 而不必去匹配错误消息里的字符串前缀。两种退回旧写法的情况在这里拦下：
+#   1. fmt.Errorf("xgorm: ...")  —— 前缀写进消息，等于没有结构
+#   2. xerror.Newf(..., "...err=[%v]", err) —— %v 把错误变成文本，
+#      errors.Is / errors.As 到此为止，调用方再也判断不了根因
+bad=$(grep -nE 'fmt\.Errorf\("x[a-z]+: ' $gosrc || true)
+[ -z "$bad" ] || fail "这些地方还在用带模块前缀的 fmt.Errorf，应改成 xerror：
+$bad"
+
+bad=$(grep -n 'xerror.Newf' $gosrc | grep 'err=\[%v\]' || true)
+[ -z "$bad" ] || fail "这些 xerror 用 %v 包装底层错误，错误链会断，应改成 %w：
+$bad"
+echo "✓ 错误都走 xerror（%w 保住错误链）"
+
+# ---- 11. 文档和示例里不再出现已经删掉的名字 ----
+# 使用者照着 README 和 example/ 抄。几轮重构之后，那里还留着 Component.Init、
+# registry.Register 这些早就不存在的名字，注释里还在教一个已经撤掉的写法——
+# 比没有文档更糟，因为它看上去是对的。删掉一个公开名字时，把它加进这张表
+gone='xredis\.TLSConfig|Component\.Init|registry\.(Declare|Provide|Register)|ProvideEach|xconfig\.(HasKey|DecodeClients)\b|\.OnInit\(|xgin\.With(Config|Log|Trace|Metric|MetricPath|SkipPaths|RequestBodyLog|ResponseBodyLog|ZHTranslations)\('
+hits=$(files '*.go' '*.md' '*.yml' | xargs grep -nE "$gone" || true)
+[ -z "$hits" ] || fail "还在提已经删掉的名字（改文档，或者确认它真的还在）：
+$hits"
+echo "✓ 文档和示例里没有已经删掉的名字"
+
+# ---- 12. 变异模式都还对得上代码 ----
+# 全量变异测试要几分钟，不在这里跑；但「模式恰好匹配 N 处」只是字符串比对，
+# 不到一秒。代码挪走了、变异没跟着挪，这里当场就红，不用等下一次想起来跑全量
+python3 scripts/mutate.py --dry-run || fail "有变异的模式对不上代码了，改 scripts/mutations/ 下对应的那条"
+
+# ---- 12.1 测试函数名用英文 ----
+# 测试名会出现在 go test -run、CI 的失败列表和变异表的过滤里，写英文才好搜、好复制
+zhtest=$(files '*_test.go' | xargs grep -nP '^func (Test|Benchmark|Fuzz|Example)\w*[^\x00-\x7F]' || true)
+[ -z "$zhtest" ] || fail "测试函数名要用英文（描述场景，如 TestNew_FailsFastOnTypo）：
+$zhtest"
+echo "✓ 测试函数名都是英文"
+
+# ---- 13. 基本卫生 ----
+unformatted=$(files '*.go' | xargs gofmt -l)
+[ -z "$unformatted" ] || fail "有文件未格式化：$unformatted"
+# 过了不出声，不过的话把 vet 的原话带出来：只说「未通过」得自己再跑一遍才知道是哪一行
+for m in $modules; do
+  out=$(cd "$m" && GOWORK=off go vet ./... 2>&1) || fail "$m go vet 未通过：
+$out"
+done
+echo "✓ gofmt / go vet（$(echo "$modules" | wc -w) 个模块）"

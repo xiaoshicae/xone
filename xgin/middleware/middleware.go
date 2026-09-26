@@ -1,0 +1,137 @@
+// Package middleware 提供 xgin 内置的中间件。
+//
+// 洋葱模型，自外向内的顺序是：
+//
+//	LogScope → Trace → Log → Metric → Recover → 用户中间件 → handler
+//
+// Recover 必须是框架中间件里最内层的一个：panic 一路向外抛，
+// 在哪一层被兜住，比它更内层的中间件里 c.Next() 之后的代码就都不执行。
+// 放在最内层，外面几层的收尾（记指标、写访问日志）才都还跑得到。
+package middleware
+
+import (
+	"errors"
+	"log/slog"
+	"net"
+	"net/http"
+	"os"
+	"runtime"
+	"strings"
+
+	"github.com/gin-gonic/gin"
+
+	"github.com/xiaoshicae/xone/xlog"
+)
+
+// LogScope 为本次请求开一个日志 KV 作用域。
+//
+// 装上之后，业务代码在任意调用层级都可以 xlog.AddKV(ctx, ...) 补字段，
+// 不用把新 context 逐层回传——调用栈深处拿不到 *gin.Context，本来也没机会回传。
+// 写进去的字段对整条请求可见，所以 Log 在 c.Next() 之后打的访问日志也带得上。
+//
+// 必须排在所有中间件最前面：在它之后才有作用域可写。
+func LogScope() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Request = c.Request.WithContext(xlog.CtxWithScope(c.Request.Context()))
+		c.Next()
+	}
+}
+
+// maxStack panic 栈信息的上限
+const maxStack = 16 * 1024
+
+// Recover 兜住 panic，把它变成一条错误日志和一个 500。
+//
+// handle 为 nil 时返回 500。http.ErrAbortHandler 不兜，原样抛给 net/http 去断开连接。
+func Recover(handle gin.RecoveryFunc) gin.HandlerFunc {
+	if handle == nil {
+		handle = func(c *gin.Context, _ any) { c.AbortWithStatus(http.StatusInternalServerError) }
+	}
+
+	return func(c *gin.Context) {
+		defer func() {
+			err := recover()
+			if err == nil {
+				return
+			}
+			// http.ErrAbortHandler 是 handler 主动要求「断掉这个连接」的约定写法
+			// （httputil.ReverseProxy 在上游断开时也这么做）。net/http 接到它会
+			// 静默断连、不打栈；在这里兜住的话，本该中止的响应会被写成 500 发出去，
+			// 还多一份毫无意义的栈。所以原样抛回给它。
+			//
+			// 抛回之前记进 c.Errors：外面几层（访问日志、指标、链路）的收尾据此
+			// 把它记成中止，见 status——它们读到的 c.Writer.Status() 往往是
+			// 已经发出去的 200，一个被截断的响应就全都记成了成功
+			if err == http.ErrAbortHandler {
+				_ = c.Error(http.ErrAbortHandler) //nolint:errcheck // 只是登记
+				panic(err)
+			}
+
+			// 连接断了不算故障，不值得打一份完整栈
+			broken := isBrokenPipe(err)
+			ctx := c.Request.Context()
+			if broken {
+				slog.ErrorContext(ctx, "connection broken", "error", err)
+				_ = c.Error(err.(error)) //nolint:errcheck // isBrokenPipe 保证它是 *net.OpError
+				c.Abort()
+				return
+			}
+
+			slog.ErrorContext(ctx, "panic while handling request",
+				"error", err,
+				"stack", stack(),
+				"path", c.Request.URL.Path,
+				"method", c.Request.Method)
+
+			if c.Writer.Written() {
+				// 响应已经开始往外写了，再改状态码只会得到一个半截的响应
+				c.Abort()
+				return
+			}
+			handle(c, err)
+		}()
+		c.Next()
+	}
+}
+
+// statusAborted handler 以 http.ErrAbortHandler 中止的请求，在访问日志、
+// 指标、链路里记成这个状态码。借用的是 nginx 的 499：这个码不会真的发给
+// 客户端（连接直接断了），只是给「没有正常结束的请求」一个固定的、
+// 查得到的值，不和任何真实的响应混在一起
+const statusAborted = 499
+
+// status 本次请求该记下的状态码。
+//
+// 不能直接读 c.Writer.Status()：中止的请求往往已经写出了 200 的响应头，
+// 照读的话一个被截断的响应在日志、指标、链路里全都记成成功
+func status(c *gin.Context) int {
+	for _, e := range c.Errors { // 由 Recover 登记
+		if errors.Is(e.Err, http.ErrAbortHandler) {
+			return statusAborted
+		}
+	}
+	return c.Writer.Status()
+}
+
+// isBrokenPipe 判断是不是客户端提前断开连接
+func isBrokenPipe(err any) bool {
+	ne, ok := err.(*net.OpError)
+	if !ok {
+		return false
+	}
+	var se *os.SyscallError
+	if !errors.As(ne, &se) {
+		return false
+	}
+	msg := strings.ToLower(se.Error())
+	return strings.Contains(msg, "broken pipe") || strings.Contains(msg, "connection reset by peer")
+}
+
+// stack 当前协程的栈
+//
+// 用 runtime.Stack 而不是逐帧读源码文件：panic 恢复期间去做文件 I/O，
+// 磁盘一慢就把这条错误日志也拖住了。
+func stack() string {
+	buf := make([]byte, maxStack)
+	return string(buf[:runtime.Stack(buf, false)])
+}

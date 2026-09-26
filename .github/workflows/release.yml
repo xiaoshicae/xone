@@ -1,0 +1,126 @@
+name: release
+
+# 发布按钮：Actions → release → Run workflow，填版本号（如 v0.1.0）。
+#
+# 发布分两步，这个按钮是第二步：
+#   1. scripts/release.sh vX.Y.Z --bump 改好 go.mod 和 CHANGELOG，走普通的 PR 合进 main；
+#   2. 点这个按钮：在 main 的最新提交上给每个模块打 tag（v0.1.0、xgin/v0.1.0……）并推送。
+# tag 就打在 main 上，main 的分支保护照常生效：这里只推 tag，不推任何分支。
+#
+# 按钮做的事：
+#   - release.sh --tag：确认 go.mod 已经钉到这个版本、CHANGELOG 有这一节、tag 还没用过，
+#     跑检查和单测，在本地打 tag；
+#   - e2e（真实的 PG / MySQL / Redis / ClickHouse，同 e2e.yml）；
+#   - 只推这一组 tag（--atomic：要么全上去，要么一个都不上去）；
+#   - release.sh --verify：在一个全新的外部工程里 go get，验证装得上、跑得起来。
+# 前面任何一步红了都不推送。tag 推出去就被 Go 的 module proxy 永久缓存，删不掉。
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '版本号，vX.Y.Z（只收 v0 / v1）'
+        required: true
+        type: string
+
+# 同一时间只跑一个发布
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: write # 推 tag
+
+jobs:
+  release:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    # 和 e2e.yml 同一套服务容器，账号密码与 e2e/compose.yml、e2e/harness 的默认值一致
+    services:
+      postgres:
+        image: mirror.gcr.io/library/postgres:16
+        env:
+          POSTGRES_USER: xone
+          POSTGRES_PASSWORD: e2e-secret-pw
+          POSTGRES_DB: xone_e2e
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U xone -d xone_e2e"
+          --health-interval 2s --health-retries 30
+      mysql:
+        image: mirror.gcr.io/library/mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: e2e-root-pw
+          MYSQL_USER: xone
+          MYSQL_PASSWORD: e2e-secret-pw
+          MYSQL_DATABASE: xone_e2e
+        ports: ['3306:3306']
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -uxone -pe2e-secret-pw"
+          --health-interval 2s --health-retries 60
+      redis:
+        image: mirror.gcr.io/library/redis:7
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 2s --health-retries 30
+      clickhouse:
+        image: mirror.gcr.io/clickhouse/clickhouse-server:24.8
+        env:
+          CLICKHOUSE_USER: xone
+          CLICKHOUSE_PASSWORD: e2e-secret-pw
+          CLICKHOUSE_DB: xone_e2e
+          CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: '1'
+        ports: ['9000:9000', '8123:8123']
+        options: >-
+          --health-cmd "wget -qO- http://127.0.0.1:8123/ping"
+          --health-interval 2s --health-retries 60
+    env:
+      # 版本号经环境变量进脚本，不直接拼进 run：输入框里的内容不该有机会变成命令
+      VERSION: ${{ inputs.version }}
+      XONE_E2E_EXTERNAL: '1'
+      XONE_E2E_PG_ADDR: 127.0.0.1:5432
+      XONE_E2E_MYSQL_ADDR: 127.0.0.1:3306
+      XONE_E2E_REDIS_ADDR: 127.0.0.1:6379
+      XONE_E2E_CH_ADDR: 127.0.0.1:9000
+      XONE_E2E_CH_HTTP_ADDR: 127.0.0.1:8123
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # release.sh 要看这个版本的 tag 是不是已经有了
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache: true
+          cache-dependency-path: '**/go.sum'
+
+      - name: release.sh --tag（确认可以发、检查、单测、在本地打 tag）
+        run: scripts/release.sh "$VERSION" --tag --e2e-passed
+
+      # 跳过的三条同 e2e.yml：PG / MySQL / Redis 的 TLS 用例要 root 起本机实例，runner 不是 root。
+      # 上一步用了 --e2e-passed，由这一步兑现：这里红了，tag 只在这台机器上，不会推出去
+      - name: e2e
+        shell: bash
+        run: scripts/e2e.sh -skip 'TestTLS_(PostgreSQL|MySQL|Redis)$' 2>&1 | tee "$RUNNER_TEMP/e2e.log"
+
+      - name: 推送 tag
+        run: |
+          refs=$(git tag --points-at "$VERSION" | sed 's|^|refs/tags/|')
+          echo "$refs"
+          git push --atomic origin $refs
+
+      - name: release.sh --verify（外部工程装得上、跑得起来）
+        run: scripts/release.sh "$VERSION" --verify
+
+      - name: summary
+        if: always()
+        run: |
+          {
+            echo "### release $VERSION"
+            echo
+            if git rev-parse -q --verify "refs/tags/$VERSION" >/dev/null; then
+              echo "tag：$(git tag --points-at "$VERSION" | tr '\n' ' ')"
+            else
+              echo "没有打 tag，也没有推送。"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,237 @@
+package xlog
+
+import (
+	"context"
+	"io"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"sync/atomic"
+	"time"
+
+	"github.com/xiaoshicae/xone/xconfig"
+	"github.com/xiaoshicae/xone/xerror"
+	"github.com/xiaoshicae/xone/xhook"
+)
+
+// New 按配置造一个 logger。
+//
+// 纯构造器：不碰全局、不读配置文件、不依赖框架运行。测试直接调它。
+//
+// 返回的 io.Closer 用于收尾（关闭日志文件），即便没有文件输出也不会是 nil，
+// 调用方不必判空。
+func New(cfg Config) (*slog.Logger, io.Closer, error) {
+	// 配置项全部先校验完，再动文件。反过来的话，Format 写错时
+	// 日志文件已经建好、fd 也开着，而 New 返回了错误——调用方手上
+	// 没有 Closer 可关，那个 fd 和它的符号链接就留在那里了
+	level, err := parseLevel(cfg.Level)
+	if err != nil {
+		return nil, nil, err
+	}
+	newHandler, err := handlerFor(cfg.Format)
+	if err != nil {
+		return nil, nil, err
+	}
+	loc, err := parseLocation(cfg.Timezone)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := cfg.File.validate(); err != nil {
+		return nil, nil, xerror.New("xlog", "config", err)
+	}
+
+	writers := make([]io.Writer, 0, 2)
+	closers := make([]io.Closer, 0, 1)
+
+	if cfg.Console {
+		writers = append(writers, os.Stdout)
+	}
+	if cfg.File.Enable {
+		w, err := newFileWriter(cfg.File)
+		if err != nil {
+			return nil, nil, err
+		}
+		writers = append(writers, w)
+		closers = append(closers, w)
+	}
+
+	// 一个输出都没开时 MultiWriter 什么也不写（等同 io.Discard）而不是报错：
+	// 「我就是不要日志」是个合理的选择，不该让服务起不来
+	out := io.MultiWriter(writers...)
+
+	opts := &slog.HandlerOptions{Level: level, AddSource: cfg.AddSource, ReplaceAttr: inLocation(loc)}
+	return slog.New(newCtxHandler(newHandler(out, opts))), multiCloser(closers), nil
+}
+
+// parseLocation 解析 IANA 时区名。留空表示跟随本地时区
+func parseLocation(name string) (*time.Location, error) {
+	if name == "" {
+		return nil, nil
+	}
+	loc, err := time.LoadLocation(name)
+	if err != nil {
+		return nil, xerror.Newf("xlog", "config",
+			"unknown Timezone=[%s]; images without /usr/share/zoneinfo need `import _ \"time/tzdata\"` in your main package: %w",
+			name, err)
+	}
+	return loc, nil
+}
+
+// inLocation 把记录时间换到指定时区。loc 为 nil 时返回 nil，
+// 于是 HandlerOptions.ReplaceAttr 保持为空，热路径上一次多余的函数调用都没有
+func inLocation(loc *time.Location) func([]string, slog.Attr) slog.Attr {
+	if loc == nil {
+		return nil
+	}
+	return func(groups []string, a slog.Attr) slog.Attr {
+		// 只动顶层的时间字段：业务自己打的 time.Time 是它的数据，不该被改时区
+		if len(groups) == 0 && a.Key == slog.TimeKey && a.Value.Kind() == slog.KindTime {
+			a.Value = slog.TimeValue(a.Value.Time().In(loc))
+		}
+		return a
+	}
+}
+
+// handlerFor 按格式选出 handler 的构造函数。
+// 只认格式、不碰输出，好让格式写错这件事在打开日志文件之前就暴露。
+func handlerFor(format string) (func(io.Writer, *slog.HandlerOptions) slog.Handler, error) {
+	switch strings.ToLower(format) {
+	case FormatText:
+		return func(w io.Writer, o *slog.HandlerOptions) slog.Handler { return slog.NewTextHandler(w, o) }, nil
+	case FormatJSON, "":
+		return func(w io.Writer, o *slog.HandlerOptions) slog.Handler { return slog.NewJSONHandler(w, o) }, nil
+	default:
+		return nil, xerror.Newf("xlog", "new",
+			"unknown log format Format=[%s], expected %s or %s", format, FormatJSON, FormatText)
+	}
+}
+
+// newFileWriter 造文件写入器，目录不存在时创建
+func newFileWriter(c FileConfig) (io.WriteCloser, error) {
+	// 先解析权限再建目录：Perm 写错时不该留下一个空目录
+	perm, err := parsePerm(c.Perm)
+	if err != nil {
+		return nil, err
+	}
+	if c.Path != "" {
+		if err := os.MkdirAll(c.Path, 0o755); err != nil {
+			return nil, xerror.Newf("xlog", "new", "create log dir failed Path=[%s]: %w", c.Path, err)
+		}
+	}
+	return newRotateWriter(filepath.Join(c.Path, c.Name), c.MaxAge, c.RotateTime, perm)
+}
+
+// parseLevel 解析日志级别。不认识的值直接报错而不是退回默认值——
+// 配置写错了应该在启动时知道，而不是上线后发现日志级别不对。
+func parseLevel(s string) (slog.Level, error) {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "debug":
+		return slog.LevelDebug, nil
+	case "info", "":
+		return slog.LevelInfo, nil
+	case "warn", "warning":
+		return slog.LevelWarn, nil
+	case "error":
+		return slog.LevelError, nil
+	default:
+		return 0, xerror.Newf("xlog", "new",
+			"unknown log level Level=[%s], expected debug / info / warn / error", s)
+	}
+}
+
+// parsePerm 解析八进制权限字符串，认 "0644"、"644" 和 YAML 1.2 的 "0o644"
+func parsePerm(s string) (os.FileMode, error) {
+	if s == "" {
+		return defaultLogFilePerm, nil
+	}
+	v, err := strconv.ParseUint(strings.TrimPrefix(s, "0o"), 8, 32)
+	if err != nil {
+		return 0, xerror.Newf("xlog", "config",
+			"malformed log file permission Perm=[%s], expected an octal string such as \"0644\": %w", s, err)
+	}
+	return os.FileMode(v), nil
+}
+
+type multiCloser []io.Closer
+
+func (m multiCloser) Close() error {
+	var first error
+	for _, c := range m {
+		if err := c.Close(); err != nil && first == nil {
+			first = err
+		}
+	}
+	return first
+}
+
+// ---- 登记 ----
+
+// location 生效中的日志时区，由 Init 填好。nil 表示跟随本地时区
+var location atomic.Pointer[time.Location]
+
+// Location 返回日志时间戳用的时区。
+//
+// 业务自己要格式化时间、又想和日志对得上时用它，免得把配置里的时区名
+// 在代码里再抄一遍。没配 XLog.Timezone 时返回 time.Local。
+//
+//	t.In(xlog.Location()).Format(time.RFC3339)
+func Location() *time.Location {
+	if loc := location.Load(); loc != nil {
+		return loc
+	}
+	return time.Local
+}
+
+// init 日志要最先起、最后关，这样其余组件的启停日志都写得出去
+func init() {
+	xhook.BeforeStart(initXLog, xhook.At(xhook.StageLog))
+	xhook.BeforeStop(closeXLog) // 档位跟着上面那个启动钩子
+}
+
+// closer 由 initXLog 填好，closeXLog 用它关掉写入器
+var closer io.Closer
+
+// initXLog 读配置，然后装好日志
+func initXLog(context.Context) error {
+	c := DefaultConfig()
+	if err := xconfig.Unmarshal(ConfigKey, &c); err != nil {
+		return err
+	}
+	return install(c)
+}
+
+// install 按配置建好 logger，并把它装成标准库的全局默认值
+func install(c Config) error {
+	l, cl, err := New(c)
+	if err != nil {
+		return err
+	}
+	closer = cl
+	// New 已经校验过，这里不会再失败
+	if loc, _ := parseLocation(c.Timezone); loc != nil {
+		location.Store(loc)
+	}
+	// 装进标准库的全局默认 logger：业务代码直接用 slog.Info / slog.InfoContext，
+	// 不需要认识本包。这与 slog.SetDefault 是同一个模式。
+	slog.SetDefault(l)
+	return nil
+}
+
+// closeXLog 关掉日志文件。
+//
+// 写入没有缓冲（每条日志直接 write 到文件），所以这里没有要 flush 的东西，
+// 只是把 fd 还回去。
+//
+// 关之前先把全局 logger 换成写 stderr 的那个：日志是最后关的，但关完之后
+// 还有日志要打——xone.Run 返回的错误、超时后被丢下的停止钩子、没做完的在途请求。
+// 原先 slog.Default() 还指着已经关掉的文件，Console 关着的话这些日志一声不响就没了，
+// 而它们恰恰是排查「为什么没有正常退出」最要紧的那几条
+func closeXLog(context.Context) error {
+	if closer == nil {
+		return nil
+	}
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, nil)))
+	return closer.Close()
+}

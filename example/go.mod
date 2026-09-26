@@ -4,12 +4,12 @@ go 1.25.0
 
 require (
 	github.com/gin-gonic/gin v1.12.0
-	github.com/xiaoshicae/xone v0.1.0
-	github.com/xiaoshicae/xone/xcache v0.1.0
-	github.com/xiaoshicae/xone/xgin v0.1.0
-	github.com/xiaoshicae/xone/xhttp v0.1.0
-	github.com/xiaoshicae/xone/xmetric v0.1.0
-	github.com/xiaoshicae/xone/xtrace v0.1.0
+	github.com/xiaoshicae/xone v1.10.0
+	github.com/xiaoshicae/xone/xcache v1.10.0
+	github.com/xiaoshicae/xone/xgin v1.10.0
+	github.com/xiaoshicae/xone/xhttp v1.10.0
+	github.com/xiaoshicae/xone/xmetric v1.10.0
+	github.com/xiaoshicae/xone/xtrace v1.10.0
 	go.opentelemetry.io/otel v1.46.0
 )
 

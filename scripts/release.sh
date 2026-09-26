@@ -229,7 +229,7 @@ PY
   fi
 
   echo "== 3. README 里的安装命令换成 $VERSION =="
-  # 这个模块路径上还挂着更早发布的 v1.x，@latest 装到的是它们，README 只能写死版本号
+  # 所有模块共用一个版本号：README 写死这一版，照抄的人各模块版本才一致
   sed -i -E "s#(github\.com/xiaoshicae/xone(/[a-z/]+)?)@v[0-9]+\.[0-9]+\.[0-9]+#\1@$VERSION#g" README.md
   grep -q "xone@$VERSION" README.md || { echo "✗ README 里没找到安装命令"; exit 1; }
   echo "  ✓ README 的 go get 写的是 $VERSION"

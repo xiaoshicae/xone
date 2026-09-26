@@ -20,11 +20,8 @@
 **1. 安装**（核心 Go 1.22+，集成 Go 1.25+；所有模块共用一个版本号，写同一个）
 
 ```bash
-go get github.com/xiaoshicae/xone@v0.1.0 github.com/xiaoshicae/xone/xgin@v0.1.0
+go get github.com/xiaoshicae/xone@v1.10.0 github.com/xiaoshicae/xone/xgin@v1.10.0
 ```
-
-> **要写明版本号**，不要用 `@latest` 或者不写版本：这个模块路径上还挂着更早发布的 v1.x，
-> `@latest` 会装到它们。最新版本见 [更新日志](docs/CHANGELOG.md)。
 
 **2. 写配置** `conf/application.yml`（只写要改的，其余用默认值）
 

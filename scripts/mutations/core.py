@@ -532,6 +532,9 @@ mutate("最终配置里不带注释", "internal/config/debug.go", ".", "TestReda
 # XApp 跟着框架一起来：只 import 根包的程序写了 XApp.Name 也能启动
 mutate("根包带着 xapp", "xone.go", ".", "TestRun_XAppWorksWithCoreOnly",
        swap('\t_ "github.com/xiaoshicae/xone/xapp"\n', ''))
+# XLog 同理：只 import 根包的程序写了 XLog 也能启动，日志按它配好
+mutate("根包带着 xlog", "xone.go", ".", "TestRun_XLogWorksWithCoreOnly",
+       swap('\t_ "github.com/xiaoshicae/xone/xlog"\n', ''))
 mutate("只剩 Profiles / Import 的 XApp 连块一起摘掉", "internal/config/source.go", ".", "TestLoad_XAppWithOnlyProfilesAndImportIsNotUnclaimed",
        swap('if val != nil && len(app.Content) == 0 {', 'if false {'))
 mutate("XApp 里的 Import 被加载器取走", "internal/config/source.go", ".", "TestLoad_XAppNameLeftToXapp_ProfilesAndImportTakenByLoader",

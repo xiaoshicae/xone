@@ -8,6 +8,12 @@
 
 ## [未发布]
 
+### 修复
+
+- 只用核心（`xone.Func`、`xone.UntilSignal`，一个集成都没 import）的程序，写了 `XLog` 块会启动失败
+  （`config keys [XLog] are not read by anyone`），不写则日志停在标准库的默认输出。现在 `xlog` 跟着框架一起来，
+  和 `xapp` 一样不用另外 import；原来为此写的 `_ "github.com/xiaoshicae/xone/xlog"` 可以删掉，留着也无妨。
+
 ## [v1.11.0] - 2026-09-26
 
 ### 不兼容变更

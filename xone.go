@@ -39,6 +39,9 @@ import (
 	// XApp 块（应用名、版本、Profiles、Import）跟着框架一起来：写了 XApp.Name 却没人 import xapp 的话，
 	// 这一块会被当成拼错的 key 启动失败。xapp 在核心 module 里、零依赖，带上它不多任何东西
 	_ "github.com/xiaoshicae/xone/xapp"
+	// XLog 同理：只用核心写的程序（消费者、一次性任务）写了 XLog 块，没人 import xlog 就启动失败；
+	// 不写的话日志停在标准库的默认输出，不是文档说的 XLog 默认值
+	_ "github.com/xiaoshicae/xone/xlog"
 )
 
 // Runnable 需要持续运行的东西，通常就是你的服务器。

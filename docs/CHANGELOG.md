@@ -8,6 +8,8 @@
 
 ## [未发布]
 
+## [v1.12.0] - 2026-09-26
+
 ### 新增
 
 - `xlog.UseHandler(h)`：日志改由你自己的 `slog.Handler` 写（zap 的 slog 桥、公司的日志 SDK……），在 `xone.Run` 之前调。

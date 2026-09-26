@@ -23,7 +23,6 @@ import (
 	// 匿名 import 就是全部「装配」。想用数据库就加上 xgorm，
 	// 想用 Redis 就加上 xredis——下面的 App 一个字都不用改
 	_ "github.com/xiaoshicae/xone/example/component/xkv"
-	_ "github.com/xiaoshicae/xone/xlog"
 )
 
 func main() {

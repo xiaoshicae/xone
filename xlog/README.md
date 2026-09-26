@@ -2,7 +2,7 @@
 
 日志：装好之后 `slog.Default()` 就是按 `XLog` 配好的原生 `*slog.Logger`，业务代码直接用标准库 `log/slog`。
 
-- 核心模块，零依赖；不写配置就是 info 级别的 JSON 打到标准输出
+- 核心模块，零依赖，跟着框架一起来：import 了 `xone` 就装好了，不用另外 import；不写配置就是 info 级别的 JSON 打到标准输出
 - 有链路时每条日志自动带 `trace_id` / `span_id`
 - `xlog.AddKV` 给整个请求加字段（访问日志也带上），`xlog.CtxWithKV` 只给一段调用加
 - 文件输出按时间轮转、按保留时长清理，只删自己命名的文件
@@ -69,9 +69,28 @@ XLog:
 | `DroppedKVCount() int64` | 因为没有作用域被丢掉的 `AddKV` 字段数，不为零多半是漏了 `CtxWithScope` |
 | `Location() *time.Location` | 生效中的时区：`t.In(xlog.Location()).Format(time.RFC3339)`；没配时是 `time.Local` |
 | `TraceIDs(ctx) (traceID, spanID string)` | 当前 ctx 的链路标识，就是日志里写的那两个值；没有时是两个空串 |
+| `UseHandler(h slog.Handler)` | 日志改由你自己的 handler 写（zap 的 slog 桥、公司的日志 SDK……），在 `xone.Run` 之前调；见[「用自己的日志后端」](#用自己的日志后端) |
 | `New(cfg) (*slog.Logger, io.Closer, error)` | 纯构造器：不碰全局、不读配置文件，离开框架也能用 |
 
 `SetTraceExtractor` / `AddObserver` 是给 xtrace、xmetric 这类集成注入能力用的，业务代码用不到。
+
+## 用自己的日志后端
+
+日志的入口永远是 `slog`；要换的只是最后由谁来写。在 `xone.Run` 之前把 handler 交给 xlog：
+
+```go
+func main() {
+	xlog.UseHandler(zapslog.NewHandler(core)) // 或任何 slog.Handler
+	xone.MustRun(xgin.New().WithRoutes(routes))
+}
+```
+
+- xlog 照样把它包一层再装成 `slog.Default()`：`trace_id`、`AddKV` / `CtxWithKV` 的字段、错误日志计数都还在，
+  框架的访问日志、SQL 日志、启停日志也都写进它。不会出现「框架日志一条路、业务日志另一条路」。
+- 级别、格式、输出去向都由你的 handler 决定，`XLog` 块一项都不起作用：**写了就启动失败**
+  （`XLog has no effect when xlog.UseHandler is set`），免得以为 `Level: debug` 生效了。只写默认值不算冲突。
+- 你的 handler 归你管：退出时 xlog 不关它，也不把 `slog.Default()` 换掉。
+- 日志装好之后再调不会生效，只打一条 WARN——那之前的日志已经写到别处了。
 
 ## 注意事项
 

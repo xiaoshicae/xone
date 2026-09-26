@@ -39,6 +39,9 @@ import (
 	// XApp 块（应用名、版本、Profiles、Import）跟着框架一起来：写了 XApp.Name 却没人 import xapp 的话，
 	// 这一块会被当成拼错的 key 启动失败。xapp 在核心 module 里、零依赖，带上它不多任何东西
 	_ "github.com/xiaoshicae/xone/xapp"
+	// xlog 也跟着框架一起来，理由同 xapp：只 import 了 xone 的程序（消费者、一次性任务）也能用 XLog 配日志。
+	// 少了这一行，写 XLog 块会被当成没人读的 key 启动失败。要用自己的日志后端，调 xlog.UseHandler
+	_ "github.com/xiaoshicae/xone/xlog"
 )
 
 // Runnable 需要持续运行的东西，通常就是你的服务器。
@@ -488,7 +491,10 @@ func WithConfigPath(p string) Option { return func(o *options) { o.configPath = 
 // 后面的各留一份——不肯退出的服务、关不掉的连接池都吃不掉别人那份。
 // 服务的 Stop 不按它收到的 ctx 返回的话，到了服务那一段的截止时间就不再等它。
 func WithStopTimeout(d time.Duration) Option { return func(o *options) { o.stopTimeout = d } }
-func WithLogger(l *slog.Logger) Option       { return func(o *options) { o.logger = l } }
+
+// WithLogger 只给框架自己的启停日志换一个 logger，主要用于测试里静音；
+// 业务代码和各集成照样写 slog.Default()。要换整个进程的日志后端，用 xlog.UseHandler。
+func WithLogger(l *slog.Logger) Option { return func(o *options) { o.logger = l } }
 
 // MustRun 同 Run，出错直接退出。
 func MustRun(r Runnable, opts ...Option) {

@@ -1,6 +1,7 @@
 package xlog
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -664,6 +665,8 @@ func keepGlobals(t *testing.T) {
 	t.Cleanup(func() {
 		slog.SetDefault(oldLogger)
 		closer = oldCloser
+		custom.Store(nil)
+		installed.Store(false)
 		if oldLoc != nil {
 			location.Store(oldLoc)
 		}
@@ -778,5 +781,101 @@ func TestCloseXLog_LogsGoToStderrAfterFileClosed(t *testing.T) {
 	}
 	if !strings.Contains(string(b), "shutdown failed") {
 		t.Errorf("关掉文件之后的日志该写到 stderr，got=%q", b)
+	}
+}
+
+func TestUseHandler_LogsGoToOwnHandlerWithCtxFields(t *testing.T) {
+	// 换了后端，xlog 包的那一层照样在：AddKV 的字段、trace_id、观察者都不能丢
+	keepGlobals(t)
+	var buf bytes.Buffer
+	UseHandler(slog.NewJSONHandler(&buf, nil))
+	xonetest.UseConfigYAML(t, "XApp:\n  Name: demo\n")
+	if err := initXLog(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := CtxWithScope(context.Background())
+	AddKV(ctx, "user_id", "u1")
+	slog.InfoContext(ctx, "hello")
+	if out := buf.String(); !strings.Contains(out, `"msg":"hello"`) || !strings.Contains(out, `"user_id":"u1"`) {
+		t.Errorf("日志该写进自己的 handler、带着 AddKV 的字段，got=%q", out)
+	}
+	if closer != nil {
+		t.Errorf("自己的 handler 不归 xlog 关，closer 该是 nil")
+	}
+}
+
+func TestUseHandler_XLogBlockFailsStartup(t *testing.T) {
+	// 写了 Level: debug 却由别人的 handler 决定级别：以为生效了，其实没有
+	keepGlobals(t)
+	UseHandler(slog.NewJSONHandler(io.Discard, nil))
+	xonetest.UseConfigYAML(t, "XLog:\n  Level: debug\n")
+	err := initXLog(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "UseHandler") {
+		t.Fatalf("UseHandler 和 XLog 的输出项同时写，该启动失败并指明原因，got=%v", err)
+	}
+}
+
+func TestUseHandler_DefaultValuedXLogBlockIsFine(t *testing.T) {
+	keepGlobals(t)
+	UseHandler(slog.NewJSONHandler(io.Discard, nil))
+	xonetest.UseConfigYAML(t, "XLog:\n  Level: info\n")
+	if err := initXLog(context.Background()); err != nil {
+		t.Errorf("只写了默认值不算冲突，got=%v", err)
+	}
+}
+
+func TestUseHandler_LateCallIsIgnored(t *testing.T) {
+	// 日志装好之后再换，前面的日志已经写到别处了；不生效，但要说出来
+	keepGlobals(t)
+	var buf bytes.Buffer
+	xonetest.UseConfigYAML(t, "XApp:\n  Name: demo\n")
+	if err := initXLog(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	// 把装好的 logger 换成能截到输出的，好看见那条 WARN
+	slog.SetDefault(slog.New(newCtxHandler(slog.NewJSONHandler(&buf, nil))))
+	before := slog.Default().Handler()
+
+	UseHandler(slog.NewJSONHandler(io.Discard, nil))
+	if custom.Load() != nil || slog.Default().Handler() != before {
+		t.Error("装好之后的 UseHandler 不该生效")
+	}
+	if !strings.Contains(buf.String(), "xlog.UseHandler called after logging was installed") {
+		t.Errorf("调晚了该打一条 WARN，got=%q", buf.String())
+	}
+}
+
+func TestUseHandler_CloseLeavesOwnHandlerInPlace(t *testing.T) {
+	// 关的时候换成 stderr 是为了不写进已经关掉的文件；自己的 handler 没这个问题，不该被换掉
+	keepGlobals(t)
+	var buf bytes.Buffer
+	UseHandler(slog.NewJSONHandler(&buf, nil))
+	xonetest.UseConfigYAML(t, "XApp:\n  Name: demo\n")
+	if err := initXLog(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := closeXLog(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	slog.Info("after close")
+	if !strings.Contains(buf.String(), "after close") {
+		t.Errorf("关闭之后日志还该写进自己的 handler，got=%q", buf.String())
+	}
+}
+
+func TestUseHandler_UsableAgainAfterClose(t *testing.T) {
+	// 同一进程里跑第二次 Run（测试里常见）：上一轮关掉之后，UseHandler 得重新生效
+	keepGlobals(t)
+	xonetest.UseConfigYAML(t, "XApp:\n  Name: demo\n")
+	if err := initXLog(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := closeXLog(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	UseHandler(slog.NewJSONHandler(io.Discard, nil))
+	if custom.Load() == nil {
+		t.Error("关掉之后再调 UseHandler 该生效")
 	}
 }

@@ -18,7 +18,6 @@ require (
 	google.golang.org/protobuf v1.36.11 // indirect
 )
 
-// 核心还没打 tag，本地开发与 CI 都走仓库内的相对路径。
-// 消费者的构建会忽略依赖里的 replace，所以这行不影响使用者。
-// 打第一个 tag 之后改成真实版本号。
+// 开发用：本地和 CI 编的都是仓库里的代码，不是已发布的版本。
+// 使用者的构建会忽略依赖里的 replace、只看 require 的版本，这里的 replace 对他们不起作用
 replace github.com/xiaoshicae/xone => ../

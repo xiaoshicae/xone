@@ -84,6 +84,7 @@ curl localhost:8080/hello     # {"msg":"hello"}；访问日志、链路、/metri
 | [xapp](xapp/README.md) · [xtls](xtls/README.md) | — | 应用名 / 版本 · 客户端 TLS（XGorm / XRedis / XHttp 共用） |
 
 `xconfig`、`xlog`、`xflow`、`xapp`、`xtls`、`xhook`、`xerror`、`xutil`、`xonetest` 都在核心模块里，核心只依赖 yaml。
+其中 `xapp`、`xlog` 跟着框架一起来：只要 import 了 `xone`，`XApp`、`XLog` 两块配置就生效，不用另外 import。
 
 **日志、指标、链路跟着集成来**：xgin、xgorm、xredis、xhttp 带着 xtrace 和 xmetric，xcache 带着 xmetric，
 用了就不用另外 import。只有进程里一个这样的集成都没有、又想要它们时，才需要匿名 import，见 [可观测「链路」](docs/observability.md#链路)。

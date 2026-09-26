@@ -10,7 +10,7 @@ import (
 // Error 统一错误类型，包含模块名、操作名和原始错误
 type Error struct {
 	Module string // 模块名，如 "xconfig", "xgorm"
-	Op     string // 操作名，如 "init", "close"
+	Op     string // 操作名，如 "config", "close"
 	Err    error  // 原始错误
 }
 

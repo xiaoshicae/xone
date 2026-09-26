@@ -69,7 +69,7 @@ XLog:
 | `DroppedKVCount() int64` | 因为没有作用域被丢掉的 `AddKV` 字段数，不为零多半是漏了 `CtxWithScope` |
 | `Location() *time.Location` | 生效中的时区：`t.In(xlog.Location()).Format(time.RFC3339)`；没配时是 `time.Local` |
 | `TraceIDs(ctx) (traceID, spanID string)` | 当前 ctx 的链路标识，就是日志里写的那两个值；没有时是两个空串 |
-| `New(cfg) (*slog.Logger, io.Closer, error)` | 纯构造器：不碰全局、不读文件，离开框架也能用 |
+| `New(cfg) (*slog.Logger, io.Closer, error)` | 纯构造器：不碰全局、不读配置文件，离开框架也能用 |
 
 `SetTraceExtractor` / `AddObserver` 是给 xtrace、xmetric 这类集成注入能力用的，业务代码用不到。
 

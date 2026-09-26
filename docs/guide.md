@@ -198,25 +198,27 @@ xgorm.Names()              // 已配置的实例名，排好序
 
 ## 错误处理
 
-框架返回的错误都是 `*xerror.Error`，带着模块名和操作名，渲染成 `xone <模块> <op> failed, err=[<原因>]`：
+框架返回的错误都是 `*xerror.Error`，带着模块名和操作名，渲染成 `xone <模块> <op> failed, err=[<原因>]`。
+启动钩子失败时，最外层是 `xone start`，里面才是真正报错的模块：
 
 ```
-xone xgorm connect failed, err=[authentication to db:5432 failed: FATAL: password authentication failed …]
+xone start failed, err=[<钩子名>: xgorm connect failed, err=[instance "default": authentication to db:5432 failed: FATAL: password authentication failed …]]
 ```
 
 ```go
 if err := xone.Run(app); err != nil {
 	switch {
-	case xerror.Is(err, "xconfig"):   // 整棵错误树里有没有 xconfig 报的（配置写错了）
-	case xerror.Module(err) == "xgorm": // 最外层是谁报的
+	case xerror.Is(err, "xconfig"): // 整棵错误树里有没有 xconfig 报的（配置写错了）
+	case xerror.Is(err, "xgorm"):   // 数据库那边出的问题
 	}
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) { /* 底层错误一路用 %w 包着，errors.Is / As 照常取得到 */ }
 }
 ```
 
-- `xerror.Is` 遍历整棵树（包括 `errors.Join`），`xerror.Module` 只看最外层。`Run` 把启动错误和关闭时的错误 Join 在一起，主因在最前面。
-- op 是固定的一组词：`config`（配置不合法）、`init`、`new`、`connect`（建连、探测）、`close`、`register`、`start` / `stop`、`execute`（xflow）。
+- `xerror.Is` 遍历整棵树（包括 `errors.Join`），`xerror.Module` 只看最外层——`Run` 返回的错误最外层总是 `xone`，
+  要问「是哪个模块」用 `xerror.Is`。`Run` 把启动错误和关闭时的错误 Join 在一起，主因在最前面。
+- op 是固定的一组词：`config`（配置不合法）、`new`、`connect`（建连、探测）、`close`、`register`、`start` / `stop`、`execute`（xflow）。
 - 业务调用（`xgorm.C().First(...)`、`xredis.C().Get(...)`）返回的是原生库的错误，框架不包。
 
 ## 测试

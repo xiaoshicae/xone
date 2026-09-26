@@ -85,7 +85,7 @@ XRedis:
 | `C(name ...string) *redis.Client` | 取实例，不带参数取 `default`。取不到直接 panic，消息里说清是调早了、没配还是名字写错 |
 | `Has(name ...string) bool` | 实例配了没有，可选依赖先判断 |
 | `Names() []string` | 配了哪些实例 |
-| `New(ctx, cfg) (*redis.Client, io.Closer, error)` | 纯构造器：不碰全局、不读文件，离开框架也能用 |
+| `New(ctx, cfg) (*redis.Client, io.Closer, error)` | 纯构造器：不碰全局、不读配置文件，离开框架也能用 |
 
 ## 注意事项
 
@@ -104,6 +104,7 @@ XRedis:
 | 消息 | 级别 | 字段 |
 |---|---|---|
 | `xredis connected` | INFO | `name`、`addr`、`db`、`tls`、`min_idle_conns` |
+| `xredis ready` | INFO | `instances` |
 
 日志的全局约定（`trace_id` 注入、`xlog.AddKV`、框架的启停日志）见 [`docs/observability.md`](../docs/observability.md#日志)。
 

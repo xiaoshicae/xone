@@ -37,7 +37,7 @@ type ConnInfo struct {
 //	import _ "github.com/xiaoshicae/xone/xgorm/clickhouse"
 //
 // 拆成独立 module 是因为驱动很重。实测一个只 import xgorm 的应用模块图是
-// 69 个，加上 ClickHouse 驱动变成 132 个（go list -deps 里的非标准库包 165 → 208，clickhouse-go v2.48.0）——多出来的
+// 68 个（不含应用自己），加上 ClickHouse 驱动变成 131 个（go list -deps 里的非标准库包 165 → 208，clickhouse-go v2.48.0）——多出来的
 // 大头是 Docker 和 testcontainers，因为 clickhouse-go 把集成测试用的它们
 // 写在了自己 go.mod 的主 require 块里，而 go.mod 分不出「只测试用」。
 // Go 的 MVS 正是按模块图把版本要求强加给使用者的，哪怕他只用 MySQL、

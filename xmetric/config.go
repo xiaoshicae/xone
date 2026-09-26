@@ -98,7 +98,7 @@ var reservedLabels = map[string]string{
 	"status":   "the xgin and xhttp request metrics",
 	"route":    "the xgin request metrics",
 	"host":     "the xhttp request metrics",
-	"name":     "the xgorm and xredis pool metrics",
+	"name":     "the xgorm, xredis and xcache instance metrics",
 	// go_info 自带常量标签 version，常量标签也附加在 Go 运行时指标上，
 	// 实测撞名时 New 报 attempted wrapping with already existing label name "version"
 	"version": "go_info in the Go runtime metrics",

@@ -151,11 +151,11 @@ mutate("多实例的每个实例都调一次 Validate", "internal/config/clients
        swap('any(&c).(interface{ Validate() error })', 'any(c).(interface{ Validate() error })'))
 
 section("启动与退出")
-# Stop 是可选的：实现了才调。打在调用点上——绕开类型断言，写了 Stop 的服务就停不下来
 # xone.Func / UntilSignal：不写类型也能交给 Run 的两个 Runnable
 mutate("Func 的错误就是 Run 的错误", "xone.go", ".", "TestFunc_", swap('func (f funcRunnable) Start(ctx context.Context) error { return f(ctx) }', 'func (f funcRunnable) Start(ctx context.Context) error { _ = f(ctx); return nil }'))
 mutate("Func(nil) 当场 panic", "xone.go", ".", "TestFunc_", swap('\tif fn == nil {\n\t\tpanic("xone: Func needs', '\tif false {\n\t\tpanic("xone: Func needs'))
 mutate("UntilSignal 阻塞到退出信号", "xone.go", ".", "TestUntilSignal", swap('\t\t<-ctx.Done()\n\t\treturn nil\n', '\t\treturn nil\n'))
+# Stop 是可选的：实现了才调。打在调用点上——绕开类型断言，写了 Stop 的服务就停不下来
 mutate("写了 Stop 的才调它", "xone.go", ".", "TestRun_ClosesInReverseOrder|TestRun_StartOnlyRunnableWorks",
        swap('\tif s, ok := r.(stopper); ok {\n', '\tif s, ok := any(nil).(stopper); ok {\n'))
 # Stop 签名写错编译器不拦，那个 Stop 就永远不会被调到
@@ -203,10 +203,10 @@ mutate("第二个信号能终止卡住的进程", "xone.go", ".", "TestRun",
 # 在途请求没做完、注册中心那条记录没注销，等于没有优雅退出这回事
 mutate("Stop 拿到的 ctx 不继承那次取消", "xone.go", ".", "TestRun_StopCtxDoesNotInheritCancellation",
        swap('context.WithTimeout(context.WithoutCancel(ctx), o.stopTimeout)','context.WithTimeout(ctx, o.stopTimeout)'))
-# Stop 收了 ctx 却不看它：同步调的话 Run 永远返回不了，一个停止钩子都轮不到
 # 到点之后不留那一截余量：看着截止时间返回的 Stop 报的错被丢掉，进程以 0 退出
 mutate("看着截止时间返回的 Stop 报的错不丢", "xone.go", ".", "TestRun_DeadlineAwareStopErrorIsKept",
        swap('case <-time.After(stopGrace):', 'default:'))
+# Stop 收了 ctx 却不看它：同步调的话 Run 永远返回不了，一个停止钩子都轮不到
 mutate("不看 ctx 的 Stop 挂不住退出", "xone.go", ".", "TestRun_StopIgnoringCtxDoesNotHangExit",
        swap('errors.Join(first, stopServer(serverCtx, o, s))', 'errors.Join(first, safe("stop", func() error { return s.Stop(serverCtx) }))'))
 # 服务只能用预算的前 2/3。让它用满整份的话，不肯退出的服务把时间吃光，
@@ -268,8 +268,6 @@ mutate("没写 Name 时用类型名", "xflow/xflow.go", ".", "TestNew_",
 mutate("没写 Dependency 时是强依赖", "xflow/xflow.go", ".", "TestNew_",
        swap('name: typeName(p), dep: Strong}', 'name: typeName(p), dep: Weak}'))
 mutate("写了 Dependency 就用写的", "xflow/xflow.go", ".", "TestNew_", swap('\t\ts.dep = d.Dependency()\n', '\t\t_ = d\n'))
-# 回滚的是已执行的那段前缀：失败的弱依赖算在内（它可能留下了副作用），
-# 失败的强依赖不算（它没成）
 # 单独用 xflow 时配置文件没人读，WithRollbackTimeout 是改回滚预算的唯一办法
 mutate("流程自己的回滚预算压过配置", "xflow/xflow.go", ".", "TestWithRollbackTimeout",
        swap('cmp.Or(f.rollbackTimeout, cfg.RollbackTimeout)', 'cmp.Or(cfg.RollbackTimeout, f.rollbackTimeout)'))
@@ -278,6 +276,8 @@ mutate("WithRollbackTimeout 返回新流程", "xflow/xflow.go", ".", "TestWithRo
        swap('\tg := *f\n\tg.rollbackTimeout = d\n\treturn &g\n', '\tf.rollbackTimeout = d\n\treturn f\n'))
 mutate("回滚预算不是正数要 panic", "xflow/xflow.go", ".", "TestWithRollbackTimeout",
        swap('\tif d <= 0 {\n\t\tpanic(fmt.Sprintf("xflow: rollback timeout', '\tif d < 0 {\n\t\tpanic(fmt.Sprintf("xflow: rollback timeout'))
+# 回滚的是已执行的那段前缀：失败的弱依赖算在内（它可能留下了副作用），
+# 失败的强依赖不算（它没成）
 mutate("失败的弱依赖也要回滚", "xflow/xflow.go", ".", "TestExecute", swap('\t\t\tn++ // 失败的弱依赖', '\t\t\t// 失败的弱依赖'))
 mutate("失败的强依赖那一步不回滚", "xflow/xflow.go", ".", "TestExecute",
        swap('''\t\tf.rollback(ctx, data, f.steps[:n], res, m)
@@ -323,12 +323,12 @@ mutate("校验失败的配置不生效", "xflow/config.go", ".", "TestLoadConfig
        swap('\t\treturn err\n\t}\n\tcfg = c', '\t\tcfg = c\n\t\treturn err\n\t}\n\tcfg = c'))
 
 section("登记板")
-# 档位是使用者理解生命周期的全部依据：日志最先起、链路早于客户端、
-# 服务最后起。排错一档，表现是「实例比用它的东西晚就绪」，别处都测不出来
 # 直接解进全局：前一次 Run 的服务名带进下一次，解码失败时写了一半的值也落了上去
 mutate("xapp 解进新的默认值再换上", "xapp/xapp.go", ".", "TestLoadConfig_",
        swap('\tc := DefaultConfig()\n\tif err := xconfig.Unmarshal(ConfigKey, &c); err != nil {\n\t\treturn err\n\t}\n\tcfg = c\n\treturn nil',
             '\treturn xconfig.Unmarshal(ConfigKey, &cfg)'))
+# 档位是使用者理解生命周期的全部依据：日志最先起、链路早于客户端、
+# 服务最后起。排错一档，表现是「实例比用它的东西晚就绪」，别处都测不出来
 mutate("启动按档位升序", "internal/hook/hook.go", ".", "TestStartOrder|TestStopOrder|TestAddStart",
        swap('sort.SliceStable(out, func(i, j int) bool { return out[i].Stage < out[j].Stage })',
      'sort.SliceStable(out, func(i, j int) bool { return out[i].Name < out[j].Name })'))
@@ -369,10 +369,6 @@ mutate("配置读不出来时不依赖启动的停止钩子照样执行", "xone.
 # 它的停止钩子照样被调到，得处理「还没建起来」
 mutate("停止钩子配的是之前最近登记的那个启动钩子", "internal/hook/hook.go", ".", "TestRun_StopHookPairsOnlyWithItsStartHook|TestRun_StopHookPairsWithLaterOfTwoStartHooks|TestAddStop",
        swap('for i := len(start) - 1; i >= 0; i-- {', 'for i := 0; i < len(start); i++ {'))
-# 配对只认同一个包：认错包的话，别的集成起不来时它的停止钩子被跳过，
-# 或者它自己没建起来时停止钩子照样被调到
-# Pair 为 0 表示「没有配对、总会执行」。序号从 0 编起的话，第一个登记的启动钩子
-# 失败时，它的停止钩子会被当成不依赖启动的那种照样调到
 # 只在启动钩子上写 At 的话，停止钩子从前掉回 StageBusiness：客户端先于业务被关掉
 mutate("停止钩子不写档位时跟着配对的启动钩子", "xhook/xhook.go", "./xhook", "TestBeforeStop_WithoutStageFollowsPairedStartHook",
        swap('Run: hook.Func(f), Inherit: !o.set}', 'Run: hook.Func(f), Inherit: false}'))
@@ -387,8 +383,12 @@ mutate("xonetest 记下成功了的启动钩子", "xonetest/xonetest.go", ".", "
        swap('\t\tstarted[e.Seq] = true\n', ''))
 mutate("xonetest 结束时清掉配置", "xonetest/xonetest.go", ".", "TestUseConfig",
        swap('\tt.Cleanup(config.Reset)\n', ''))
+# Pair 为 0 表示「没有配对、总会执行」。序号从 0 编起的话，第一个登记的启动钩子
+# 失败时，它的停止钩子会被当成不依赖启动的那种照样调到
 mutate("启动钩子的序号从 1 编起", "internal/hook/hook.go", ".", "TestAddStop",
        swap('e.Seq = len(start) + 1', 'e.Seq = len(start)'))
+# 配对只认同一个包：认错包的话，别的集成起不来时它的停止钩子被跳过，
+# 或者它自己没建起来时停止钩子照样被调到
 mutate("停止钩子只配同一个包的启动钩子", "internal/hook/hook.go", ".", "TestAddStop|TestRun_StopHookPairsOnlyWithItsStartHook",
        swap('\t\tif start[i].Pkg == e.Pkg {', '\t\tif true {'))
 # 按钩子函数的名字认包的话，经辅助包登记的钩子全算在辅助包头上，彼此配成一团
@@ -407,6 +407,7 @@ mutate("调晚了不说成没配", "internal/xclient/xclient.go", ".", "TestGet_
 # 同一个机制（xclient.Probe）两处都要打：Probe 里认出来就不再试，xgorm 把方言的判断交给它
 mutate("认证失败不重试", "internal/xclient/probe.go", ".", "TestProbe_AuthFailureReturnsOriginalErrorAfterOneTry",
        swap('\t\t\treturn xutil.Permanent(err)\n', '\t\t\treturn err\n'))
+# 多实例的校验错误要指到是哪个文件哪一行：只报原因的话，十几个实例里找不到是哪一个写错了
 mutate("实例的 Validate 错误带着文件和行号", "internal/config/clients.go", ".", "TestUnmarshalClients_CallsValidateForEachInstance",
        swap('\t\t\treturn c, fmt.Errorf("%s: %w", newChecker().at(n), err)\n', '\t\t\treturn c, err\n'))
 # TLS 块（xtls.Config）一处定义、各模块共用：规则打在 xtls 里，

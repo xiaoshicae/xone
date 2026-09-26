@@ -14,8 +14,8 @@
 //	  DSN: "${CH_DSN}"     # clickhouse://user:pass@host:9000/db
 //	  TLS: {Enable: true, CAFile: /etc/ssl/ch-ca.pem}   # 可选：native 与 https:// 都走它，见 tls.go
 //
-// 为什么是独立的 module：实测一个只 import xgorm 的应用模块图是 69 个，
-// 加上这个包变成 132 个（go list -deps 里的非标准库包 165 → 208；clickhouse-go v2.48.0）。
+// 为什么是独立的 module：实测一个只 import xgorm 的应用模块图是 68 个（不含应用自己），
+// 加上这个包变成 131 个（go list -deps 里的非标准库包 165 → 208；clickhouse-go v2.48.0）。
 // 多出来的大头是 Docker（moby）和 testcontainers —— clickhouse-go 用它们跑集成测试，
 // 而 go.mod 分不出「只测试用」，所以它们落在主 require 块里，一路传给每个使用者。
 // Go 的 MVS 按模块图强加版本要求，不用 ClickHouse 的人不该为它付这个钱。

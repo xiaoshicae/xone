@@ -333,7 +333,7 @@ func recordWaits(t *testing.T) *[]time.Duration {
 
 func TestRetry_WaitDoublesBetweenAttempts(t *testing.T) {
 	// 这是退避的全部意义：固定间隔会一直按同一个节奏敲一个正在恢复的下游。
-	// 抖动本身由 TestJitter 单独盯着
+	// 抖动本身由 TestJitter_BetweenZeroAndUpperBound 单独盯着
 	waits := recordWaits(t)
 
 	const interval = 20 * time.Millisecond

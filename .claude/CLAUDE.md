@@ -1,6 +1,6 @@
 # xone 项目约定
 
-xone 是一个 Go 三方库集成框架：统一读配置、按阶段初始化、逆序关闭，使用者拿到的是**原生 client**
+xone 是一个 Go 三方库集成框架：统一读配置、按档位初始化、逆序关闭，使用者拿到的是**原生 client**
 （`*gorm.DB`、`*redis.Client`、`*gin.Engine`）。**详细理由和表格见 `docs/development.md`**，这里只列要照做的。
 
 ## 语言
@@ -14,7 +14,7 @@ xone 是一个 Go 三方库集成框架：统一读配置、按阶段初始化�
 - 不做过度优化：只有基准测试量过、且改完不比改前复杂才动手；引入缓存层、对象池、`unsafe` 先说明为什么没有别的办法。
 - 模块对外返回的错误一律是 `*xerror.Error`：`xerror.Newf("xgorm", "connect", "cannot reach %s: %w", addr, err)`。
   - 底层错误用 `%w`，不用 `%v`；一个模块边界只包一次，内部的中间错误保持普通 error；消息里不重复模块名。
-  - op 只从这组词里选：`config` `init` `new` `connect` `close` `register` `start` `stop` `execute`。
+  - op 只从这组词里选：`config` `new` `connect` `close` `register` `start` `stop` `execute`。
 - 接一个库或升级一个库：写进文档的每一句行为描述先用代码量出来；没显式设的字段逐个确认它的默认值；
   数字连同依赖版本写进注释和那个模块 README 的 `## 行为与实测`。
 - 设计原则（全文见 `docs/architecture.md`）：
@@ -52,7 +52,7 @@ scripts/check.sh                     # 架构约束 + 依赖边界 + 文档 + go
 scripts/mutate.py [--only X] [-k X] [-j N] [--dry-run]   # 变异测试，经 overlay 跑，不要求干净工作区
 scripts/e2e.sh [--load] [-run X]     # 真实服务测试：拉起 PG / MySQL / Redis / ClickHouse；CI 里是 .github/workflows/e2e.yml
 docker compose -f e2e/compose.yml up -d --wait   # 本机没装这些服务时
-scripts/release.sh vX.Y.Z --bump     # 发布第 1 步：钉版本号、改 CHANGELOG，走 PR 合进 main（按 .claude/skills/release 做）
+scripts/release.sh vX.Y.Z --bump     # 发布第 1 步：钉版本号、改 CHANGELOG 和 README 的安装版本号，走 PR 合进 main（按 .claude/skills/release 做）
 scripts/release.sh vX.Y.Z --tag      # 第 2 步：在 main 上打 tag（不推送）；平时用 GitHub Actions 的 release 按钮
 go test -run=NONE -bench=. -benchtime=100000x ./xlog/ ./xflow/ ./xgin/middleware/   # 改热点代码前后各跑一次
 ```

@@ -69,8 +69,8 @@ XGorm:
 
 clickhouse-go v2.48.0（native 协议）、`gorm.io/driver/clickhouse` v0.7.0、ch-go v0.74.0、ClickHouse 24.8.14（e2e）。
 
-**为什么是独立的 module**：只 import xgorm 的应用模块图（`GOWORK=off go list -m all`，不含应用自己的模块）是 64 个，
-加上 ClickHouse 驱动变成 127 个（`go list -deps` 里的非标准库包 127 → 171）。多出来的大头是 Docker 和 testcontainers——
+**为什么是独立的 module**：只 import xgorm 的应用模块图（`GOWORK=off go list -m all`，不含应用自己的模块）是 68 个，
+加上 ClickHouse 驱动变成 131 个（`go list -deps` 里的非标准库包 165 → 208）。多出来的大头是 Docker 和 testcontainers——
 clickhouse-go 用它们跑集成测试，而 `go.mod` 分不出「只测试用」。
 
 **`Initialize` 里的版本查询**同 MySQL：写死的 `context.Background()`、发生在建连重试之前。实测对一个收下连接却不回话的

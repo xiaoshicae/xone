@@ -87,7 +87,10 @@ XTrace:
 
 | 消息 | 级别 | 字段 |
 |---|---|---|
-| `xtrace ignored forward headers from an untrusted peer, …` | WARN | 整个进程只打一次 |
+| `xtrace ignored forward headers from an untrusted peer, …` | WARN | `header`；整个进程只打一次 |
+| `xtrace ignored baggage from an untrusted peer, …` | WARN | 整个进程只打一次 |
+| `xtrace is disabled, the registered SpanProcessors will receive no spans` | WARN | `count`、`switch`；`Enable: false` 却登记了处理器时 |
+| `xtrace some resource attributes could not be detected, continuing without them` | WARN | `error`；照常启动 |
 
 日志的全局约定（`trace_id` 注入、`xlog.AddKV`、框架的启停日志）见 [`docs/observability.md`](../docs/observability.md#日志)。
 

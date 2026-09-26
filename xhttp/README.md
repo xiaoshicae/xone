@@ -2,7 +2,7 @@
 
 出站 HTTP 客户端：拿到的是原生 `*resty.Client`（resty v2），任何时候都有一个可用的实例，不配也能用。
 
-- 链路已装好：`traceparent` 自动带给下游，Span 名只用方法
+- 链路已装好：`traceparent` 自动带给下游，Span 名只用方法（`Run` 起来之后的实例；之前、之后的兜底实例没有）
 - 出站耗时指标 `http_client_request_duration_seconds`，一次逻辑请求记一次
 - 只重试传输层的错，默认只重试幂等方法
 - 日志和 Span 里的 URL 去掉查询串；没有 cookie jar
@@ -40,7 +40,8 @@ func Current(ctx context.Context, city string) (*Now, error) {
 
 ## 配置
 
-不配也能用：`xhttp.R(ctx)` 任何时候都有一个可用的客户端（`Run` 之前和之后是按默认值建的兜底实例）。只有单实例。
+不配也能用：`xhttp.R(ctx)` 任何时候都有一个可用的客户端。`Run` 之前和之后拿到的是兜底实例：只有 30s 超时，
+没有下面这些配置，也没有重试、链路和指标。只有单实例。
 
 ```yaml
 XHttp:

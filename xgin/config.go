@@ -142,9 +142,6 @@ type Config struct {
 	// 只管 Span。关掉之后照样接上游传来的 traceparent、baggage 和透传 Header
 	// （可信规则同 TrustedProxies），日志里的 trace_id 是上游的那条，
 	// 经 xhttp 发出的请求也照样带给下游；响应里不再回带 X-Trace-Id。
-	//
-	// Span 和 X-Trace-Id 响应头要 import xtrace 才有：没装 xtrace 时全局
-	// TracerProvider 是 OTel 的 noop，Span 无效，也就没有可回带的 trace id。
 	Trace bool `yaml:"Trace"`
 
 	// Metric 是否启用指标中间件。默认启用。

@@ -34,6 +34,7 @@ xone/
 │   ├── hook/            钩子登记、配对与按档位执行
 │   ├── xclient/         xgorm / xredis / xcache 共用的具名实例管理和启动期探测
 │   ├── testkit/         仓库自己的单元测试共用的小工具，只依赖标准库
+│   ├── coreonly/        只用核心、不 import 任何集成的程序也能跑通（测试）
 │   └── schemagen/       生成 config_schema.json、核对各模块 README 的「配置」一节（独立的工具 module）
 ├── xtrace/              链路，基于 OpenTelemetry（独立 module）
 ├── xmetric/             指标，基于 Prometheus（独立 module）
@@ -56,14 +57,15 @@ xone/
 │   ├── harness/         起进程、读日志 / Span / 指标 / /proc、TCP 故障代理、下游桩、压测器
 │   └── compose.yml      e2e 要的 PG / MySQL / Redis / ClickHouse
 ├── config_schema.json   配置的 JSON Schema，由结构体生成，给 IDE 用
-├── .github/workflows/   ci.yml：check.sh + test.sh，外加用 Go 1.22 单独编译核心；e2e.yml：e2e + 全量变异
+├── .github/workflows/   ci.yml：check.sh + test.sh，外加用 Go 1.22 单独编译核心；e2e.yml：e2e + 全量变异；
+│                        release.yml：发布按钮（打 tag、跑 e2e、只推 tag、验证装得上）
 └── scripts/
     ├── check.sh         把设计约束编译成检查
     ├── test.sh          跑全仓库测试（go test ./... 不跨模块边界）
     ├── mutate.py        变异测试
     ├── mutations/       变异表，一个 module 一个文件（core.py 是根模块）
     ├── e2e.sh           拉起 PG / MySQL / Redis / ClickHouse，跑 e2e/
-    └── release.sh       打 tag 发布，推送之后 --verify 验证装得上
+    └── release.sh       发版：--bump 钉版本号，--tag 打 tag，推送之后 --verify 验证装得上
 ```
 
 脚本放在哪个目录下调都行，它们会先切到仓库根。
@@ -71,7 +73,7 @@ xone/
 ## go.work 与 GOWORK=off
 
 仓库里提交了 `go.work`，把全部模块（核心、各集成、`example`、`e2e`、`internal/schemagen`）放进一个工作区，
-模块之间另外靠各自 `go.mod` 里的 `replace` 互指（main 上一直留着；发版时 `release.sh` 只在打 tag 的那个提交里换成真实版本号，见下面 [release.sh](#releasesh)）。所以 IDE 打开根目录就认得全部模块，
+模块之间另外靠各自 `go.mod` 里的 `replace` 互指（main 上一直留着；发版时 `release.sh --bump` 把 require 钉成新版本、经 PR 合进 main，replace 不动，见下面 [release.sh](#releasesh)）。所以 IDE 打开根目录就认得全部模块，
 在根目录 `go run ./example --config=example/application.yml` 也能跑。
 
 但 `scripts/check.sh` 和 `scripts/test.sh` 一律用 `GOWORK=off` 逐模块跑——工作区会遮住某个模块自己 `go.mod` 的问题
@@ -125,7 +127,8 @@ scripts/mutate.py --dry-run        # 只查每条变异的模式还对不对得�
 多模块仓库每个 module 有自己的 tag，全都打在 `main` 上的同一个提交上。发布分两步，中间是一个普通的 PR：
 
 ```bash
-scripts/release.sh v0.1.0 --bump     # 1. 各模块 go.mod 里仓库内的 require 钉成 v0.1.0，CHANGELOG 的「未发布」改成这一版
+scripts/release.sh v0.1.0 --bump     # 1. 各模块 go.mod 里仓库内的 require 钉成 v0.1.0，CHANGELOG 的「未发布」改成这一版，
+                                     #    README 安装命令的版本号换成 v0.1.0
                                      #    只改文件：提交、开 PR、合进 main（分支保护照常生效）
 scripts/release.sh v0.1.0 --tag      # 2. 在 main 的最新提交上给每个模块打 tag（不推送）
 scripts/release.sh v0.1.0 --verify   # 推送之后：在一个全新的外部工程里 go get，验证装得上、跑得起来
@@ -146,7 +149,7 @@ Settings → Actions → General → Workflow permissions 要是 Read and write�
 - `--bump` 连不发布的 `example`、`e2e`、`internal/schemagen` 一起钉：它们 require 的子模块又 require 核心的新版本，
   自己还写着旧版本的话 `go vet` 就报 go.mod 要更新。tag 只打要发布的那几个。
 - `--tag` 先确认这个提交能发：工作区干净、仓库内的 require 全是这个版本、CHANGELOG 有 `## [vX.Y.Z]` 这一节、
-  tag 还没用过。然后跑 check、单测和 e2e（`--e2e-passed` 跳过 e2e，由你担保这个提交刚跑绿过）。
+  tag 还没用过。然后跑 check、单测和 e2e（`--e2e-passed` 跳过这一步的 e2e：这个提交在别处跑绿过，或者像发布按钮那样紧接着、推送之前再跑）。
 - 只收 v0 / v1。推送之后 tag 就被 module proxy 永久缓存，删不掉，只能再发一版盖过去。
 
 ### 基准测试
@@ -248,7 +251,7 @@ slog.Info("xgorm ready", "instances", reg.Names())                       // 日�
 
 ```go
 return xerror.Newf("xgorm", "connect", "cannot reach %s: %w", info.Addr, err)
-return xerror.New("xgorm", "init", err)
+return xerror.New("xgorm", "config", err)
 ```
 
 调用方因此永远可以问「这是谁报的」：`xerror.Is(err, "xconfig")`（整棵树里有没有）、`xerror.Module(err)`（最外层是谁）。四条规矩：
@@ -258,13 +261,12 @@ return xerror.New("xgorm", "init", err)
    由边界那一层包一次。每层都包的话文本会套成 `xone xgin config failed, err=[xone xgin validate failed, err=[...]]`。
    xerror 自己也兜着这一条：`New` 遇到同模块的 Error 原样返回；`Newf` 的参数里有 Error 时渲染会折叠——同模块的只留
    「op: 原因」，别的模块的去掉重复的 `xone ` 前缀。兜底不是许可，边界上照样只包一次。
-3. **消息里不再重复模块名。** 外框已经有了，再写一遍就是 `xone xgorm init failed, err=[xgorm: ...]`。
+3. **消息里不再重复模块名。** 外框已经有了，再写一遍就是 `xone xgorm connect failed, err=[xgorm: ...]`。
 4. **op 从这组词里选**，不要每处现编：
 
    | op | 用在 |
    |---|---|
    | `config` | 配置不合法、解码失败 |
-   | `init` | 组件初始化（框架调的那次） |
    | `new` | 构造实例 |
    | `connect` | 建连、探测 |
    | `close` | 关闭、释放 |

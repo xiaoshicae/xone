@@ -26,7 +26,6 @@ mutate("XHttp 块在读配置时就校验", "xhttp/xhttp.go", "./xhttp", "TestIn
        swap('xconfig.Unmarshal(ConfigKey, &c)', 'func() error { type raw Config; return xconfig.Unmarshal(ConfigKey, (*raw)(&c)) }()'))
 mutate("直接调 xhttp.New 也校验", "xhttp/xhttp.go", "./xhttp", "TestNew_DirectCallAlsoValidatesConfig",
        swap('\tif err := cfg.Validate(); err != nil {', '\tif err := cfg.Validate(); false && err != nil {'))
-# resty 的默认 logger 绕开 slog 直写 stderr，重试失败时连查询串里的令牌一起打
 # XHttp.Trace 只管 Span。原先关掉它连注入一起摘了，透传头和 traceparent 断在这一跳
 mutate("XHttp.Trace 关掉照样注入链路标识和透传头", "xhttp/xhttp.go", "./xhttp", "TestNew_TraceOff",
        swap('next := http.RoundTripper(propagateOnly{next: pool})', 'next := pool'))
@@ -41,6 +40,7 @@ mutate("出站指标的 method 标签收敛", "xhttp/metric.go", "./xhttp", "Tes
        swap('normalizeMethod(raw.Method)', 'raw.Method', 2))
 mutate("出站指标注册失败不让 New 失败", "xhttp/xhttp.go", "./xhttp", "TestNew_MetricRegisterFailureOnlyLogs_ClientStillUsable",
        swap('\t\t\tslog.Error("xhttp failed to register the request duration metric', '\t\t\treturn nil, nil, err\n\t\t\tslog.Error("xhttp failed to register the request duration metric'))
+# resty 的默认 logger 绕开 slog 直写 stderr，重试失败时连查询串里的令牌一起打
 mutate("resty 自己的日志走 slog", "xhttp/xhttp.go", "./xhttp", "TestNew_RestyLogsGoToSlogWithoutQuery",
        swap('return resty.NewWithClient(hc).SetLogger(restyLogger{})', 'return resty.NewWithClient(hc)'))
 mutate("resty 日志去掉查询串", "xhttp/xhttp.go", "./xhttp", "TestNew_RestyLogsGoToSlogWithoutQuery",

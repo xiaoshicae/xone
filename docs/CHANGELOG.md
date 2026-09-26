@@ -15,7 +15,7 @@
 - **核心** `github.com/xiaoshicae/xone`：
   - `xone.Run` / `MustRun`：按档位启动、逆序关闭，整个退出流程共用一份停止预算；`xone.Func` / `xone.UntilSignal`。
   - `xconfig`（懒加载、严格解码、`${VAR}` 占位符、`XApp.Profiles` 多环境、`XApp.Import` 拆文件）、`xhook`、`xerror`、
-    `xlog`（`AddKV` / `CtxWithKV` 请求级字段）、`xapp`、`xflow`、`xtls`、`xonetest`。
+    `xlog`（`AddKV` / `CtxWithKV` 请求级字段）、`xapp`、`xflow`、`xtls`、`xutil`、`xonetest`。
   - `XONE_DEBUG=1`：启动时打出用了哪个配置文件、激活了哪些 profile、按优先级读了哪些文件、合并之后的完整配置
     （凭证遮成 `***`）和启动钩子的顺序。
   - 启动 banner：只在 stderr 是终端时打，带版本号。

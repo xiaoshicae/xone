@@ -70,7 +70,7 @@ XMetric:
 | `Register(c)` / `RegisterAs[T](c) (T, error)` | 注册，已注册过同名同标签的复用已有实例；**务必用返回值** |
 | `ConstLabels()` / `Namespace()` / `HTTPDurationBuckets()` | 读生效中的配置，自己建指标时填进 `prometheus.Opts`，和框架指标带同样的标签 |
 | `Handler() http.Handler` | `/metrics` 的 handler，不用 xgin 的服务自己挂 |
-| `New(cfg) (*Metrics, io.Closer, error)` | 纯构造器：不碰全局、不读文件，离开框架也能用 |
+| `New(cfg) (*Metrics, io.Closer, error)` | 纯构造器：不碰全局、不读配置文件，离开框架也能用 |
 
 ## 注意事项
 

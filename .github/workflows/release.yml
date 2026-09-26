@@ -3,7 +3,7 @@ name: release
 # 发布按钮：Actions → release → Run workflow，填版本号（如 v0.1.0）。
 #
 # 发布分两步，这个按钮是第二步：
-#   1. scripts/release.sh vX.Y.Z --bump 改好 go.mod 和 CHANGELOG，走普通的 PR 合进 main；
+#   1. scripts/release.sh vX.Y.Z --bump 改好 go.mod、CHANGELOG 和 README 的安装版本号，走普通的 PR 合进 main；
 #   2. 点这个按钮：在 main 的最新提交上给每个模块打 tag（v0.1.0、xgin/v0.1.0……）并推送。
 # tag 就打在 main 上，main 的分支保护照常生效：这里只推 tag，不推任何分支。
 #

@@ -94,6 +94,7 @@ XCache:
 | 消息 | 级别 | 字段 |
 |---|---|---|
 | `xcache created` | INFO | `name`、`max_cost`、`default_ttl`、`metric` |
+| `xcache ready` | INFO | `instances` |
 
 日志的全局约定（`trace_id` 注入、`xlog.AddKV`、框架的启停日志）见 [`docs/observability.md`](../docs/observability.md#日志)。
 

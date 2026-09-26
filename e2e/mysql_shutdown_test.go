@@ -209,7 +209,7 @@ func TestMySQL_StuckQuery_ReturnsOnRequestCtxCancel_NoReadTimeoutWait(t *testing
 func TestMySQL_SIGTERMWhileSilentAtStartup_ExitsImmediately(t *testing.T) {
 	harness.Require(t)
 	t.Parallel()
-	const immediate = 200 * time.Millisecond // 同 TestShutdown_启动期间收到SIGTERM 的「当场放弃」
+	const immediate = 200 * time.Millisecond // 同 TestShutdown_SIGTERMDuringStartup_NoServe_ClosesBuiltInReverse_ExitsZero 的「当场放弃」
 	my := harness.NewProxy(t, harness.MySQLAddr())
 	my.SetDelay(time.Hour)
 	p := harness.Start(t, harness.Options{MySQLAddr: my.Addr(), NoWait: true, Overlay: stopTimeout(5 * time.Second)})

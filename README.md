@@ -86,10 +86,10 @@ curl localhost:8080/hello     # {"msg":"hello"}；访问日志、链路、/metri
 | [xflow](xflow/README.md) | — | 流程编排，失败自动回滚 |
 | [xapp](xapp/README.md) · [xtls](xtls/README.md) | — | 应用名 / 版本 · 客户端 TLS（XGorm / XRedis / XHttp 共用） |
 
-`xconfig`、`xlog`、`xflow`、`xapp`、`xtls`、`xhook`、`xerror`、`xonetest` 都在核心模块里，核心只依赖 yaml。
+`xconfig`、`xlog`、`xflow`、`xapp`、`xtls`、`xhook`、`xerror`、`xutil`、`xonetest` 都在核心模块里，核心只依赖 yaml。
 
 **日志、指标、链路跟着集成来**：xgin、xgorm、xredis、xhttp 带着 xtrace 和 xmetric，xcache 带着 xmetric，
-用了就不用另外 import。只有进程里一个这样的集成都没有、又想要它们时，才需要匿名 import，见 [使用指南](docs/guide.md)。
+用了就不用另外 import。只有进程里一个这样的集成都没有、又想要它们时，才需要匿名 import，见 [可观测「链路」](docs/observability.md#链路)。
 
 ## 常用写法
 

@@ -51,7 +51,7 @@ XGorm:
   MaxIdleTime: 5m          # 0 = 不限
   Log: false               # 把 SQL 接到 slog，默认关；只记占位符，不记参数值
   SlowThreshold: 3s        # 超过就记 warn，需 Log 开启；0 = 不记
-  IgnoreNotFound: false    # 「没查到记录」是否不当错误
+  IgnoreNotFound: false    # true：「没查到记录」不记 SQL failed 日志（Log 开着时）；返回的错误不变
   Trace: true              # 每条 SQL 一个 Span
   Metric: true             # 连接池指标 db_pool_*，按实例生效
   MySQL:                   # 仅 Driver: mysql 生效
@@ -93,7 +93,7 @@ XGorm:
 | `CWithCtx(ctx, name ...string) *gorm.DB` | 取实例并绑定 ctx，即 `C(name...).WithContext(ctx)`；GORM 只能这样传 ctx |
 | `Has(name ...string) bool` | 实例配了没有，可选依赖先判断 |
 | `Names() []string` | 配了哪些实例 |
-| `New(ctx, cfg) (*gorm.DB, io.Closer, error)` | 纯构造器：不碰全局、不读文件，离开框架也能用；`io.Closer` 关闭底层连接池 |
+| `New(ctx, cfg) (*gorm.DB, io.Closer, error)` | 纯构造器：不碰全局、不读配置文件，离开框架也能用；`io.Closer` 关闭底层连接池 |
 | `RegisterDialect(d Dialect)` | 注册别的驱动，同名重复注册直接 panic；`Dialect` 提供了 `OpenTLS` 才收 TLS 块 |
 | `Drivers() []Driver` | 已注册的驱动名，按字母序 |
 
@@ -119,6 +119,7 @@ XGorm:
 | 消息 | 级别 | 字段 |
 |---|---|---|
 | `xgorm connected` | INFO | `name`、`driver`、`addr`、`db`、`tls`、`max_open_conns`、`max_idle_conns` |
+| `xgorm ready` | INFO | `instances` |
 | `SQL` / `slow SQL` / `SQL failed` | INFO / WARN / ERROR | `sql`（带占位符）、`elapsed`、`rows_affected`；失败时 `error`、`error_code`；慢查询时 `threshold`（需 `XGorm.Log: true`） |
 
 日志的全局约定（`trace_id` 注入、`xlog.AddKV`、框架的启停日志）见 [`docs/observability.md`](../docs/observability.md#日志)。

@@ -4,7 +4,8 @@
 # 分两步，中间是一个普通的 PR（main 的分支保护照常生效）：
 #
 #   scripts/release.sh v0.1.0 --bump     # 1. 把各模块 go.mod 里仓库内的 require 改成 v0.1.0、
-#                                        #    CHANGELOG 的「未发布」改成这一版；只改文件，不提交
+#                                        #    CHANGELOG 的「未发布」改成这一版、README 安装命令的版本号换掉；
+#                                        #    只改文件，不提交
 #   （提交、开 PR、CI 绿了合进 main）
 #   scripts/release.sh v0.1.0 --tag      # 2. 在 main 的最新提交上给每个模块打 tag（不推送）
 #   scripts/release.sh v0.1.0 --verify   # 推送之后：用一个全新的外部工程验证装得上、跑得起来
@@ -18,7 +19,8 @@
 # 单独的发布提交和还原提交，tag 直接打在 main 上。
 #
 # --tag 发布前要一轮绿的 e2e（真实的 PG / MySQL / Redis）：默认在这一步跑 scripts/e2e.sh；
-# 这个提交刚在别处跑绿过（比如 release 按钮自己先跑了）的话加 --e2e-passed 跳过，由你担保。
+# 这个提交在别处跑绿过，或者会在推送之前另跑一遍（release 按钮就是打完 tag 紧接着跑 e2e）的话，
+# 加 --e2e-passed 跳过这一步的 e2e，由你担保。
 #
 # 推送是单独一步：Go 的 module proxy 会永久缓存 tag，推错了删不掉，只能再发一个版本盖过去。
 set -e

@@ -7,7 +7,7 @@ description: 准备 xone 的一次发版（vX.Y.Z）：钉版本号、整理 CHA
 
 xone 的发版分两步：
 
-1. **release PR**（这个 skill 做）：把各模块 go.mod 里仓库内的 require 钉成新版本、CHANGELOG 的「未发布」改成这一版，开 PR。
+1. **release PR**（这个 skill 做）：把各模块 go.mod 里仓库内的 require 钉成新版本、CHANGELOG 的「未发布」改成这一版、README 安装命令的版本号换掉，开 PR。
 2. **打 tag**（用户做）：PR 合进 main 之后，用户在 GitHub 上点 Actions → release → Run workflow，填版本号。
    按钮在 main 的最新提交上给每个模块打 tag、跑 e2e、只推 tag、再验证装得上。
 

@@ -66,16 +66,14 @@ mutate("方言的 Ready 在建连探测里执行", "xgorm/xgorm.go", "./xgorm", 
 mutate("PG 的探测预算盖住 connect_timeout", "xgorm/dsn.go", "./xgorm", "TestProbeTimeout",
        swap('\treturn cmp.Or(connect, ceilSeconds(dial)) + dial\n', '\treturn dial + 0*cmp.Or(connect, ceilSeconds(dial))\n'))
 # 配置里的超时只是默认值。DSN 里写了更长的，驱动就等那么久，预算还按配置算的话
-# 会在驱动放弃之前把一次慢但合法的建连判超时。打在读出超时的地方和用它的地方
-# 打在读出预算的调用点上（方言填的 ProbeTimeout）和各方言算预算的那一行
+# 会在驱动放弃之前把一次慢但合法的建连判超时。打在读出预算的调用点上（方言填的 ProbeTimeout）和各方言算预算的那一行
 mutate("探测预算按 DSN 里写的超时放宽", "xgorm/xgorm.go", "./xgorm", "TestProbeTimeout",
        swap('\treturn cmp.Or(info.ProbeTimeout, 2*cfg.DialTimeout, fallbackPingTimeout)\n', '\treturn cmp.Or(2*cfg.DialTimeout, fallbackPingTimeout)\n'))
 mutate("PG 的探测预算用 DSN 里的 connect_timeout", "xgorm/dsn.go", "./xgorm", "TestProbeTimeout_DSN",
        swap('ProbeTimeout: postgresProbeTimeout(pc.ConnectTimeout, c.DialTimeout),', 'ProbeTimeout: postgresProbeTimeout(0, c.DialTimeout),'))
 mutate("MySQL 的探测预算用 DSN 里的超时", "xgorm/dsn.go", "./xgorm", "TestProbeTimeout_DSN",
        swap('\t\tProbeTimeout: cfg.Timeout + cfg.ReadTimeout,\n', '\t\tProbeTimeout: c.DialTimeout + c.MySQL.ReadTimeout,\n'))
-# GORM 只在 Logger 实现了 ParamsFilter 时才不把参数代进 SQL，
-# redisotel 默认把整条命令连同参数写进 Span：两处都是凭证出去的口子
+# GORM 只在 Logger 实现了 ParamsFilter 时才不把参数代进 SQL：否则日志里就是真实的参数值，凭证跟着出去
 mutate("SQL 日志里没有参数值", "xgorm/logger.go", "./xgorm", "TestLogger",
        swap('func (l *gormLogger) ParamsFilter(', 'func (l *gormLogger) paramsFilter('))
 # Scan 借用的 Recorder 不问实例 Logger 的 ParamsFilter，只认进程级的 RecorderParamsFilter：

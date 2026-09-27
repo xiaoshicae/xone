@@ -156,7 +156,7 @@ mutate("多实例的 Validate 点名实例", "xgorm/config.go", "./xgorm", "Test
        swap('errs = append(errs, fmt.Errorf("Clients.%s: %w", name, err))', 'errs = append(errs, err)'))
 # 建连日志要写是哪个实例：打在 build 往 open 传名字的调用点上
 mutate("建连日志写着实例名", "xgorm/xgorm.go", "./xgorm", "TestInstall_ConnectLogNamesInstance",
-       swap('open(ctx, c.name, c.ClientConfig)', 'open(ctx, "", c.ClientConfig)'))
+       swap('open(ctx, name, c)', 'open(ctx, "", c)'))
 # OTel 数据库语义约定的名字：旧名字换回来，看板和采集规则就对不上
 mutate("Span 用语义约定的 db.query.text", "xgorm/trace.go", "./xgorm", "TestSpan_IncludesConnInfoAndSQL",
        swap('span.SetAttributes(semconv.DBQueryText(sql),', 'span.SetAttributes(attribute.String("db.statement", sql),'))
@@ -173,7 +173,7 @@ mutate("go-sql-driver 自己的日志进 slog", "xgorm/xgorm.go", "./xgorm", "Te
        swap('\t_ = mysqldriver.SetLogger(mysqlDriverLogger{})', '\t_ = mysqldriver.SetLogger(nil) // 只在参数为 nil 时报错，于是什么都没设'))
 # collector 是进程级的一个、抓取时遍历全部实例，不看实例自己的开关，
 # Metric: false 就是一句空话
-mutate("Metric 关掉的数据库实例不导出", "xgorm/xgorm.go", "./xgorm", "TestInstall", swap('if !ok || !inst.metric {', 'if !ok {'))
+mutate("Metric 关掉的数据库实例不导出", "xgorm/xgorm.go", "./xgorm", "TestInstall", swap('\t\tif !inst.metric {\n', '\t\tif false {\n'))
 # 进程级的「只挂一次」会把 xmetric 重装之后的那次挡掉：新 Registry 上
 # 没有连接池 collector，第二轮生命周期里这组指标一个都导不出去
 mutate("xmetric 重装后数据库连接池指标照样导出", "xgorm/xgorm.go", "./xgorm", "TestInstall",

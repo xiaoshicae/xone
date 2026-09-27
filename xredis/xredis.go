@@ -295,7 +295,7 @@ func initXRedis(ctx context.Context) error {
 
 // install 按配置把实例挨个建出来
 func install(ctx context.Context, c Config) error {
-	if err := xclient.Build(ctx, reg, withNames(c.Clients), build); err != nil {
+	if err := xclient.Build(ctx, reg, c.Clients, build); err != nil {
 		return err
 	}
 	installPoolMetrics() // 一个实例都没开 Metric 时它什么都不导出，不必特判
@@ -309,33 +309,16 @@ func install(ctx context.Context, c Config) error {
 // 所以这里不必处理「还没建起来」。
 func closeXRedis(context.Context) error { return reg.Close() }
 
-// namedConfig 一个实例的配置连同它的名字。
-//
-// xclient.Build 交给构造函数的只有配置本身，而建好时的那条日志要写上它叫什么——
-// 配了好几个 Redis 时，只写地址分不出是哪一个（同一个地址不同库号的更是如此）。
-type namedConfig struct {
-	name string
-	ClientConfig
-}
-
-// withNames 让每份配置带上自己的名字
-func withNames(cfgs map[string]ClientConfig) map[string]namedConfig {
-	out := make(map[string]namedConfig, len(cfgs))
-	for name, c := range cfgs {
-		out[name] = namedConfig{name: name, ClientConfig: c}
-	}
-	return out
-}
-
 // build 建一个实例。包一层 New 而不是直接把 New 交出去，
-// 是为了把这个实例的 Metric 开关一起带进注册表，并在日志里写上实例名
-func build(ctx context.Context, c namedConfig) (instance, io.Closer, error) {
-	client, closer, err := New(ctx, c.ClientConfig)
+// 是为了把这个实例的 Metric 开关一起带进注册表，并在日志里写上实例名——
+// 配了好几个 Redis 时，只写地址分不出是哪一个（同一个地址不同库号的更是如此）
+func build(ctx context.Context, name string, c ClientConfig) (instance, io.Closer, error) {
+	client, closer, err := New(ctx, c)
 	if err != nil {
 		return instance{}, nil, err
 	}
 	// 日志里只写地址和库号，密码不进日志——所以也就不需要脱敏
-	slog.Info("xredis connected", "name", c.name, "addr", c.Addr, "db", c.DB,
+	slog.Info("xredis connected", "name", name, "addr", c.Addr, "db", c.DB,
 		"tls", c.TLS.Enable, "min_idle_conns", c.MinIdleConns)
 	return instance{client: client, metric: c.Metric}, closer, nil
 }
@@ -356,8 +339,8 @@ func installPoolMetrics() {
 // poolStats 读开了 Metric 的各实例连接池的实时状态
 func poolStats() map[string]*redis.PoolStats {
 	out := map[string]*redis.PoolStats{}
-	for _, name := range reg.Names() {
-		if inst, ok := reg.Lookup(name); ok && inst.metric {
+	for name, inst := range reg.All() {
+		if inst.metric {
 			out[name] = inst.client.PoolStats()
 		}
 	}

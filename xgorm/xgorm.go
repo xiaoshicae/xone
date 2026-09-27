@@ -279,7 +279,7 @@ func initXGorm(ctx context.Context) error {
 
 // install 按配置把实例挨个建出来
 func install(ctx context.Context, c Config) error {
-	if err := xclient.Build(ctx, reg, withNames(c.Clients), build); err != nil {
+	if err := xclient.Build(ctx, reg, c.Clients, build); err != nil {
 		return err
 	}
 	installPoolMetrics() // 一个实例都没开 Metric 时它什么都不导出，不必特判
@@ -294,28 +294,13 @@ func install(ctx context.Context, c Config) error {
 func closeXGorm(context.Context) error { return reg.Close() }
 
 // build 建一个实例。包一层 New 而不是直接把 New 交出去，
-// 是为了把这个实例的 Metric 开关一起带进注册表
-func build(ctx context.Context, c named) (instance, io.Closer, error) {
-	db, closer, err := open(ctx, c.name, c.ClientConfig)
+// 是为了把这个实例的 Metric 开关一起带进注册表，并让建连日志写上实例名
+func build(ctx context.Context, name string, c ClientConfig) (instance, io.Closer, error) {
+	db, closer, err := open(ctx, name, c)
 	if err != nil {
 		return instance{}, nil, err
 	}
 	return instance{db: db, metric: c.Metric}, closer, nil
-}
-
-// named 带着实例名的配置：xclient.Build 只把配置交给 build，建连日志要写是哪个实例
-type named struct {
-	name string
-	ClientConfig
-}
-
-// withNames 给每个实例的配置带上它的名字
-func withNames(clients map[string]ClientConfig) map[string]named {
-	out := make(map[string]named, len(clients))
-	for name, c := range clients {
-		out[name] = named{name: name, ClientConfig: c}
-	}
-	return out
 }
 
 // installPoolMetrics 把连接池 collector 挂到当前的 Registry 上。
@@ -337,9 +322,8 @@ func installPoolMetrics() {
 // poolStats 读开了 Metric 的各实例连接池的实时状态
 func poolStats() map[string]sql.DBStats {
 	out := map[string]sql.DBStats{}
-	for _, name := range reg.Names() {
-		inst, ok := reg.Lookup(name)
-		if !ok || !inst.metric {
+	for name, inst := range reg.All() {
+		if !inst.metric {
 			continue
 		}
 		pool, err := inst.db.DB()

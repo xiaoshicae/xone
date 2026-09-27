@@ -7,16 +7,17 @@ import (
 
 	"go.yaml.in/yaml/v3"
 
+	"github.com/xiaoshicae/xone/internal/xclient"
 	"github.com/xiaoshicae/xone/xerror"
 )
 
 const (
 	clientsKey = "Clients"
 
-	// DefaultClientName 单实例写法被规整成的名字。
-	// 与 xclient.DefaultName 一致；这里再写一遍是为了不让核心的配置包
-	// 反过来依赖 xclient。
-	DefaultClientName = "default"
+	// DefaultClientName 单实例写法被规整成的名字，也就是 C() 不带参数时取的那个。
+	// 规整和取用必须是同一个名字，所以只在 xclient 写一处；方向是这里依赖 xclient：
+	// 反过来的话 xclient 就间接带上了 yaml，不再是零第三方依赖
+	DefaultClientName = xclient.DefaultName
 )
 
 // UnmarshalClients 解一个「既支持单实例也支持多实例」的配置块，并记下这一块有人读过。

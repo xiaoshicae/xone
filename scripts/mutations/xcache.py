@@ -32,7 +32,7 @@ mutate("XCache 块在读配置时就校验", "xcache/config.go", "./xcache", "Te
 # ristretto 默认不计数，Metrics 为 nil 时每个计数都是 0：Metric: true 也什么都看不到
 mutate("缓存的 Metric 开关传给 ristretto", "xcache/xcache.go", "./xcache", "TestNew_MetricFlagPassedToRistretto|TestCacheCollector",
        swap('Metrics: cfg.Metric,', 'Metrics: false,'))
-mutate("Metric 关掉的缓存实例不导出", "xcache/xcache.go", "./xcache", "TestInstall_ExportsOnlyMetricEnabled_SurvivesXmetricReinstall", swap('ok && inst.metric {', 'ok {'))
+mutate("Metric 关掉的缓存实例不导出", "xcache/xcache.go", "./xcache", "TestInstall_ExportsOnlyMetricEnabled_SurvivesXmetricReinstall", swap('\t\tif inst.metric {\n', '\t\tif true {\n'))
 mutate("xmetric 重装后缓存指标照样导出", "xcache/xcache.go", "./xcache", "TestInstall_ExportsOnlyMetricEnabled_SurvivesXmetricReinstall",
        swap('func installMetrics() {\n\tif _, err := xmetric.RegisterAs(',
      'var installed bool\n\nfunc installMetrics() {\n\tif installed {\n\t\treturn\n\t}\n\tinstalled = true\n\tif _, err := xmetric.RegisterAs('))
@@ -40,4 +40,4 @@ mutate("xmetric 重装后缓存指标照样导出", "xcache/xcache.go", "./xcach
 mutate("Get 类型对不上当作没命中", "xcache/xcache.go", "./xcache", "TestGet_TypeMismatchIsMiss",
        swap('\t\treturn zero, false\n\t}\n\treturn typed, true', '\t}\n\treturn typed, true'))
 mutate("缓存实例的日志带着名字", "xcache/xcache.go", "./xcache", "TestInstall_LogsCarryInstanceName",
-       swap('"xcache created", "name", c.name,', '"xcache created", "name", "",'))
+       swap('"xcache created", "name", name,', '"xcache created", "name", "",'))

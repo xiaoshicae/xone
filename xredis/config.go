@@ -17,7 +17,7 @@ import (
 const ConfigKey = "XRedis"
 
 // DefaultName C() 不带参数时取的那个实例的名字
-const DefaultName = "default"
+const DefaultName = xconfig.DefaultClientName
 
 // Config 本模块的配置。两种写法：
 //

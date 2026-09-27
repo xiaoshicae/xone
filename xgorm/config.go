@@ -21,7 +21,7 @@ import (
 const ConfigKey = "XGorm"
 
 // DefaultName C() 不带参数时取的那个实例的名字
-const DefaultName = "default"
+const DefaultName = xconfig.DefaultClientName
 
 // Driver 数据库驱动
 type Driver string

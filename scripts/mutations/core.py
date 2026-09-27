@@ -537,7 +537,7 @@ mutate("自己的 handler 外面照样包着 xlog", "xlog/xlog.go", ".", "TestUs
        swap('withStatic(slog.New(newCtxHandler(*h)), identity(), c.Fields)', 'withStatic(slog.New(*h), identity(), c.Fields)'))
 # 写了 XLog.Level: debug 却由别人的 handler 决定级别，以为生效了其实没有
 mutate("UseHandler 和 XLog 块同时写就启动失败", "xlog/xlog.go", ".", "TestUseHandler_XLogBlock",
-       swap('if !reflect.DeepEqual(output, DefaultConfig()) {', 'if false {'))
+       swap('if !reflect.DeepEqual(output, DefaultConfig()) {', 'if !reflect.DeepEqual(output, output) {'))
 mutate("日志装好之后 UseHandler 不生效", "xlog/xlog.go", ".", "TestUseHandler_LateCall",
        swap('\tif installed.Load() {\n', '\tif false {\n'))
 mutate("关掉之后 UseHandler 重新可用", "xlog/xlog.go", ".", "TestUseHandler_UsableAgain",
@@ -546,7 +546,7 @@ mutate("关掉之后 UseHandler 重新可用", "xlog/xlog.go", ".", "TestUseHand
 mutate("日志默认带身份字段", "xlog/xlog.go", ".", "TestIdentity_DefaultFields",
        swap('l, cl, err := build(c, identity())', 'l, cl, err := build(c, nil)'))
 mutate("Fields 覆盖同名的默认字段", "xlog/xlog.go", ".", "TestFields_ExtraOverrideAndDrop",
-       swap('\t\t\ta = slog.String(a.Key, v)\n', ''))
+       swap('if v, ok := fields[a.Key]; ok {', 'if v, ok := fields[a.Key]; ok && false {'))
 mutate("空串的字段不写", "xlog/xlog.go", ".", "TestIdentity_EmptyAppFields",
        swap('if a.Value.Kind() != slog.KindString || a.Value.String() != "" {', 'if true {'))
 mutate("UseHandler 也带身份字段", "xlog/xlog.go", ".", "TestUseHandler_CarriesIdentity",

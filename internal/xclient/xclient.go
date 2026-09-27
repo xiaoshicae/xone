@@ -15,13 +15,18 @@
 //
 //	func initXRedis(ctx context.Context) error {
 //		if !xconfig.Has(ConfigKey) {
-//			return xclient.Build(ctx, reg, nil, New) // 没配也走一遍：之后取不到时报「没配」而不是「调早了」
+//			return xclient.Build(ctx, reg, nil, build) // 没配也走一遍：之后取不到时报「没配」而不是「调早了」
 //		}
 //		c := DefaultConfig()
 //		if err := xconfig.Unmarshal(ConfigKey, &c); err != nil {
 //			return err
 //		}
-//		return xclient.Build(ctx, reg, c.Clients, New)
+//		return xclient.Build(ctx, reg, c.Clients, build)
+//	}
+//
+//	// build 建一个实例；name 是它在配置里的名字，写进日志好分清是哪一个
+//	func build(ctx context.Context, name string, c ClientConfig) (*redis.Client, io.Closer, error) {
+//		return New(ctx, c)
 //	}
 //
 //	func closeXRedis(context.Context) error { return reg.Close() }
@@ -41,6 +46,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -48,7 +54,8 @@ import (
 	"github.com/xiaoshicae/xone/xerror"
 )
 
-// DefaultName 不带参数取实例时用的名字
+// DefaultName 不带参数取实例时用的名字，也是单实例写法被规整成的名字。
+// 只写在这一处：internal/config、xconfig 和各集成模块的同名常量都引用它
 const DefaultName = "default"
 
 // Registry 一组按名字组织的实例
@@ -122,6 +129,14 @@ func (r *Registry[T]) Names() []string {
 	return sortedKeys(r.state.Load().items)
 }
 
+// All 返回当前全部实例，名字到实例。
+//
+// 返回的是一份拷贝：快照发布之后不许改，调用方拿去随便改也碰不到它。
+// 同一刻的一份——逐个 Names 再 Lookup 的话，中间赶上 Close 就会取到一半。
+func (r *Registry[T]) All() map[string]T {
+	return maps.Clone(r.state.Load().items)
+}
+
 // missing 只报「没找到」帮助有限：调早了、调晚了、整块没配、名字写错，
 // 要查的地方各不相同，文案要让人一眼分清是哪一种。
 //
@@ -170,10 +185,12 @@ func nameOf(name []string) string {
 // 任何一个建不起来就把已经建好的全关掉再返回错误：启动钩子返回错误时，
 // 这一包的停止钩子不会被执行，不自己收拾就会漏掉那几个连接池。
 //
+// new 收到实例名：建好时的日志要写是哪一个——配了好几个时只写地址分不出来。
+//
 // ctx 一路传给 new，并在每个实例之前检查一次：配了五个库、第一个就要
 // 重试到超时的话，收到退出信号应当就此打住，而不是把剩下四个也挨个试一遍。
 func Build[C, T any](ctx context.Context, r *Registry[T], cfgs map[string]C,
-	new func(context.Context, C) (T, io.Closer, error)) error {
+	new func(ctx context.Context, name string, cfg C) (T, io.Closer, error)) error {
 	built := make(map[string]T, len(cfgs))
 	var closers []io.Closer
 
@@ -210,7 +227,7 @@ func (r *Registry[T]) Close() error {
 // 还只存在于 Build 这一帧的局部变量里——栈一展开就找不回来了，
 // 那是几个再也关不掉的连接池。
 func safeNew[C, T any](ctx context.Context, module, name string, cfg C,
-	new func(context.Context, C) (T, io.Closer, error)) (v T, closer io.Closer, err error) {
+	new func(context.Context, string, C) (T, io.Closer, error)) (v T, closer io.Closer, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			var zero T
@@ -218,7 +235,7 @@ func safeNew[C, T any](ctx context.Context, module, name string, cfg C,
 		}
 	}()
 
-	v, closer, err = new(ctx, cfg)
+	v, closer, err = new(ctx, name, cfg)
 	if err != nil {
 		err = named(module, name, err)
 	}

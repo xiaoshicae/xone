@@ -7,7 +7,7 @@ mutate("xredis 多实例铺的是自己的默认值", "xredis/config.go", "./xre
 
 section("启动与退出")
 mutate("建实例 panic 不漏掉已建好的", "internal/xclient/xclient.go", "./xredis", "TestInitAll",
-       swap('safeNew(ctx, r.module, name, cfgs[name], new)', 'new(ctx, cfgs[name])'))
+       swap('safeNew(ctx, r.module, name, cfgs[name], new)', 'new(ctx, name, cfgs[name])'))
 mutate("一个实例建不起来就把已建好的全关掉", "internal/xclient/xclient.go", "./xredis", "TestInitAll",
        swap('\t\t\tcloseAll(r.module, closers)\n\t\t\treturn err\n','\t\t\treturn err\n'))
 
@@ -37,7 +37,7 @@ mutate("go-redis 的日志带着调用方的 ctx", "xredis/xredis.go", "./xredis
        swap('slog.WarnContext(ctx, "xredis go-redis log"', 'slog.WarnContext(context.Background(), "xredis go-redis log"'))
 mutate("Redis 命令参数不进 Span", "xredis/xredis.go", "./xredis", "TestTrace",
        swap('redisotel.InstrumentTracing(client, redisotel.WithDBStatement(false))', 'redisotel.InstrumentTracing(client)'))
-mutate("Metric 关掉的 Redis 实例不导出", "xredis/xredis.go", "./xredis", "TestInstall", swap('ok && inst.metric {', 'ok {'))
+mutate("Metric 关掉的 Redis 实例不导出", "xredis/xredis.go", "./xredis", "TestInstall", swap('\t\tif inst.metric {\n', '\t\tif true {\n'))
 mutate("xmetric 重装后 Redis 连接池指标照样导出", "xredis/xredis.go", "./xredis", "TestInstall",
        swap('func installPoolMetrics() {\n\tif _, err := xmetric.RegisterAs(',
      'var poolInstalled bool\n\nfunc installPoolMetrics() {\n\tif poolInstalled {\n\t\treturn\n\t}\n\tpoolInstalled = true\n\tif _, err := xmetric.RegisterAs('))
@@ -69,7 +69,7 @@ mutate("Redis 链路钩子在建连验证成功之后才挂", "xredis/xredis.go"
        swap('\tif err := xclient.Probe(ctx, probePolicy(cfg), probe(client)); err != nil {',
             '\tif cfg.Trace {\n\t\t_ = redisotel.InstrumentTracing(client, redisotel.WithDBStatement(false))\n\t}\n\tif err := xclient.Probe(ctx, probePolicy(cfg), probe(client)); err != nil {'))
 mutate("xredis connected 日志带着实例名", "xredis/xredis.go", "./xredis", "TestInstall_LogsNameAndAddrButNotPassword",
-       swap('"xredis connected", "name", c.name,', '"xredis connected", "name", "",'))
+       swap('"xredis connected", "name", name,', '"xredis connected", "name", "",'))
 
 section("链路")
 # 用了 xredis 就有链路，使用者不用记得另外 import xtrace。摘掉这一行，

@@ -75,7 +75,7 @@ func withInstances(t testing.TB, cfgs map[string]ClientConfig) {
 // publish 把一组现成的实例经 xclient.Build 发布出去，测试结束后清空
 func publish(t testing.TB, insts map[string]instance) {
 	t.Helper()
-	keep := func(_ context.Context, v instance) (instance, io.Closer, error) { return v, nil, nil }
+	keep := func(_ context.Context, _ string, v instance) (instance, io.Closer, error) { return v, nil, nil }
 	if err := xclient.Build(context.Background(), reg, insts, keep); err != nil {
 		t.Fatal(err)
 	}

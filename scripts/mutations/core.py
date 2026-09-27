@@ -260,6 +260,12 @@ mutate("关实例 panic 出来的 error 留在链上", "internal/xclient/xclient
        swap('"close %w", panicked(r))', '"close panicked: %v", r)'))
 mutate("同模块的错误沿用原来的 op", "internal/xclient/xclient.go", ".", "TestBuild",
        swap('ok && xe.Module == module {', 'false && ok && xe.Module == module {'))
+# 各集成的建连日志靠它写实例名：模块里的调用点另有变异，这条盯 Build 自己有没有把名字交出去
+mutate("Build 把实例名交给 new", "internal/xclient/xclient.go", ".", "TestBuild_BuildsInNameOrder",
+       swap('new(ctx, name, cfg)', 'new(ctx, "", cfg)'))
+# 快照发布之后不许改：把内部的 map 直接交出去，调用方一改就改到了注册表
+mutate("All 交出去的是拷贝", "internal/xclient/xclient.go", ".", "TestAll",
+       swap('return maps.Clone(r.state.Load().items)', 'return r.state.Load().items'), swap('\t"maps"\n', ''))
 
 section("流程编排")
 # 步骤只要写 Process 和 Rollback：Name 默认取类型名，Dependency 默认强依赖

@@ -177,30 +177,12 @@ func initXCache(ctx context.Context) error {
 
 // install 按配置把实例挨个建出来
 func install(ctx context.Context, c Config) error {
-	if err := xclient.Build(ctx, reg, withNames(c.Clients), build); err != nil {
+	if err := xclient.Build(ctx, reg, c.Clients, build); err != nil {
 		return err
 	}
 	installMetrics() // 一个实例都没开 Metric 时它什么都不导出，不必特判
 	slog.Info("xcache ready", "instances", reg.Names())
 	return nil
-}
-
-// namedConfig 一个实例的配置连同它的名字。
-//
-// xclient.Build 交给构造函数的只有配置本身，而每个实例建好时的那条日志要写上
-// 它叫什么——配了好几个缓存时，只写参数分不出是哪一个。
-type namedConfig struct {
-	name string
-	ClientConfig
-}
-
-// withNames 让每份配置带上自己的名字
-func withNames(cfgs map[string]ClientConfig) map[string]namedConfig {
-	out := make(map[string]namedConfig, len(cfgs))
-	for name, c := range cfgs {
-		out[name] = namedConfig{name: name, ClientConfig: c}
-	}
-	return out
 }
 
 // closeXCache 摘掉全部实例并逆序关闭。
@@ -210,13 +192,14 @@ func withNames(cfgs map[string]ClientConfig) map[string]namedConfig {
 func closeXCache(context.Context) error { return reg.Close() }
 
 // build 建一个实例。New 不收 ctx（本地缓存不建连、不会把人卡住），
-// 所以这里补一个形参把它接上；同时把这个实例的默认 TTL 和 Metric 开关一起带上
-func build(_ context.Context, c namedConfig) (instance, io.Closer, error) {
-	cache, closer, err := New(c.ClientConfig)
+// 所以这里补一个形参把它接上；同时把这个实例的默认 TTL 和 Metric 开关一起带上。
+// 日志写上实例名：配了好几个缓存时，只写参数分不出是哪一个
+func build(_ context.Context, name string, c ClientConfig) (instance, io.Closer, error) {
+	cache, closer, err := New(c)
 	if err != nil {
 		return instance{}, nil, err
 	}
-	slog.Info("xcache created", "name", c.name, "max_cost", c.MaxCost, "default_ttl", c.DefaultTTL, "metric", c.Metric)
+	slog.Info("xcache created", "name", name, "max_cost", c.MaxCost, "default_ttl", c.DefaultTTL, "metric", c.Metric)
 	return instance{cache: cache, ttl: c.DefaultTTL, metric: c.Metric}, closer, nil
 }
 
@@ -236,8 +219,8 @@ func installMetrics() {
 // metricCaches 开了 Metric 的各个实例
 func metricCaches() map[string]*Cache {
 	out := map[string]*Cache{}
-	for _, name := range reg.Names() {
-		if inst, ok := reg.Lookup(name); ok && inst.metric {
+	for name, inst := range reg.All() {
+		if inst.metric {
 			out[name] = inst.cache
 		}
 	}

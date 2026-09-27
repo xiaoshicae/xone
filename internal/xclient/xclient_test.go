@@ -44,12 +44,10 @@ type cfg struct {
 	boom bool
 }
 
-// builder 造一个 new 函数：按配置决定建成功、返回错误还是 panic
-func builder(l *log) func(context.Context, cfg) (*conn, io.Closer, error) {
-	var n int
-	return func(_ context.Context, c cfg) (*conn, io.Closer, error) {
-		n++
-		name := string(rune('a' + n - 1))
+// builder 造一个 new 函数：按配置决定建成功、返回错误还是 panic。
+// 日志里记的是 Build 交进来的实例名，顺带验证名字传对了
+func builder(l *log) func(context.Context, string, cfg) (*conn, io.Closer, error) {
+	return func(_ context.Context, name string, c cfg) (*conn, io.Closer, error) {
 		if c.boom {
 			l.add("panic:" + name)
 			panic("new exploded")
@@ -60,24 +58,6 @@ func builder(l *log) func(context.Context, cfg) (*conn, io.Closer, error) {
 		}
 		l.add("new:" + name)
 		v := &conn{name: name, log: l}
-		return v, v, nil
-	}
-}
-
-// named 造一个 new 函数：实例名直接取自配置，便于断言建的顺序
-type namedCfg struct {
-	name string
-	err  error
-}
-
-func namedBuilder(l *log) func(context.Context, namedCfg) (*conn, io.Closer, error) {
-	return func(_ context.Context, c namedCfg) (*conn, io.Closer, error) {
-		if c.err != nil {
-			l.add("fail:" + c.name)
-			return nil, nil, c.err
-		}
-		l.add("new:" + c.name)
-		v := &conn{name: c.name, log: l}
 		return v, v, nil
 	}
 }
@@ -99,7 +79,7 @@ func mustPanic(t *testing.T, f func()) any {
 
 // publish 把一组现成的实例经 Build 发布出去：这些测试要的只是「注册表里有这些」
 func publish(r *Registry[*conn], items map[string]*conn) {
-	keep := func(_ context.Context, c *conn) (*conn, io.Closer, error) { return c, nil, nil }
+	keep := func(_ context.Context, _ string, c *conn) (*conn, io.Closer, error) { return c, nil, nil }
 	if err := Build(context.Background(), r, items, keep); err != nil {
 		panic(err)
 	}
@@ -206,15 +186,46 @@ func TestNames_EmptyRegistryReturnsEmptySlice(t *testing.T) {
 	}
 }
 
+func TestAll_ReturnsEveryInstanceAsACopy(t *testing.T) {
+	r := newReg()
+	a, b := &conn{name: "a"}, &conn{name: "b"}
+	publish(r, map[string]*conn{"a": a, "b": b})
+
+	got := r.All()
+	if len(got) != 2 || got["a"] != a || got["b"] != b {
+		t.Fatalf("want a、b 两个实例，got %v", got)
+	}
+	// 快照发布之后不许改：调用方改的是自己那份
+	delete(got, "a")
+	got["c"] = &conn{}
+	if !r.Has("a") || r.Has("c") {
+		t.Errorf("改 All 的返回值不该改到注册表，got %v", r.Names())
+	}
+}
+
+func TestAll_EmptyBeforeStartAndAfterClose(t *testing.T) {
+	r := newReg()
+	if got := r.All(); got == nil || len(got) != 0 {
+		t.Errorf("启动前 want 非 nil 的空 map，got %v", got)
+	}
+	publish(r, map[string]*conn{"a": {}})
+	if err := r.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if got := r.All(); got == nil || len(got) != 0 {
+		t.Errorf("关闭后 want 非 nil 的空 map，got %v", got)
+	}
+}
+
 // ---- 建实例 ----
 
 func TestBuild_BuildsInNameOrder(t *testing.T) {
 	// 建的顺序要可复现，否则「配了五个库，挂的是哪一个」每次都不一样
 	l := &log{}
 	r := newReg()
-	err := Build(context.Background(), r, map[string]namedCfg{
-		"write": {name: "write"}, "archive": {name: "archive"}, "read": {name: "read"},
-	}, namedBuilder(l))
+	err := Build(context.Background(), r, map[string]cfg{
+		"write": {}, "archive": {}, "read": {},
+	}, builder(l))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -228,7 +239,7 @@ func TestBuild_BuildsInNameOrder(t *testing.T) {
 
 func TestBuild_PublishesEmptyRegistryWithoutConfig(t *testing.T) {
 	r := newReg()
-	if err := Build(context.Background(), r, map[string]namedCfg{}, namedBuilder(&log{})); err != nil {
+	if err := Build(context.Background(), r, map[string]cfg{}, builder(&log{})); err != nil {
 		t.Fatal(err)
 	}
 	if len(r.Names()) != 0 {
@@ -241,9 +252,9 @@ func TestBuild_ClosesBuiltOnesOnMidwayFailure(t *testing.T) {
 	// 就会漏掉前面那几个连接池
 	l := &log{}
 	boom := errors.New("dial refused")
-	err := Build(context.Background(), newReg(), map[string]namedCfg{
-		"a": {name: "a"}, "b": {name: "b"}, "c": {name: "c", err: boom},
-	}, namedBuilder(l))
+	err := Build(context.Background(), newReg(), map[string]cfg{
+		"a": {}, "b": {}, "c": {err: boom},
+	}, builder(l))
 
 	if err == nil {
 		t.Fatal("want 错误")
@@ -264,9 +275,9 @@ func TestBuild_RegistryUnchangedOnFailure(t *testing.T) {
 	old := &conn{name: "old"}
 	publish(r, map[string]*conn{DefaultName: old})
 
-	err := Build(context.Background(), r, map[string]namedCfg{
-		"a": {name: "a"}, "b": {name: "b", err: errors.New("nope")},
-	}, namedBuilder(l))
+	err := Build(context.Background(), r, map[string]cfg{
+		"a": {}, "b": {err: errors.New("nope")},
+	}, builder(l))
 	if err == nil {
 		t.Fatal("want 错误")
 	}
@@ -276,9 +287,9 @@ func TestBuild_RegistryUnchangedOnFailure(t *testing.T) {
 }
 
 func TestBuild_ErrorNamesInstance(t *testing.T) {
-	err := Build(context.Background(), newReg(), map[string]namedCfg{
-		"replica": {name: "replica", err: errors.New("dial refused")},
-	}, namedBuilder(&log{}))
+	err := Build(context.Background(), newReg(), map[string]cfg{
+		"replica": {err: errors.New("dial refused")},
+	}, builder(&log{}))
 	if err == nil || !strings.Contains(err.Error(), `"replica"`) {
 		t.Errorf("错误里要说清是哪个实例，got %v", err)
 	}
@@ -292,9 +303,9 @@ func TestBuild_OwnModuleErrorNotRewrappedAndKeepsOp(t *testing.T) {
 	// 文本里模块名出现两次，errors.As 取出来的 op 永远是 new，
 	// 调用方再也分不清是配置错了还是连不上
 	root := errors.New("dial refused")
-	err := Build(context.Background(), newReg(), map[string]namedCfg{
-		"replica": {name: "replica", err: xerror.Newf("xfake", "connect", "cannot reach h:1: %w", root)},
-	}, namedBuilder(&log{}))
+	err := Build(context.Background(), newReg(), map[string]cfg{
+		"replica": {err: xerror.Newf("xfake", "connect", "cannot reach h:1: %w", root)},
+	}, builder(&log{}))
 
 	var xe *xerror.Error
 	if !errors.As(err, &xe) {
@@ -316,9 +327,9 @@ func TestBuild_OwnModuleErrorNotRewrappedAndKeepsOp(t *testing.T) {
 }
 
 func TestBuild_OtherErrorsWrappedOnceAsNew(t *testing.T) {
-	err := Build(context.Background(), newReg(), map[string]namedCfg{
-		"a": {name: "a", err: xerror.New("xother", "connect", errors.New("x"))},
-	}, namedBuilder(&log{}))
+	err := Build(context.Background(), newReg(), map[string]cfg{
+		"a": {err: xerror.New("xother", "connect", errors.New("x"))},
+	}, builder(&log{}))
 	var xe *xerror.Error
 	if !errors.As(err, &xe) || xe.Module != "xfake" || xe.Op != "new" {
 		t.Errorf("外来的错误要归到本模块的 new 名下，got %v", err)
@@ -334,15 +345,15 @@ func TestBuild_StopsBuildingOnShutdownSignal(t *testing.T) {
 	l := &log{}
 	ctx, cancel := context.WithCancel(context.Background())
 	var n int
-	err := Build(ctx, newReg(), map[string]namedCfg{
-		"a": {name: "a"}, "b": {name: "b"}, "c": {name: "c"},
-	}, func(c context.Context, cf namedCfg) (*conn, io.Closer, error) {
+	err := Build(ctx, newReg(), map[string]cfg{
+		"a": {}, "b": {}, "c": {},
+	}, func(_ context.Context, name string, _ cfg) (*conn, io.Closer, error) {
 		n++
 		if n == 2 {
 			cancel()
 		}
-		l.add("new:" + cf.name)
-		v := &conn{name: cf.name, log: l}
+		l.add("new:" + name)
+		v := &conn{name: name, log: l}
 		return v, v, nil
 	})
 
@@ -361,7 +372,7 @@ func TestBuild_BuildsNothingWhenAlreadyCanceled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	l := &log{}
-	err := Build(ctx, newReg(), map[string]namedCfg{"a": {name: "a"}}, namedBuilder(l))
+	err := Build(ctx, newReg(), map[string]cfg{"a": {}}, builder(l))
 	if err == nil {
 		t.Fatal("want 错误")
 	}
@@ -392,8 +403,8 @@ func TestBuild_new_PanicDoesNotLeakBuiltOnes(t *testing.T) {
 func TestBuild_new_NilCloserIsHarmless(t *testing.T) {
 	// 有的实例没有要关的东西，返回 nil Closer 是合法的
 	r := newReg()
-	err := Build(context.Background(), r, map[string]namedCfg{"a": {name: "a"}},
-		func(context.Context, namedCfg) (*conn, io.Closer, error) {
+	err := Build(context.Background(), r, map[string]cfg{"a": {}},
+		func(context.Context, string, cfg) (*conn, io.Closer, error) {
 			return &conn{name: "a"}, nil, nil
 		})
 	if err != nil {
@@ -409,9 +420,9 @@ func TestBuild_new_NilCloserIsHarmless(t *testing.T) {
 func TestClose_ClosesInReverseOrder(t *testing.T) {
 	l := &log{}
 	r := newReg()
-	if err := Build(context.Background(), r, map[string]namedCfg{
-		"a": {name: "a"}, "b": {name: "b"}, "c": {name: "c"},
-	}, namedBuilder(l)); err != nil {
+	if err := Build(context.Background(), r, map[string]cfg{
+		"a": {}, "b": {}, "c": {},
+	}, builder(l)); err != nil {
 		t.Fatal(err)
 	}
 	if err := r.Close(); err != nil {
@@ -426,8 +437,8 @@ func TestClose_UnpublishesBeforeClosing(t *testing.T) {
 	// 反过来的话，关到一半时 C() 还能取到正在被关闭的实例
 	r := newReg()
 	var namesDuringClose []string
-	err := Build(context.Background(), r, map[string]namedCfg{"a": {name: "a"}},
-		func(context.Context, namedCfg) (*conn, io.Closer, error) {
+	err := Build(context.Background(), r, map[string]cfg{"a": {}},
+		func(context.Context, string, cfg) (*conn, io.Closer, error) {
 			return &conn{name: "a"}, closerFunc(func() error {
 				namesDuringClose = r.Names()
 				return nil
@@ -493,7 +504,7 @@ func TestClose_RepeatedCallIsNoop(t *testing.T) {
 	// 停止钩子可能被重试，关第二次不该把同一个连接池再关一遍
 	l := &log{}
 	r := newReg()
-	if err := Build(context.Background(), r, map[string]namedCfg{"a": {name: "a"}}, namedBuilder(l)); err != nil {
+	if err := Build(context.Background(), r, map[string]cfg{"a": {}}, builder(l)); err != nil {
 		t.Fatal(err)
 	}
 	if err := r.Close(); err != nil {
@@ -510,7 +521,7 @@ func TestClose_RepeatedCallIsNoop(t *testing.T) {
 func TestBuild_new_panic_ErrorStaysInChain(t *testing.T) {
 	// 用 %v 接住的话它只剩一段文本，调用方再也问不出根因是什么
 	cause := errors.New("driver exploded")
-	explode := func(context.Context, cfg) (*conn, io.Closer, error) { panic(cause) }
+	explode := func(context.Context, string, cfg) (*conn, io.Closer, error) { panic(cause) }
 	err := Build(context.Background(), newReg(), map[string]cfg{"a": {}}, explode)
 	if !errors.Is(err, cause) {
 		t.Fatalf("panic 出来的 error 应当还在错误链上，got %v", err)

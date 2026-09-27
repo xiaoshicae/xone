@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"runtime"
 	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -82,15 +83,12 @@ func callerOf(r slog.Record) string {
 // trimPath 只留最后两段路径：完整路径带着构建机的目录，
 // 既没用又会让同一份代码在不同机器上产生不同的标签值
 func trimPath(p string) string {
-	slash := -1
-	for i := len(p) - 1; i >= 0; i-- {
-		if p[i] != '/' {
-			continue
-		}
-		if slash >= 0 {
-			return p[i+1:]
-		}
-		slash = i
+	last := strings.LastIndexByte(p, '/')
+	if last < 0 {
+		return p
+	}
+	if prev := strings.LastIndexByte(p[:last], '/'); prev >= 0 {
+		return p[prev+1:]
 	}
 	return p
 }

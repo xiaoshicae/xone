@@ -156,9 +156,10 @@ func resolve(c xgorm.ClientConfig) (string, xgorm.ConnInfo, error) {
 		}
 	}
 
-	// 使用者在 DSN 里显式写了的，一律不覆盖——配置里的值只是默认值
-	if v := dialTimeout(c); v != "" && !q.Has(dialTimeoutKey) {
-		q.Set(dialTimeoutKey, v)
+	// 使用者在 DSN 里显式写了的，一律不覆盖——配置里的值只是默认值。
+	// DialTimeout 为 0 不注入；写成 ClickHouse 认的时长字符串（300ms、5s）
+	if c.DialTimeout > 0 && !q.Has(dialTimeoutKey) {
+		q.Set(dialTimeoutKey, c.DialTimeout.String())
 		u.RawQuery = q.Encode()
 	}
 	dsn := u.String()
@@ -225,18 +226,5 @@ func errorCode(err error) string {
 
 // isURL 判断是不是驱动认的 URL 形式
 func isURL(dsn string) bool {
-	for _, p := range schemes {
-		if strings.HasPrefix(dsn, p) {
-			return true
-		}
-	}
-	return false
-}
-
-// dialTimeout 把建连超时写成 ClickHouse 认的时长字符串，<=0 表示不注入
-func dialTimeout(c xgorm.ClientConfig) string {
-	if c.DialTimeout <= 0 {
-		return ""
-	}
-	return c.DialTimeout.String()
+	return slices.ContainsFunc(schemes, func(p string) bool { return strings.HasPrefix(dsn, p) })
 }

@@ -33,6 +33,72 @@ func openMySQL(dsn string) gorm.Dialector {
 	return mysql.New(mysql.Config{DSN: dsn, SkipInitializeWithVersion: true})
 }
 
+// resolveMySQL 用驱动自己的解析器处理 DSN，DSN 里已写的超时不会被覆盖
+func resolveMySQL(c ClientConfig) (string, ConnInfo, error) {
+	cfg, err := mysqldriver.ParseDSN(c.DSN)
+	if err != nil {
+		// 不回传驱动的错误：它会把 DSN 片段带在错误信息里，而错误信息会被记下来
+		return "", ConnInfo{}, errMalformedDSN
+	}
+	if c.TLS.Enable {
+		if err := checkMySQLTLS(c.DSN, cfg); err != nil {
+			return "", ConnInfo{}, err
+		}
+	}
+
+	if cfg.Timeout == 0 {
+		cfg.Timeout = c.DialTimeout
+	}
+	if cfg.ReadTimeout == 0 {
+		cfg.ReadTimeout = c.MySQL.ReadTimeout
+	}
+	if cfg.WriteTimeout == 0 {
+		cfg.WriteTimeout = c.MySQL.WriteTimeout
+	}
+
+	// parseTime 驱动默认 false：DATETIME / TIMESTAMP 读出来是 []byte，
+	// 扫不进 time.Time——实测 go-sql-driver v1.10.1 连 MySQL 8.0.46，
+	// 带 CreatedAt 的模型 First 一次就是 unsupported Scan, storing driver.Value
+	// type []uint8 into type *time.Time，写进去倒是没问题。GORM 的模型几乎都有
+	// 时间字段，所以 DSN 里没写 parseTime 的，这里补成 true；写了（哪怕是 false）
+	// 以 DSN 为准。时区跟着驱动的 loc（默认 UTC）：写入时驱动先转成 loc 再格式化，
+	// 读出来按 loc 解释，同一个时刻来回不变（实测写 03:04:05+08:00，库里存的是
+	// 19:04:05，读回来是 19:04:05 UTC，Equal 为 true）
+	if !mysqlParamSet(c.DSN, "parseTime") {
+		cfg.ParseTime = true
+	}
+
+	// 预算读的是注入之后的值：DSN 里写了的以 DSN 为准。
+	// timeout 管建连，readTimeout 管探测那个往返
+	return cfg.FormatDSN(), ConnInfo{
+		Driver: "mysql", Addr: cfg.Addr, DB: cfg.DBName,
+		ProbeTimeout: cfg.Timeout + cfg.ReadTimeout,
+	}, nil
+}
+
+// mysqlParamSet DSN 里有没有写 key 这个参数，写成什么值都算。
+//
+// 驱动解析完的 Config 分不清「没写」和「写成了默认值」，所以直接看原串，
+// 找法照抄驱动的 ParseDSN（go-sql-driver v1.10.1 dsn.go）：最后一个 / 之后、
+// 第一个 ? 之后的那段按 & 切开，每项按第一个 = 切成 key 和值。
+// 密码里带着 ?parseTime=false 也骗不过它：密码在最后一个 / 之前
+func mysqlParamSet(dsn, key string) bool {
+	i := strings.LastIndexByte(dsn, '/')
+	if i < 0 {
+		return false
+	}
+	_, params, ok := strings.Cut(dsn[i+1:], "?")
+	if !ok {
+		return false
+	}
+	for _, kv := range strings.Split(params, "&") {
+		if k, _, found := strings.Cut(kv, "="); found && k == key {
+			return true
+		}
+	}
+	return false
+}
+
 // mysqlAuthFailed 错误号 1045 和 1044，错误链上是 *mysql.MySQLError。
 //
 // 实测 go-sql-driver v1.10.1 连 MySQL 8.0.46：密码错、用户不存在都是 1045（Access denied for user …）；

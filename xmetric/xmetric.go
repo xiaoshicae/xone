@@ -102,7 +102,7 @@ func (m *Metrics) Install() {
 	// 换实例之前记的点是记在上一个 Registry 上的，不会出现在 /metrics 里。
 	// 缓存已经跟着实例走，不需要清任何东西——但这件事仍然要说出来，
 	// 否则就是一次完全静默的数据丢失。
-	if prev != nil && prev != m {
+	if prev != m {
 		if n := prev.cachedCount(); n > 0 {
 			slog.Warn("metrics were recorded before xmetric was initialized; those values went to a temporary registry and will not be exported",
 				"metrics", n)

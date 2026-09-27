@@ -238,7 +238,7 @@ func (c ClientConfig) Validate() error {
 	// 负数注进去就从 DSN 里消失了，对端不回话时查询一直挂着；PG 的 connect_timeout
 	// 与几个 GUC 在注入时同样被跳过。一个减号换来一个静默消失的超时，配置文件看上去
 	// 毫无问题。0 各有文档写明的含义（不注入 / 不限），不在此列
-	for _, d := range []struct {
+	for _, f := range []struct {
 		name string
 		val  time.Duration
 	}{
@@ -252,8 +252,8 @@ func (c ClientConfig) Validate() error {
 		{"Postgres.LockTimeout", c.Postgres.LockTimeout},
 		{"Postgres.IdleInTxTimeout", c.Postgres.IdleInTxTimeout},
 	} {
-		if d.val < 0 {
-			return fmt.Errorf("%s must not be negative, got=%v", d.name, d.val)
+		if f.val < 0 {
+			return fmt.Errorf("%s must not be negative, got=%v", f.name, f.val)
 		}
 	}
 	return nil

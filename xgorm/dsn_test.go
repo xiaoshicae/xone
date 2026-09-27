@@ -18,6 +18,16 @@ import (
 
 const secret = "hunter2"
 
+// resolveDSN 按 c.Driver 查到方言再解 DSN，即 open 里那两步。
+// 驱动不认识时照样报错：那是 Validate 的事，这里只是别让测试拿着零值方言往下走
+func resolveDSN(c ClientConfig) (string, ConnInfo, error) {
+	d, ok := lookupDialect(c.Driver)
+	if !ok {
+		return "", ConnInfo{}, unknownDriver(c.Driver)
+	}
+	return d.resolve(c)
+}
+
 func mysqlCfg(dsn string) ClientConfig {
 	c := DefaultClientConfig()
 	c.Driver, c.DSN = DriverMySQL, dsn
@@ -251,14 +261,6 @@ func TestSecondsMillis(t *testing.T) {
 		if got := millis(c.d); got != c.want {
 			t.Errorf("millis(%v)=%q want %q", c.d, got, c.want)
 		}
-	}
-}
-
-func TestResolveDSN_UnknownDriver(t *testing.T) {
-	c := DefaultClientConfig()
-	c.Driver, c.DSN = "oracle", "x"
-	if _, _, err := resolveDSN(c); err == nil {
-		t.Fatal("不认识的驱动应当报错")
 	}
 }
 

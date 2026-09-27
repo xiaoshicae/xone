@@ -1,6 +1,7 @@
 package xredis
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -202,13 +203,10 @@ func probe(client *redis.Client) func(context.Context) error {
 	}
 }
 
-// pingTimeout 单次 Ping 的超时：建连加一个往返
+// pingTimeout 单次 Ping 的超时：建连加一个往返，两个都是 0 时用兜底值。
+// Validate 已经拦下了负的时长，所以两者之和只会是 0 或正数
 func pingTimeout(cfg ClientConfig) time.Duration {
-	d := cfg.DialTimeout + cfg.ReadTimeout
-	if d <= 0 {
-		return fallbackPingTimeout
-	}
-	return d
+	return cmp.Or(cfg.DialTimeout+cfg.ReadTimeout, fallbackPingTimeout)
 }
 
 type clientCloser struct {

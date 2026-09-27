@@ -57,7 +57,7 @@ func usePostgresTLS(c *pgconn.Config, cfg *tls.Config) {
 	}
 	seen := map[target]bool{}
 	var hosts []*pgconn.FallbackConfig
-	for _, h := range append([]*pgconn.FallbackConfig{{Host: c.Host, Port: c.Port}}, c.Fallbacks...) {
+	for _, h := range postgresHosts(c) {
 		if t := (target{h.Host, h.Port}); !seen[t] {
 			seen[t] = true
 			tc := cfg.Clone()
@@ -69,6 +69,11 @@ func usePostgresTLS(c *pgconn.Config, cfg *tls.Config) {
 	}
 	c.Host, c.Port, c.TLSConfig = hosts[0].Host, hosts[0].Port, hosts[0].TLSConfig
 	c.Fallbacks = hosts[1:]
+}
+
+// postgresHosts 连接配置里的全部主机：主地址在前，之后是 pgx 生成的候选（Fallbacks）
+func postgresHosts(c *pgconn.Config) []*pgconn.FallbackConfig {
+	return append([]*pgconn.FallbackConfig{{Host: c.Host, Port: c.Port}}, c.Fallbacks...)
 }
 
 // checkPostgresTLSParams 开了 TLS 块时，DSN 里不许再写 TLS 参数
@@ -87,7 +92,7 @@ func checkPostgresTLSParams(dsn string) error {
 // checkPostgresTCP 开了 TLS 块时，每个主机都得走 TCP：pgx 在 Unix socket 上不做 TLS
 // （pgconn v5.10.0 ParseConfig，照 libpq）。pc 是这串 DSN 解出来的连接配置
 func checkPostgresTCP(pc *pgconn.Config) error {
-	for _, h := range append([]*pgconn.FallbackConfig{{Host: pc.Host, Port: pc.Port}}, pc.Fallbacks...) {
+	for _, h := range postgresHosts(pc) {
 		if network, _ := pgconn.NetworkAddress(h.Host, h.Port); network == "unix" {
 			return fmt.Errorf("the TLS block is enabled but host %s is a Unix socket, TLS only runs over TCP", h.Host)
 		}

@@ -97,6 +97,8 @@ mutate("中文翻译的开关读的是配置", "xgin/xgin.go", "./xgin", "TestZH
 mutate("查询串不进访问日志", "xgin/middleware/log.go", "./xgin", "TestLog",
        swap('slog.String("path", c.Request.URL.Path),', 'slog.String("path", c.Request.URL.RequestURI()),'))
 # 开了 LogQuery 也得逐字段遮：?access_token= 原样进日志就是凭证落盘
+mutate("遮掉的表单值写成标记而不是转义串", "xgin/middleware/redact.go", "./xgin", "TestRedactBody_Form",
+       swap('return strings.ReplaceAll(values.Encode(), url.QueryEscape(Redacted), Redacted)', 'return values.Encode()'))
 mutate("记下的查询串脱过敏", "xgin/middleware/log.go", "./xgin", "TestLog_Query",
        swap('slog.String("query", redactForm(c.Request.URL.RawQuery))', 'slog.String("query", c.Request.URL.RawQuery)'))
 mutate("记下的请求头脱过敏", "xgin/middleware/log.go", "./xgin", "TestLog_RedactsRequestHeaders",
@@ -219,6 +221,9 @@ mutate("访问日志的耗时是毫秒", "xgin/middleware/log.go", "./xgin", "Te
        swap('slog.Float64("elapsed_ms", millis(elapsed))', 'slog.Float64("elapsed_ms", float64(elapsed))'))
 # 没匹配上路由时填真实路径，日志里分不出 /nope 是路由还是 404，也和指标、Span 对不上
 # gin 在没写响应体时 Size() 返回 -1：原样记下来，204 看着像出了错，按 bytes_out 求和还会少算
+# gin 默认的 404 / 405 正文在中间件链之后才写，不在链里写的话 bytes_out 记成 0
+mutate("默认的 404 / 405 在链里写", "xgin/xgin.go", "./xgin", "TestDefault404And405",
+       swap('\t\te.NoRoute(notFound)\n\t\te.NoMethod(methodNotAllowed)\n', ''))
 mutate("没写响应体时 bytes_out 记 0", "xgin/middleware/log.go", "./xgin", "TestLog_BytesOut",
        swap('slog.Int("bytes_out", max(c.Writer.Size(), 0))', 'slog.Int("bytes_out", c.Writer.Size())'))
 mutate("访问日志里没匹配上的路由记 unmatched", "xgin/middleware/log.go", "./xgin", "TestLog_UnmatchedRouteIsUnmatched",

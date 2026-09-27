@@ -321,7 +321,7 @@ func TestFunctional_RequestBodyLogMasksAllSecrets(t *testing.T) {
 		s := secret("formpw")
 		r := p.Do(t, http.MethodPost, "/login", "username=form&p%61ssword="+s, "Content-Type", "application/x-www-form-urlencoded")
 		l := accessLog(t, p, traceIDOf(t, r))
-		if got := l.Str("request_body"); !strings.Contains(got, "password=%2A%2A%2AREDACTED%2A%2A%2A") || !strings.Contains(got, "username=form") {
+		if got := l.Str("request_body"); !strings.Contains(got, "password="+redacted) || !strings.Contains(got, "username=form") {
 			t.Errorf("文档说表单按键脱敏（p%%61ssword 就是 password），实际 request_body=%q", got)
 		}
 		mustNotContain(t, "访问日志", l.Line, s)

@@ -65,7 +65,7 @@ xone/
     ├── mutate.py        变异测试
     ├── mutations/       变异表，一个 module 一个文件（core.py 是根模块）
     ├── e2e.sh           拉起 PG / MySQL / Redis / ClickHouse，跑 e2e/
-    └── release.sh       发版：--bump 钉版本号，--tag 打 tag，推送之后 --verify 验证装得上
+    └── release.sh       发版：--bump 钉版本号，--tag 打 tag，推送之前 --smoke、推送之后 --verify 验证装得上、跑得起来
 ```
 
 脚本放在哪个目录下调都行，它们会先切到仓库根。
@@ -88,7 +88,7 @@ xone/
 | `scripts/test.sh [go test 参数]` | 逐模块 `GOWORK=off go test -race ./...`，一个模块红了也跑完其余的，最后一起报 | 每次（`-count=1`） |
 | `scripts/mutate.py [-j N] [--only X] [-k X] [--dry-run]` | 变异测试，并行跑，不动工作区 | 全量每晚（e2e.yml）；`--dry-run` 在 check.sh 里 |
 | `scripts/e2e.sh [--load] [-run X]` | 真实 Web 服务测试，要 PG / MySQL / Redis（ClickHouse 可选） | 改了 `go.mod` / `go.sum` 的 PR、每晚、手动触发（e2e.yml，不含压测） |
-| `scripts/release.sh vX.Y.Z (--bump \| --tag [--e2e-passed] \| --verify)` | 发布：钉版本号 / 打 tag / 验证 | 否（打 tag 由 release 按钮做） |
+| `scripts/release.sh vX.Y.Z (--bump \| --tag [--e2e-passed] \| --smoke \| --verify)` | 发布：钉版本号 / 打 tag / 推送前冒烟 / 推送后验证 | 否（打 tag 由 release 按钮做） |
 
 ### check.sh
 
@@ -131,13 +131,14 @@ scripts/release.sh v0.1.0 --bump     # 1. 各模块 go.mod 里仓库内的 requi
                                      #    README 安装命令的版本号换成 v0.1.0
                                      #    只改文件：提交、开 PR、合进 main（分支保护照常生效）
 scripts/release.sh v0.1.0 --tag      # 2. 在 main 的最新提交上给每个模块打 tag（不推送）
+scripts/release.sh v0.1.0 --smoke    # 推送之前：同一个外部工程、同一套检查，依赖 replace 到本地代码
 scripts/release.sh v0.1.0 --verify   # 推送之后：在一个全新的外部工程里 go get，验证装得上、跑得起来
 ```
 
 第 1 步可以交给 Claude：在这个仓库里说「发 v0.2.0」，它按 `.claude/skills/release/SKILL.md` 钉版本号、
 整理 CHANGELOG、开好 PR，停在那里。
 
-**第 2 步平时用发布按钮**：GitHub 上 Actions → `release` → Run workflow，填版本号。它跑 `--tag`、e2e（同 `e2e.yml`），
+**第 2 步平时用发布按钮**：GitHub 上 Actions → `release` → Run workflow，填版本号。它跑 `--tag`、e2e（同 `e2e.yml`）、`--smoke`，
 只推这一组 tag（`--atomic`），再 `--verify`；任何一步红了都不推送，不推任何分支。仓库的
 Settings → Actions → General → Workflow permissions 要是 Read and write；有针对 tag 的 ruleset 的话要给它放行。
 见 `.github/workflows/release.yml`。

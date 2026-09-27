@@ -8,10 +8,11 @@
 #                                        #    只改文件，不提交
 #   （提交、开 PR、CI 绿了合进 main）
 #   scripts/release.sh v0.1.0 --tag      # 2. 在 main 的最新提交上给每个模块打 tag（不推送）
+#   scripts/release.sh v0.1.0 --smoke    # 推送之前：同一个外部工程，依赖指向本地代码，起得来、关得对
 #   scripts/release.sh v0.1.0 --verify   # 推送之后：用一个全新的外部工程验证装得上、跑得起来
 #
 # 第 2 步平时用 GitHub Actions 的 release 按钮做（.github/workflows/release.yml）：
-# 同样的检查，跑完只推 tag、再 --verify。
+# 同样的检查，再 --smoke，跑完只推 tag、再 --verify。
 #
 # 为什么 main 上的 go.mod 能直接发：开发用的 replace 一直留着，
 # 而使用者的构建会忽略依赖里的 replace——他们只看 require 的版本。
@@ -25,8 +26,9 @@
 # 推送是单独一步：Go 的 module proxy 会永久缓存 tag，推错了删不掉，只能再发一个版本盖过去。
 set -e
 cd "$(dirname "$0")/.."
+. scripts/lib.sh
 
-usage() { echo "用法：scripts/release.sh vX.Y.Z (--bump | --tag [--e2e-passed] | --verify)"; exit 1; }
+usage() { echo "用法：scripts/release.sh vX.Y.Z (--bump | --tag [--e2e-passed] | --smoke | --verify)"; exit 1; }
 VERSION="$1"
 [ -n "$VERSION" ] || usage
 shift
@@ -34,7 +36,7 @@ MODE=
 E2E_PASSED=
 for a; do
   case "$a" in
-    --bump|--tag|--verify) [ -z "$MODE" ] || usage; MODE=$a;;
+    --bump|--tag|--smoke|--verify) [ -z "$MODE" ] || usage; MODE=$a;;
     --e2e-passed) E2E_PASSED=1;;
     *) usage;;
   esac
@@ -64,16 +66,32 @@ MOD=github.com/xiaoshicae/xone
 PINNED=$(git ls-files '*/go.mod' | xargs -n1 dirname)
 MODS=$(echo "$PINNED" | grep -vxE 'example|e2e|internal/schemagen')
 
-# ---- --verify：发布出去的版本装得上、跑得起来 ----
-# 必须在 git push --tags 之后跑。CI 跑的是工作区里的代码，模块之间还靠
-# replace 互指，证明不了一个真正的使用者 go get 之后会发生什么——
-# require 的版本对不对、tag 打全了没有、去掉 replace 还编不编得过，
-# 全都只有这一步能回答。
-verify() {
+# ---- --smoke / --verify：一个全新的外部工程装得上、跑得起来 ----
+# 两个模式跑的是同一个消费者工程、同一套检查（起服务 → 请求 → SIGTERM → 逆序关闭），
+# 只有依赖从哪来不同：
+#
+#   --verify  必须在 git push --tags 之后跑，go get 的是 module proxy 上发布出去的版本。
+#             CI 跑的是工作区里的代码，模块之间还靠 replace 互指，证明不了一个真正的
+#             使用者 go get 之后会发生什么——require 的版本对不对、tag 打全了没有、
+#             去掉 replace 还编不编得过，全都只有这一步能回答。
+#   --smoke   推送之前跑，依赖指向本地这份工作区（就是刚打了 tag 的那个提交）：
+#             消费者是主模块，它的 replace 说了算，各模块 go.mod 里互指的 replace 被忽略，
+#             和使用者的构建一样。v1.13.0 的 --verify 在 tag 推出去之后才红
+#             （认钩子的 sed 对不上新的日志字段），而 tag 推出去就撤不回了——
+#             同样的检查先在这里跑一遍，真有回归的话 tag 还只在本地。
+#             它验不了 tag 打没打全、proxy 拉不拉得到，那些仍然交给 --verify
+consumer() {
 # 和发布的是同一份子模块列表，新加的模块自动进来
 PKGS=$(printf "$MOD/%s\n" $MODS)
+ROOT=$(pwd)
 DIR=$(mktemp -d)
 trap 'rm -rf "$DIR"' EXIT
+
+if [ "$MODE" = "--smoke" ]; then
+  # 工作区有改动的话，跑的就不是打了 tag 的那个提交，说一声
+  [ -z "$(git status --porcelain)" ] || echo "  ⚠ 工作区有未提交的改动，跑的是改过的代码，不是 $(git log -1 --format=%h)"
+  echo "== 用本地的 $(git log -1 --format='%h %s') 充当 $VERSION =="
+fi
 
 echo "== 在 $DIR 里建一个干净的消费者工程 =="
 cd "$DIR"
@@ -115,15 +133,25 @@ func main() {
 GO_EOF
 } > main.go
 
-echo "== go get 各模块的 $VERSION =="
-for p in "$MOD" $PKGS; do
-  echo "  $p@$VERSION"
-  GOFLAGS=-mod=mod go get "$p@$VERSION" >/dev/null
-done
+if [ "$MODE" = "--smoke" ]; then
+  echo "== require 各模块的 $VERSION，replace 到 $ROOT =="
+  # 不走 go get：这个版本还没推，proxy 上没有。require 照样写 $VERSION，
+  # 使用者 go.mod 里会出现的就是这几行，只是内容从本地目录来
+  for p in "$MOD" $PKGS; do
+    echo "  $p@$VERSION => $ROOT${p#"$MOD"}"
+    go mod edit -require="$p@$VERSION" -replace="$p=$ROOT${p#"$MOD"}"
+  done
+else
+  echo "== go get 各模块的 $VERSION =="
+  for p in "$MOD" $PKGS; do
+    echo "  $p@$VERSION"
+    GOFLAGS=-mod=mod go get "$p@$VERSION" >/dev/null
+  done
+fi
 
 echo "== 编译 =="
 go mod tidy >/dev/null
-go build -o verify . 
+go build -o verify .
 echo "  ✓ 装得上、编得过"
 
 echo "== 起一遍：启动 → 请求 → 退出 =="
@@ -150,21 +178,11 @@ while kill -0 "$pid" 2>/dev/null; do
 done
 echo "  ✓ 收到 SIGTERM 之后干净退出"
 
-# 框架每跑一个钩子记一行 starting / stopping，字段 hook=包名.函数名。
 # 从前这里 grep 的是 "closing"，命中的其实是收到信号那一行
 # （"shutdown signal received, closing gracefully ..."），一个组件都没关也照样过。
-#
-# 日志前半截是 xlog 装好之前的 slog 默认格式（... INFO starting hook=xlog.initXLog），
-# 后半截是 xlog 的 JSON（"msg":"stopping",…,"hook":"xredis.closeXRedis"），两种都认。
-# JSON 里 msg 和 hook 之间不一定挨着：xlog 给每条日志带的 hostname、pid 就插在中间，
-# 挨着才认的话 v1.13.0 的 --verify 一个钩子都认不出来。[^}]* 保证两者在同一条日志里
-# 取到包名为止：一个包可能登记多个启动钩子，配对的单位是包
-hooks() {
-  sed -n -e "s/.*\"msg\":\"$1\"[^}]*\"hook\":\"\([^\"]*\)\".*/\1/p" \
-         -e "s/.* INFO $1 hook=\([^ ]*\).*/\1/p" out.txt | cut -d. -f1 | uniq
-}
-hooks starting > started.txt
-hooks stopping > stopped.txt
+# hooks 在 scripts/lib.sh 里，check.sh 拿样例日志测着它
+hooks starting out.txt > started.txt
+hooks stopping out.txt > stopped.txt
 # 两边都有的包：停止顺序必须正好是启动顺序倒过来
 awk '{ l[NR] = $0 } END { for (i = NR; i > 0; i--) print l[i] }' started.txt | grep -Fxf stopped.txt > want.txt || true
 grep -Fxf started.txt stopped.txt > got.txt || true
@@ -174,9 +192,13 @@ cmp -s want.txt got.txt || { echo "✗ 关闭顺序不是启动顺序的逆序";
 [ "$(tail -n 1 got.txt)" = "xlog" ] || { echo "✗ 最后关的不是 xlog：$(tr '\n' ' ' < got.txt)"; exit 1; }
 echo "  ✓ 组件被逆序关闭：$(tr '\n' ' ' < got.txt)"
 echo
-echo "✓ $VERSION 验证通过"
+if [ "$MODE" = "--smoke" ]; then
+  echo "✓ $VERSION 冒烟通过（本地代码，还没推送）"
+else
+  echo "✓ $VERSION 验证通过"
+fi
 }
-if [ "$MODE" = "--verify" ]; then verify; exit 0; fi
+case "$MODE" in --smoke|--verify) consumer; exit 0;; esac
 
 # inrepo go.mod：列出 require 里仓库内的模块（路径@版本）。
 # 只看 require：从前从整份 -json 里 grep 路径，只出现在 replace 里的
@@ -288,7 +310,12 @@ done
 
 cat <<TIP
 
-已在本地打好 tag，没有推送。确认无误后只推这一组 tag：
+已在本地打好 tag，没有推送。推送之前先用本地代码冒烟一遍
+（和 --verify 同一个外部工程、同一套检查，红了的话 tag 还没出去）：
+
+  scripts/release.sh $VERSION --smoke
+
+确认无误后只推这一组 tag：
 
   git push --atomic origin \$(git tag --points-at $VERSION | sed 's|^|refs/tags/|')
 

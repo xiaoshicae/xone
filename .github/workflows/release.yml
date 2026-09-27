@@ -11,6 +11,7 @@ name: release
 #   - release.sh --tag：确认 go.mod 已经钉到这个版本、CHANGELOG 有这一节、tag 还没用过，
 #     跑检查和单测，在本地打 tag；
 #   - e2e（真实的 PG / MySQL / Redis / ClickHouse，同 e2e.yml）；
+#   - release.sh --smoke：和 --verify 同一个外部工程、同一套检查，依赖指向本地代码；
 #   - 只推这一组 tag（--atomic：要么全上去，要么一个都不上去）；
 #   - release.sh --verify：在一个全新的外部工程里 go get，验证装得上、跑得起来。
 # 前面任何一步红了都不推送。tag 推出去就被 Go 的 module proxy 永久缓存，删不掉。
@@ -101,6 +102,11 @@ jobs:
       # 上一步用了 --e2e-passed，由这一步兑现：这里红了，tag 只在这台机器上，不会推出去
       - name: e2e
         run: scripts/e2e.sh -skip 'TestTLS_(PostgreSQL|MySQL|Redis)$'
+
+      # 和推送之后的 --verify 同一个外部工程、同一套检查，依赖指向本地这个打了 tag 的提交。
+      # v1.13.0 的 --verify 在 tag 推出去之后才红；这一步红了，tag 还只在这台机器上
+      - name: release.sh --smoke（推送之前：外部工程用本地代码起得来、关得对）
+        run: scripts/release.sh "$VERSION" --smoke
 
       - name: 推送 tag
         run: |

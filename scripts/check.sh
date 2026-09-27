@@ -198,6 +198,29 @@ echo "✓ 文档和示例里没有已经删掉的名字"
 # 不到一秒。代码挪走了、变异没跟着挪，这里当场就红，不用等下一次想起来跑全量
 python3 scripts/mutate.py --dry-run || fail "有变异的模式对不上代码了，改 scripts/mutations/ 下对应的那条"
 
+# ---- 12.2 release.sh 认得出钩子日志 ----
+# --smoke / --verify 靠 hooks()（scripts/lib.sh）从日志里认出每个钩子的启停，再比对是不是逆序。
+# v1.13.0 的 xlog 在 msg 和 hook 之间加了 hostname、pid，老的 sed 一个都认不出来，
+# 红在 tag 推出去之后的 --verify 上。拿固定的样例日志测一遍：日志格式再变，先红的是这里
+t=$(mktemp)
+cat > "$t" <<'LOG_EOF'
+2026/01/02 15:04:05 INFO starting hook=xlog.initXLog stage=0
+2026/01/02 15:04:05 INFO starting hook=xlog.watchLevel stage=0
+{"time":"2026-01-02T15:04:05Z","level":"INFO","msg":"starting","hook":"xtrace.initXTrace","stage":10}
+{"time":"2026-01-02T15:04:05Z","level":"INFO","msg":"starting","hostname":"box-1","pid":42,"hook":"xgin.initXGin","stage":30}
+{"time":"2026-01-02T15:04:06Z","level":"INFO","msg":"shutdown signal received, closing gracefully","hostname":"box-1","pid":42}
+{"time":"2026-01-02T15:04:06Z","level":"INFO","msg":"stopping","hostname":"box-1","pid":42,"hook":"xgin.closeXGin"}
+{"time":"2026-01-02T15:04:06Z","level":"INFO","msg":"stopping","hook":"xtrace.closeXTrace"}
+{"time":"2026-01-02T15:04:06Z","level":"INFO","msg":"stopping","hostname":"box-1","pid":42}{"hook":"xredis.notThisLine"}
+2026/01/02 15:04:06 INFO stopping hook=xlog.closeXLog
+LOG_EOF
+got=$(hooks starting "$t" | tr '\n' ' ')
+[ "$got" = "xlog xtrace xgin " ] || { rm -f "$t"; fail "hooks() 认错了启动钩子：want=[xlog xtrace xgin ] got=[$got]（改了日志格式？同步 scripts/lib.sh 的 hooks）"; }
+got=$(hooks stopping "$t" | tr '\n' ' ')
+[ "$got" = "xgin xtrace xlog " ] || { rm -f "$t"; fail "hooks() 认错了停止钩子：want=[xgin xtrace xlog ] got=[$got]（改了日志格式？同步 scripts/lib.sh 的 hooks）"; }
+rm -f "$t"
+echo "✓ release.sh 认得出钩子日志（xlog JSON 带额外字段、字段挨着、xlog 之前的文本格式）"
+
 # ---- 12.1 测试函数名用英文 ----
 # 测试名会出现在 go test -run、CI 的失败列表和变异表的过滤里，写英文才好搜、好复制
 zhtest=$(files '*_test.go' | xargs grep -nP '^func (Test|Benchmark|Fuzz|Example)\w*[^\x00-\x7F]' || true)

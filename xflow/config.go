@@ -1,10 +1,9 @@
 package xflow
 
 import (
+	"context"
 	"fmt"
 	"time"
-
-	"context"
 
 	"github.com/xiaoshicae/xone/xconfig"
 	"github.com/xiaoshicae/xone/xhook"

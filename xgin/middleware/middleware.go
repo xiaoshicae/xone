@@ -37,6 +37,19 @@ func LogScope() gin.HandlerFunc {
 	}
 }
 
+// routeOf 取这个请求的路由模板，访问日志、指标、Span 共用。
+//
+// 用模板而不是真实路径：/user/123 和 /user/456 是同一个接口，按真实路径记的话
+// 指标标签和 Span 名的基数随 URL 里的 id 无限增长，Prometheus 会被撑垮。
+// 没匹配上任何路由时记固定的 unmatched：填真实路径的话，同样撑爆基数，
+// 日志里也分不出 /nope 是一个路由还是一次 404。真实路径在访问日志的 path 里
+func routeOf(c *gin.Context) string {
+	if route := c.FullPath(); route != "" {
+		return route
+	}
+	return "unmatched"
+}
+
 // maxStack panic 栈信息的上限
 const maxStack = 16 * 1024
 

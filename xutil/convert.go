@@ -70,7 +70,7 @@ func Retry(parent context.Context, attempts int, timeout, interval time.Duration
 
 	var last error
 	backoff := min(interval, maxBackoff) // 第一次也封顶：interval 配得比上限还大时，文档说的「最多等 maxBackoff」照样成立
-	for i := 0; i < attempts; i++ {
+	for i := range attempts {
 		if i > 0 {
 			select {
 			case <-ctx.Done():

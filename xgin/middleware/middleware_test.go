@@ -730,22 +730,6 @@ func TestSnapshotBody_EmptyWithoutBody(t *testing.T) {
 	}
 }
 
-func TestHeaderValue_JoinsMultiValueHeader(t *testing.T) {
-	cases := []struct {
-		in   []string
-		want string
-	}{
-		{nil, ""},
-		{[]string{"a"}, "a"},
-		{[]string{"a", "b"}, "a, b"},
-	}
-	for _, c := range cases {
-		if got := headerValue(c.in); got != c.want {
-			t.Errorf("headerValue(%v) want %q, got %q", c.in, c.want, got)
-		}
-	}
-}
-
 // serveAborted 跑一个写出 200 和半截 body 之后以 http.ErrAbortHandler 中止的请求。
 // Recover 排在最内层，与 xgin 装配的顺序一致；它抛回来的 panic 在这里接住
 func serveAborted(t *testing.T, mws ...gin.HandlerFunc) {

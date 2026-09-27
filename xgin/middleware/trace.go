@@ -27,12 +27,7 @@ const (
 // 没人做这个判断，一律当作不可信。链路标识（traceparent 等）不受影响。
 func Trace() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// 用路由模板而不是真实路径：/user/123 和 /user/456 是同一个接口，
-		// 按真实路径命名会让 Span 名和指标标签的基数随用户数增长
-		route := c.FullPath()
-		if route == "" {
-			route = "unmatched" // 没匹配上任何路由，用固定值而不是真实路径
-		}
+		route := routeOf(c)
 
 		// 每次都取当前的全局 Propagator：构造中间件时链路可能还没初始化
 		ctx := otel.GetTextMapPropagator().Extract(c.Request.Context(), inbound(c))

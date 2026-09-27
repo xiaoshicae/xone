@@ -41,7 +41,7 @@ func TestStartOrder_KeepsRegistrationOrderWithinStage(t *testing.T) {
 	//
 	// 输入要够长、而且本来就是乱的：标准库的排序在 12 项以内走插入排序，
 	// 输入已经有序时又会直接放过——两种情况下它碰巧都是稳的，
-	// 用三五项顺序输入根本测不出 sort.Slice 和 sort.SliceStable 的差别
+	// 用三五项顺序输入根本测不出 slices.SortFunc 和 slices.SortStableFunc 的差别
 	stages := []Stage{StageTelemetry, StageClient, StageServer}
 	const per = 8
 
@@ -196,6 +196,32 @@ func TestAddStop_PairsWithLatestPriorStartHookInSamePackage(t *testing.T) {
 		if e.Pair != want[e.Name] {
 			t.Errorf("%s 该配序号 %d 的启动钩子（0 表示不配），got=%d", e.Name, want[e.Name], e.Pair)
 		}
+	}
+}
+
+func TestStopAfter_SkipsStopHooksWhoseStartHookFailed(t *testing.T) {
+	// 配对的启动钩子没成功的跳过，没有配对的总会留下；留下的保持停止顺序
+	Reset()
+	t.Cleanup(Reset)
+	AddStart(Entry{Name: "a.open", Pkg: "a", Stage: StageClient, Run: noop})
+	AddStop(Entry{Name: "a.close", Pkg: "a", Stage: StageClient, Run: noop})
+	AddStart(Entry{Name: "b.open", Pkg: "b", Stage: StageClient, Run: noop})
+	AddStop(Entry{Name: "b.close", Pkg: "b", Stage: StageClient, Run: noop})
+	AddStop(Entry{Name: "c.flush", Pkg: "c", Stage: StageLog, Run: noop})
+	AddStart(Entry{Name: "d.open", Pkg: "d", Stage: StageServer, Run: noop})
+	AddStop(Entry{Name: "d.close", Pkg: "d", Stage: StageServer, Run: noop})
+
+	seqOf := map[string]int{}
+	for _, s := range Start() {
+		seqOf[s.Name] = s.Seq
+	}
+	started := map[int]bool{seqOf["a.open"]: true, seqOf["d.open"]: true} // b.open 失败了
+
+	if got, want := board(StopAfter(started)), "d.close a.close c.flush"; got != want {
+		t.Errorf("StopAfter want %s, got %s", want, got)
+	}
+	if got, want := board(StopAfter(nil)), "c.flush"; got != want {
+		t.Errorf("一个启动钩子都没成功时只剩不配对的，want %s, got %s", want, got)
 	}
 }
 

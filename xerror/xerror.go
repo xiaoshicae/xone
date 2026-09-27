@@ -4,6 +4,7 @@ package xerror
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -74,7 +75,7 @@ func Newf(module, op, format string, args ...any) *Error {
 	for i, a := range args {
 		if xe, ok := a.(*Error); ok && xe != nil {
 			if own == nil {
-				own = append([]any(nil), args...)
+				own = slices.Clone(args)
 			}
 			own[i] = nest(module, xe)
 		}

@@ -63,7 +63,7 @@ mutate("代理网段写错要启动失败", "xgin/config.go", "./xgin", "TestVal
 mutate("指标的 method 标签收敛", "xgin/middleware/metric.go", "./xgin", "TestMetric",
        swap('normalizeMethod(c.Request.Method)', 'c.Request.Method'))
 mutate("请求头里的凭证被遮掉", "xgin/middleware/redact.go", "./xgin", "TestRedact",
-       swap('\t\tif set[name] {\n\t\t\tattrs = append(attrs, slog.String(k, Redacted))\n\t\t\tcontinue\n\t\t}\n','\t\t_ = set\n'))
+       swap('set[name] || ', ''), swap('\tset := headers()\n', '\tset := headers()\n\t_ = set\n'))
 mutate("配置在装配时落到 engine 上", "xgin/xgin.go", "./xgin", "TestBuild", swap('\t\tapplyConfig(e, c)\n', ''))
 # 回调在配置落到 engine 上之后才跑，所以回调里明确设了的以回调为准。
 # 两种改坏的写法：配置挪到回调之后落，或者 Start 时再落一遍（原先就是这样）
@@ -83,7 +83,7 @@ mutate("关掉指标就不注册端点", "xgin/xgin.go", "./xgin", "TestBuild_No
 mutate("指标端点挂在配置的路径上", "xgin/xgin.go", "./xgin", "TestBuild_MetricsPathConfigurable",
        swap('e.GET(c.MetricPath, serveMetrics)', 'e.GET("/metrics", serveMetrics)'))
 mutate("跳过日志的路径读的是配置", "xgin/xgin.go", "./xgin", "TestLogSkipPaths",
-       swap('skip := append([]string{}, c.LogSkipPaths...)', 'skip := []string{}'))
+       swap('skip := slices.Clone(c.LogSkipPaths)', 'skip := []string{}'))
 # 接反了的话，只开了请求体的人，响应体（可能带着令牌）进了日志
 mutate("请求体和响应体的开关各管各的", "xgin/xgin.go", "./xgin", "TestLogBody",
        swap('middleware.WithBody(c.LogRequestBody, c.LogResponseBody)', 'middleware.WithBody(c.LogResponseBody, c.LogRequestBody)'))
@@ -147,7 +147,7 @@ mutate("表单字段名里带敏感词也遮", "xgin/middleware/redact.go", "./x
        swap('\t\tif sensitive(k, ws) {\n\t\t\tvalues[k]', '\t\tif slices.Contains(ws, normalize(k)) {\n\t\t\tvalues[k]'))
 # 名单永远列不全（Proxy-Authorization 就曾漏在外面），词表是兜底的那一层
 mutate("请求头名字里带敏感词也遮", "xgin/middleware/redact.go", "./xgin", "TestRedactHeaders",
-       swap('\t\tif sensitive(k, ws) {\n\t\t\tattrs = append(attrs, slog.String(k, Redacted))\n\t\t\tcontinue\n\t\t}\n', '\t\t_ = ws\n'))
+       swap(' || sensitive(k, ws)', ''), swap('\tset := headers()\n\tws := words()\n', '\tset := headers()\n\tws := words()\n\t_ = ws\n'))
 # 预检认不出 api-key 的话，这种 body 走快路径原样进日志，根本到不了逐字段脱敏
 mutate("敏感词预检忽略分隔符", "xgin/middleware/redact.go", "./xgin", "TestRedactBody",
        swap('sensitive(s, words())', 'func(ws []string) bool { return slices.ContainsFunc(ws, func(w string) bool { return strings.Contains(strings.Map(foldRune, s), w) }) }(words())'),
@@ -226,6 +226,14 @@ mutate("默认的 404 / 405 在链里写", "xgin/xgin.go", "./xgin", "TestDefaul
        swap('\t\te.NoRoute(notFound)\n\t\te.NoMethod(methodNotAllowed)\n', ''))
 mutate("没写响应体时 bytes_out 记 0", "xgin/middleware/log.go", "./xgin", "TestLog_BytesOut",
        swap('slog.Int("bytes_out", max(c.Writer.Size(), 0))', 'slog.Int("bytes_out", c.Writer.Size())'))
+# 取值写在 routeOf 里，三个中间件共用；这一条改坏它本身，下面三条各打一个调用点
+mutate("没匹配上的路由记 unmatched", "xgin/middleware/middleware.go", "./xgin",
+       "TestLog_UnmatchedRouteIsUnmatched|TestMetric_UnmatchedRouteUsesFixedValue|TestTrace_UnmatchedRouteUsesFixedValue",
+       swap('\treturn "unmatched"\n', '\treturn c.Request.URL.Path\n'))
 mutate("访问日志里没匹配上的路由记 unmatched", "xgin/middleware/log.go", "./xgin", "TestLog_UnmatchedRouteIsUnmatched",
-       swap('\t\t\t\troute = "unmatched"\n\t\t\t}\n\n\t\t\t// 直接给', '\t\t\t\troute = c.Request.URL.Path\n\t\t\t}\n\n\t\t\t// 直接给'))
+       swap('slog.String("route", routeOf(c))', 'slog.String("route", c.FullPath())'))
+mutate("指标里没匹配上的路由记 unmatched", "xgin/middleware/metric.go", "./xgin", "TestMetric_UnmatchedRouteUsesFixedValue",
+       swap('route, method, code := routeOf(c),', 'route, method, code := c.Request.URL.Path,'))
+mutate("Span 里没匹配上的路由记 unmatched", "xgin/middleware/trace.go", "./xgin", "TestTrace_UnmatchedRouteUsesFixedValue",
+       swap('\t\troute := routeOf(c)\n', '\t\troute := c.Request.URL.Path\n'))
 

@@ -326,13 +326,7 @@ func runStart(ctx context.Context, o options) (map[int]bool, error) {
 //
 // 一个失败不影响其余：退出阶段要尽量把能关的都关掉。
 func runStop(ctx context.Context, o options, started map[int]bool) error {
-	var todo []hook.Entry
-	for _, e := range hook.Stop() {
-		if e.Pair != 0 && !started[e.Pair] {
-			continue // 和它配对的启动钩子没跑成功，资源不存在
-		}
-		todo = append(todo, e)
-	}
+	todo := hook.StopAfter(started)
 	if len(todo) == 0 {
 		return nil
 	}

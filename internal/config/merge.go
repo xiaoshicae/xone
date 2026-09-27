@@ -64,13 +64,13 @@ func mergeMapping(base, override *yaml.Node) *yaml.Node {
 
 	// override 里的 key → value，用完就删，剩下的是新增的
 	pending := map[string]*yaml.Node{}
-	order := make([]string, 0, len(override.Content)/2)
+	order := make([]*yaml.Node, 0, len(override.Content)/2) // override 里的 key 节点，保持书写顺序
 	for i := 0; i+1 < len(override.Content); i += 2 {
-		k := override.Content[i].Value
-		if _, dup := pending[k]; !dup {
+		k := override.Content[i]
+		if _, dup := pending[k.Value]; !dup {
 			order = append(order, k)
 		}
-		pending[k] = override.Content[i+1]
+		pending[k.Value] = override.Content[i+1]
 	}
 
 	for i := 0; i+1 < len(base.Content); i += 2 {
@@ -85,15 +85,8 @@ func mergeMapping(base, override *yaml.Node) *yaml.Node {
 
 	// override 独有的 key，按它们在 override 里的顺序追加
 	for _, k := range order {
-		v, ok := pending[k]
-		if !ok {
-			continue // 已经被上面消费掉了
-		}
-		for i := 0; i+1 < len(override.Content); i += 2 {
-			if override.Content[i].Value == k {
-				out.Content = append(out.Content, override.Content[i], v)
-				break
-			}
+		if v, ok := pending[k.Value]; ok { // 不在的已经被上面消费掉了
+			out.Content = append(out.Content, k, v)
 		}
 	}
 	return &out

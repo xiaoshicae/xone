@@ -23,6 +23,7 @@ package xtls
 import (
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"os"
 )
@@ -56,12 +57,12 @@ type Config struct {
 func (c Config) Validate() error {
 	if !c.Enable {
 		if c != (Config{}) {
-			return fmt.Errorf("TLS fields are set but TLS.Enable is false; set TLS.Enable: true or remove them")
+			return errors.New("TLS fields are set but TLS.Enable is false; set TLS.Enable: true or remove them")
 		}
 		return nil
 	}
 	if (c.CertFile == "") != (c.KeyFile == "") {
-		return fmt.Errorf("TLS.CertFile and TLS.KeyFile must be set together")
+		return errors.New("TLS.CertFile and TLS.KeyFile must be set together")
 	}
 	return nil
 }

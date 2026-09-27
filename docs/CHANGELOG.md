@@ -8,6 +8,8 @@
 
 ## [未发布]
 
+## [v1.13.0] - 2026-09-27
+
 ### 新增
 
 - xlog 每条日志默认带上 `service`（`XApp.Name`）、`version`（`XApp.Version`）、`hostname`、`pid`，和 Span 上的身份对得上；

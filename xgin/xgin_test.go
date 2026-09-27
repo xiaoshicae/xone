@@ -1435,3 +1435,43 @@ func TestStart_CleartextHTTP2RejectedWithoutH2C(t *testing.T) {
 		t.Errorf("没开 UseH2C，明文 HTTP/2 不该成功，got=HTTP/%d", r.proto)
 	}
 }
+
+func TestDefault404And405_SameAsGinAndBytesOutCounted(t *testing.T) {
+	// gin 默认的 404 / 405 正文在中间件链跑完之后才写，访问日志的 bytes_out 原先记成 0；
+	// 换成在链里写之后，响应得和 gin 自己的一个字节不差
+	bare := gin.New()
+	bare.HandleMethodNotAllowed = true
+	bare.GET("/only-get", func(c *gin.Context) {})
+
+	for _, c := range []struct{ name, method, path string }{
+		{"404", "GET", "/nope"},
+		{"405", "POST", "/only-get"},
+	} {
+		buf := captureLog(t)
+		e := New().WithConfig(configWith(func(cfg *Config) { cfg.Metric, cfg.Trace = false, false })).
+			WithRoutes(func(e *gin.Engine) { e.GET("/only-get", func(c *gin.Context) {}) }).Engine()
+		got, want := httptest.NewRecorder(), httptest.NewRecorder()
+		e.ServeHTTP(got, httptest.NewRequest(c.method, c.path, nil))
+		bare.ServeHTTP(want, httptest.NewRequest(c.method, c.path, nil))
+
+		if got.Code != want.Code || got.Body.String() != want.Body.String() ||
+			got.Header().Get("Content-Type") != want.Header().Get("Content-Type") {
+			t.Errorf("%s：响应该和 gin 默认的一样，got=%d %q %q want=%d %q %q", c.name,
+				got.Code, got.Header().Get("Content-Type"), got.Body, want.Code, want.Header().Get("Content-Type"), want.Body)
+		}
+		if w := fmt.Sprintf(`"bytes_out":%d`, want.Body.Len()); !strings.Contains(buf.String(), w) {
+			t.Errorf("%s：访问日志的 bytes_out 该是正文长度 %d\n%s", c.name, want.Body.Len(), buf.String())
+		}
+	}
+}
+
+func TestNoRoute_UserHandlerStillWins(t *testing.T) {
+	// 框架的 NoRoute 注册在用户路由之前，WithRoutes 里自己设的要盖得过它
+	e := New().WithConfig(configWith(func(cfg *Config) { cfg.Metric, cfg.Trace, cfg.Log = false, false, false })).
+		WithRoutes(func(e *gin.Engine) { e.NoRoute(func(c *gin.Context) { c.String(404, "custom") }) }).Engine()
+	w := httptest.NewRecorder()
+	e.ServeHTTP(w, httptest.NewRequest("GET", "/nope", nil))
+	if w.Body.String() != "custom" {
+		t.Errorf("用户自己的 NoRoute 该生效，got=%q", w.Body)
+	}
+}

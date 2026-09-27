@@ -100,8 +100,7 @@ jobs:
       # 跳过的三条同 e2e.yml：PG / MySQL / Redis 的 TLS 用例要 root 起本机实例，runner 不是 root。
       # 上一步用了 --e2e-passed，由这一步兑现：这里红了，tag 只在这台机器上，不会推出去
       - name: e2e
-        shell: bash
-        run: scripts/e2e.sh -skip 'TestTLS_(PostgreSQL|MySQL|Redis)$' 2>&1 | tee "$RUNNER_TEMP/e2e.log"
+        run: scripts/e2e.sh -skip 'TestTLS_(PostgreSQL|MySQL|Redis)$'
 
       - name: 推送 tag
         run: |

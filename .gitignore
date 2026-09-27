@@ -21,3 +21,6 @@
 
 # CI 里 e2e 的输出（tee e2e.log）。不挡的话它让工作区变脏，release.sh 就拒绝打 tag
 /e2e.log
+
+# Python 的字节码缓存（scripts/mutate.py 导入 scripts/mutations/ 时产出）
+__pycache__/

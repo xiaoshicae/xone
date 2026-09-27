@@ -57,7 +57,12 @@ MOD=github.com/xiaoshicae/xone
 #
 # 从前这里是一张手写的「发布顺序」表，可所有 tag 都打在同一个提交上、一次推送，
 # 谁先谁后根本无所谓；手写的表倒是新加一个模块就得记得改
-MODS=$(git ls-files '*/go.mod' | xargs -n1 dirname | grep -vxE 'example|e2e|internal/schemagen')
+#
+# 钉版本号（PINNED）要连不发布的 example / e2e / internal/schemagen 一起：它们 require 的子模块
+# 钉成 $VERSION 之后又 require 核心的 $VERSION，自己的 go.mod 还写着 v0.0.0 的话，
+# go 会说 go.mod 要更新，check.sh 的 vet 当场就红。tag 只打 $MODS
+PINNED=$(git ls-files '*/go.mod' | xargs -n1 dirname)
+MODS=$(echo "$PINNED" | grep -vxE 'example|e2e|internal/schemagen')
 
 # ---- --verify：发布出去的版本装得上、跑得起来 ----
 # 必须在 git push --tags 之后跑。CI 跑的是工作区里的代码，模块之间还靠
@@ -173,28 +178,23 @@ echo "✓ $VERSION 验证通过"
 }
 if [ "$MODE" = "--verify" ]; then verify; exit 0; fi
 
-# inrepo Require|Replace go.mod：列出 require（路径@版本）/ replace（路径）里仓库内的模块。
-# 两张表要分开取：从前从整份 -json 里 grep 路径，只出现在 replace 里的
+# inrepo go.mod：列出 require 里仓库内的模块（路径@版本）。
+# 只看 require：从前从整份 -json 里 grep 路径，只出现在 replace 里的
 # （xgin 替换了 xtrace 却不 require 它）也被补了一条 require，发出去的 go.mod 平白多一个依赖
 inrepo() {
-  GOWORK=off go mod edit -json "$2" | python3 -c '
+  GOWORK=off go mod edit -json "$1" | python3 -c '
 import json, sys
-mod, key = sys.argv[1], sys.argv[2]
-for e in json.load(sys.stdin).get(key) or []:
-    p = e["Path"] if key == "Require" else e["Old"]["Path"]
+mod = sys.argv[1]
+for e in json.load(sys.stdin).get("Require") or []:
+    p = e["Path"]
     if p == mod or p.startswith(mod + "/"):
-        print(p + "@" + e["Version"] if key == "Require" else p)' "$MOD" "$1"
+        print(p + "@" + e["Version"])' "$MOD"
 }
-
-# 钉版本号要连不发布的 example / e2e / internal/schemagen 一起：它们 require 的子模块
-# 钉成 $VERSION 之后又 require 核心的 $VERSION，自己的 go.mod 还写着 v0.0.0 的话，
-# go 会说 go.mod 要更新，check.sh 的 vet 当场就红。tag 只打 $MODS
-PINNED=$(git ls-files '*/go.mod' | xargs -n1 dirname)
 
 # unpinned：仓库内的 require 里还没钉成 $VERSION 的，一行一个「模块: 依赖@版本」
 unpinned() {
   for m in $PINNED; do
-    for dep in $(inrepo Require "$m/go.mod"); do
+    for dep in $(inrepo "$m/go.mod"); do
       [ "${dep##*@}" = "$VERSION" ] || echo "  $m: $dep"
     done
   done
@@ -206,7 +206,7 @@ if [ "$MODE" = "--bump" ]; then
   # 手写正则很容易弄错，而弄错的后果是发出去一个装不上的版本。
   # 原来是 v0.0.0、上一个版本，还是 go 工具自己补的伪版本，都一样改写
   for m in $PINNED; do
-    for dep in $(inrepo Require "$m/go.mod"); do
+    for dep in $(inrepo "$m/go.mod"); do
       GOWORK=off go mod edit -require="${dep%@*}@$VERSION" "$m/go.mod"
     done
   done

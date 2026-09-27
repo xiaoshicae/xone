@@ -5,29 +5,22 @@ set -e
 cd "$(dirname "$0")/.."
 fail() { echo "✗ $1"; exit 1; }
 
-# 查的是仓库里的文件：签入的，加上新建了还没 git add 的。不用 find / grep -r：
-# .gitignore 挡住的副本（比如 .claude/worktrees 下的工作树）不算，也不该被检查。
-# 删了还没暂存的要排掉——index 里还有它，磁盘上已经没了，交给 gofmt 就是一个
-# 藏在 $(...) 里的失败，set -e 让脚本一声不吭地退出
-files() {
-  git ls-files -co --exclude-standard -- "$@" | while IFS= read -r f; do
-    if [ -e "$f" ]; then echo "$f"; fi
-  done
-}
-modules=$(files go.mod '*/go.mod' | xargs -n1 dirname | sort)
+. scripts/lib.sh
+modules=$(modules)
 gosrc=$(files '*.go' | grep -v '_test\.go$')  # 非测试的 Go 源文件
 
 # ---- 1. 核心的依赖足迹 ----
 # 使用者 import 任何一个核心里的包，都会背上核心的全部依赖约束，所以核心必须极瘦。
 # 每加一个都要先问：能不能不加。
 # GOWORK=off 是必须的：工作区里 go list -m all 会把所有模块的依赖并在一起。
-n=$(GOWORK=off go list -m all | grep -vc '^github.com/xiaoshicae/xone')
+deps=$(GOWORK=off go list -m all)
+n=$(echo "$deps" | grep -vc '^github.com/xiaoshicae/xone')
 [ "$n" -le 3 ] || fail "核心模块图 $n 个模块，超过上限 3（当前应为 yaml 及其测试依赖）"
 echo "✓ 核心模块图 $n 个（上限 3）"
 
 # ---- 2. 核心不得依赖任何集成模块 ----
 # 反过来就把集成的依赖又带回给所有人了，分模块也就白分了
-! GOWORK=off go list -m all | grep -q '^github.com/xiaoshicae/xone/' \
+! echo "$deps" | grep -q '^github.com/xiaoshicae/xone/' \
   || fail "核心 require 了集成模块，分模块的意义没了"
 echo "✓ 核心不依赖任何集成模块"
 
@@ -56,24 +49,30 @@ echo "✓ init() 只出现在集成包里"
 
 # ---- 5. 核心公开 API 数量上限 ----
 # 框架的 API 是永久的。让「加一个」有代价，超了就得先砍再加。
-a=$(go doc -all . | grep -cE '^(func|type) ')
+# api 包：数导出的 func / type。go doc 失败要报出来（不然数成 0 就过了）；
+# 数到 0 时 grep -c 退出码是 1，set -e 下 a=$(...) 会让脚本静默退出，所以那一步 || true
+api() {
+  doc=$(go doc -all "$1") || return 1
+  echo "$doc" | grep -cE '^(func|type) ' || true
+}
+a=$(api .)
 [ "$a" -le 15 ] || fail "根包公开 API $a 个，超过上限 15"
 
 # xhook / xconfig 是每个集成都必须认识的那两个包，所以它们的上限最要紧：
 # 每加一个导出，就是一条所有第三方集成都得跟着理解的规矩。
 # 这个数曾经在几轮重构里一路涨到 15 而没人拦，所以现在把它钉死。
-r=$(go doc -all ./xhook | grep -cE '^(func|type) ')
+r=$(api ./xhook)
 [ "$r" -le 6 ] || fail "xhook 公开 API $r 个，超过上限 6——先想清楚能不能砍掉一个再加"
-x=$(go doc -all ./xconfig | grep -cE '^(func|type) ')
+x=$(api ./xconfig)
 [ "$x" -le 6 ] || fail "xconfig 公开 API $x 个，超过上限 6"
 # xonetest 是给使用者测试用的，同样是永久 API：换配置、跑钩子，就这些。
 # 想往里加「再帮你做一件事」的，先问那件事是不是该由 xone.Run 或被测包自己做
-tt=$(go doc -all ./xonetest | grep -cE '^(func|type) ')
+tt=$(api ./xonetest)
 [ "$tt" -le 3 ] || fail "xonetest 公开 API $tt 个，超过上限 3"
 # xtls 是各客户端集成共用的 TLS 块：一个配置类型，外加校验和装出 *tls.Config 两个方法。
 # 它出现在使用者的配置结构体里（xredis.ClientConfig.TLS），同样是永久 API。
 # 服务端那一侧（xgin 的 ClientCAFile / MinVersion）形状不同，留在 xgin 里，不往这里加
-tl=$(go doc -all ./xtls | grep -cE '^(func|type) ')
+tl=$(api ./xtls)
 [ "$tl" -le 3 ] || fail "xtls 公开 API $tl 个，超过上限 3"
 echo "✓ 公开 API：根包 $a（上限 15）、xhook $r（上限 6）、xconfig $x（上限 6）、xonetest $tt（上限 3）、xtls $tl（上限 3）"
 

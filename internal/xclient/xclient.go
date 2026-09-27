@@ -122,11 +122,8 @@ func (r *Registry[T]) Has(name ...string) bool {
 }
 
 // Names 返回已配置的实例名，按名字排序
-//
-// 手写取 key 再排序，不用 slices.Sorted(maps.Keys(...))：后者要 Go 1.23，
-// 而核心模块的下限是 1.22，抬上去会让所有使用者跟着抬。
 func (r *Registry[T]) Names() []string {
-	return sortedKeys(r.state.Load().items)
+	return slices.Sorted(maps.Keys(r.state.Load().items))
 }
 
 // All 返回当前全部实例，名字到实例。
@@ -144,7 +141,7 @@ func (r *Registry[T]) All() map[string]T {
 // 在 Run 之前取实例的人会去翻一份明明写对了的配置文件。
 func (r *Registry[T]) missing(want string) string {
 	s := r.state.Load()
-	p, got := s.phase, sortedKeys(s.items)
+	p, got := s.phase, slices.Sorted(maps.Keys(s.items))
 
 	switch {
 	case p == notStarted:
@@ -159,15 +156,6 @@ func (r *Registry[T]) missing(want string) string {
 	}
 	return fmt.Sprintf("%s: no instance named %q, configured ones are [%s]",
 		r.module, want, strings.Join(got, " "))
-}
-
-func sortedKeys[T any](m map[string]T) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	slices.Sort(out)
-	return out
 }
 
 func nameOf(name []string) string {
@@ -195,7 +183,7 @@ func Build[C, T any](ctx context.Context, r *Registry[T], cfgs map[string]C,
 	var closers []io.Closer
 
 	// 名字排序后再建，让失败顺序可复现，日志顺序也稳定
-	for _, name := range sortedKeys(cfgs) {
+	for _, name := range slices.Sorted(maps.Keys(cfgs)) {
 		if err := ctx.Err(); err != nil {
 			closeAll(r.module, closers)
 			return xerror.Newf(r.module, "new", "shutdown signal received before building instance %q: %w", name, err)

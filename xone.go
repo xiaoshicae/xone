@@ -36,11 +36,10 @@ import (
 	"github.com/xiaoshicae/xone/internal/hook"
 	"github.com/xiaoshicae/xone/xerror"
 
-	// XApp 块（应用名、版本、Profiles、Import）跟着框架一起来：写了 XApp.Name 却没人 import xapp 的话，
-	// 这一块会被当成拼错的 key 启动失败。xapp 在核心 module 里、零依赖，带上它不多任何东西
-	_ "github.com/xiaoshicae/xone/xapp"
-	// xlog 也跟着框架一起来，理由同 xapp：只 import 了 xone 的程序（消费者、一次性任务）也能用 XLog 配日志。
-	// 少了这一行，写 XLog 块会被当成没人读的 key 启动失败。要用自己的日志后端，调 xlog.UseHandler
+	// XLog、XApp 两块跟着框架一起来：只 import 了 xone 的程序（消费者、一次性任务）也能用它们配日志、
+	// 写应用名。少了这一行，写了这两块会被当成没人读的 key 启动失败。xapp 由 xlog 带进来
+	// （日志的 service / version 字段取自它），这里不必再单独 import 一次。
+	// 两个包都在核心 module 里、零依赖，带上它们不多任何东西。要用自己的日志后端，调 xlog.UseHandler
 	_ "github.com/xiaoshicae/xone/xlog"
 )
 

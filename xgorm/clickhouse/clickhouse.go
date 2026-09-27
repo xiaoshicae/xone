@@ -157,10 +157,11 @@ func resolve(c xgorm.ClientConfig) (string, xgorm.ConnInfo, error) {
 	}
 
 	// 使用者在 DSN 里显式写了的，一律不覆盖——配置里的值只是默认值。
-	// DialTimeout 为 0 不注入；写成 ClickHouse 认的时长字符串（300ms、5s）
+	// DialTimeout 为 0 不注入；写成 ClickHouse 认的时长字符串（300ms、5s）。
+	// 接在原 query 后面，使用者写的那部分一个字节都不动（同 xgorm 的 injectPostgresURL）：
+	// 解开再 q.Encode() 的话参数按 key 重排，a,b/c 成了 a%2Cb%2Fc
 	if c.DialTimeout > 0 && !q.Has(dialTimeoutKey) {
-		q.Set(dialTimeoutKey, c.DialTimeout.String())
-		u.RawQuery = q.Encode()
+		u.RawQuery = appendQuery(u.RawQuery, dialTimeoutKey, c.DialTimeout.String())
 	}
 	dsn := u.String()
 
@@ -189,6 +190,15 @@ func resolve(c xgorm.ClientConfig) (string, xgorm.ConnInfo, error) {
 		DB:           strings.TrimPrefix(u.Path, "/"),
 		ProbeTimeout: 2 * opts.DialTimeout,
 	}, nil
+}
+
+// appendQuery 在 raw query 后面接一个 key=value，raw 原样保留
+func appendQuery(raw, key, value string) string {
+	pair := url.QueryEscape(key) + "=" + url.QueryEscape(value)
+	if raw == "" {
+		return pair
+	}
+	return raw + "&" + pair
 }
 
 // authCodes 服务端拒绝凭证时的错误码，取自 ch-go 的类型化常量（与服务端

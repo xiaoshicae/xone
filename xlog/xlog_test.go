@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"os"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/xiaoshicae/xone/internal/hook"
+	"github.com/xiaoshicae/xone/xerror"
 	"github.com/xiaoshicae/xone/xonetest"
 )
 
@@ -70,13 +72,25 @@ func TestNew_FailsFastOnLevelTypo(t *testing.T) {
 	if !strings.Contains(err.Error(), "verbose") {
 		t.Errorf("错误里应回显写错的值，got=%v", err)
 	}
+	assertConfigOp(t, err)
 }
 
 func TestNew_FailsFastOnFormatTypo(t *testing.T) {
 	c := DefaultConfig()
 	c.Format = "xml"
-	if _, _, err := New(c); err == nil {
+	_, _, err := New(c)
+	if err == nil {
 		t.Fatal("不认识的格式应该报错")
+	}
+	assertConfigOp(t, err)
+}
+
+// assertConfigOp 配置写错报的是 config，不是 new：告警和排错按 op 分得清是配置还是运行环境
+func assertConfigOp(t *testing.T, err error) {
+	t.Helper()
+	var xe *xerror.Error
+	if !errors.As(err, &xe) || xe.Module != "xlog" || xe.Op != "config" {
+		t.Errorf("配置写错该报 xlog config，got=%v", err)
 	}
 }
 
@@ -146,9 +160,11 @@ func TestParsePerm_OctalNotations(t *testing.T) {
 func TestNew_FailsFastOnPermTypo(t *testing.T) {
 	c, _ := fileCfg(t)
 	c.File.Perm = "rw-r--r--"
-	if _, _, err := New(c); err == nil {
+	_, _, err := New(c)
+	if err == nil {
 		t.Fatal("权限格式不对应该报错")
 	}
+	assertConfigOp(t, err)
 }
 
 func TestNew_WorksWithAllOutputsDisabled(t *testing.T) {

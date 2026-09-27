@@ -128,6 +128,36 @@ func (c *rejectConnector) Connect(context.Context) (driver.Conn, error) {
 }
 func (c *rejectConnector) Driver() driver.Driver { return nil }
 
+func TestResolve_UserQueryKeptVerbatim(t *testing.T) {
+	// 注入 dial_timeout 只在后面接一段，使用者写的 query 一个字节都不动：
+	// 解开再 q.Encode() 的话参数按 key 重排，逗号成了 %2C、斜杠成了 %2F
+	cases := []struct{ dsn, want string }{
+		{
+			"clickhouse://u:p@h:9000/db?secure=false&compress=lz4&x_tag=a,b/c",
+			"clickhouse://u:p@h:9000/db?secure=false&compress=lz4&x_tag=a,b/c&dial_timeout=300ms",
+		},
+		{"clickhouse://u:p@h:9000/db", "clickhouse://u:p@h:9000/db?dial_timeout=300ms"},
+		{"clickhouse://u:p@h:9000/db?", "clickhouse://u:p@h:9000/db?dial_timeout=300ms"},
+	}
+	for _, tc := range cases {
+		dsn, _, err := resolve(cfg(tc.dsn, 300*time.Millisecond))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if dsn != tc.want {
+			t.Errorf("使用者的 query 该原样留着\n got=%s\nwant=%s", dsn, tc.want)
+		}
+		// 驱动照样解得开，读到的是注入的超时
+		opts, err := chgo.ParseDSN(dsn)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if opts.DialTimeout != 300*time.Millisecond {
+			t.Errorf("驱动该读到注入的 dial_timeout，got=%v", opts.DialTimeout)
+		}
+	}
+}
+
 func TestResolve_ZeroTimeoutNotInjected(t *testing.T) {
 	dsn, _, err := resolve(cfg("clickhouse://h:9000/db", 0))
 	if err != nil {

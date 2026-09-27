@@ -150,10 +150,12 @@ echo "  ✓ 收到 SIGTERM 之后干净退出"
 # （"shutdown signal received, closing gracefully ..."），一个组件都没关也照样过。
 #
 # 日志前半截是 xlog 装好之前的 slog 默认格式（... INFO starting hook=xlog.initXLog），
-# 后半截是 xlog 的 JSON（"msg":"stopping","hook":"xredis.closeXRedis"），两种都认。
+# 后半截是 xlog 的 JSON（"msg":"stopping",…,"hook":"xredis.closeXRedis"），两种都认。
+# JSON 里 msg 和 hook 之间不一定挨着：xlog 给每条日志带的 hostname、pid 就插在中间，
+# 挨着才认的话 v1.13.0 的 --verify 一个钩子都认不出来。[^}]* 保证两者在同一条日志里
 # 取到包名为止：一个包可能登记多个启动钩子，配对的单位是包
 hooks() {
-  sed -n -e "s/.*\"msg\":\"$1\",\"hook\":\"\([^\"]*\)\".*/\1/p" \
+  sed -n -e "s/.*\"msg\":\"$1\"[^}]*\"hook\":\"\([^\"]*\)\".*/\1/p" \
          -e "s/.* INFO $1 hook=\([^ ]*\).*/\1/p" out.txt | cut -d. -f1 | uniq
 }
 hooks starting > started.txt

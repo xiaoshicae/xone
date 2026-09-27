@@ -94,12 +94,16 @@ func TestDialect_RecognizesAuthFailure(t *testing.T) {
 	}
 }
 
+// authProbeSeq 给 TestNew_NoRetryOnAuthFailure 登记的方言编号
+var authProbeSeq atomic.Int32
+
 func TestNew_NoRetryOnAuthFailure(t *testing.T) {
 	// 打在注册的方言上：没接 AuthFailed 的话，密码错也要试满三轮才报、报成连不上
 	rejected := &chgo.Exception{Code: 516, Message: "default: Authentication failed"}
 	conn := &rejectConnector{err: rejected}
 	d := dialect // 除了 Open，其余都是注册进去的那一份
-	d.Name = "clickhouse-authprobe"
+	// 方言登记是全局的、登记了就摘不掉（包外拿不到登记表）：每次跑用新名字，-count=N 才跑得了第二遍
+	d.Name = xgorm.Driver(fmt.Sprintf("clickhouse-authprobe-%d", authProbeSeq.Add(1)))
 	d.Open = func(string) gorm.Dialector {
 		return clickhouse.New(clickhouse.Config{Conn: sql.OpenDB(conn), SkipInitializeWithVersion: true})
 	}

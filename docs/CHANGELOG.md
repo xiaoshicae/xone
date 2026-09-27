@@ -14,6 +14,13 @@
   或者保持默认的 `GOTOOLCHAIN=auto`（Go 1.21 起的默认值），go 命令会自己下载够新的工具链，
   `go get` / `go mod tidy` 同时把你 `go.mod` 里的 `go` 行抬到 `1.23.0`。设了 `GOTOOLCHAIN=local` 的环境（常见于 CI）只能升级 Go。
 
+### 修复
+
+- xgorm/clickhouse 往 DSN 里补 `dial_timeout` 时不再改写你写的其余参数：原来整个 query 按参数名重排、`,` `/` 被转义成 `%2C` `%2F`，现在只在末尾接一段。
+- xlog 的 `Level`、`Format` 写错时报的是配置错误：错误文本从 `xone xlog new failed, err=[unknown log level ...]` 变成
+  `xone xlog config failed, err=[...]`（`Format` 同理），和 `Perm`、`Timezone` 写错时一致。
+  迁移：告警或日志检索按 `xlog new failed` 匹配这两种错误的，改成 `xlog config failed`；建日志目录、打开日志文件失败仍是 `xlog new failed`。
+
 ## [v1.13.0] - 2026-09-27
 
 ### 新增

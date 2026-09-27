@@ -15,6 +15,11 @@ mutate("MaxAge 为负启动失败", "xlog/config.go", ".", "TestNew_MaxAge", swa
 # 校验函数本身是对的不算数，New 得真的调它
 mutate("New 真的校验了文件输出的配置", "xlog/xlog.go", ".", "TestNew",
        swap('\tif err := cfg.File.validate(); err != nil {\n\t\treturn nil, nil, xerror.New("xlog", "config", err)\n\t}\n', ''))
+# 配置写错报 config、运行环境出错报 new：告警按 op 分得清该改配置还是该查机器
+mutate("日志级别写错报 config", "xlog/xlog.go", ".", "TestNew_FailsFastOnLevelTypo",
+       swap('xerror.Newf("xlog", "config",\n\t\t\t"unknown log level', 'xerror.Newf("xlog", "new",\n\t\t\t"unknown log level'))
+mutate("日志格式写错报 config", "xlog/xlog.go", ".", "TestNew_FailsFastOnFormatTypo",
+       swap('xerror.Newf("xlog", "config",\n\t\t\t"unknown log format', 'xerror.Newf("xlog", "new",\n\t\t\t"unknown log format'))
 mutate("Perm 认 0o644 写法", "xlog/xlog.go", ".", "TestParsePerm", swap('strings.TrimPrefix(s, "0o")', 's'))
 # 关掉文件之后 slog.Default() 还指着它的话，Run 返回的错误、被丢下的停止钩子打的日志全没了
 mutate("关掉日志文件之后改写 stderr", "xlog/xlog.go", ".", "TestCloseXLog",

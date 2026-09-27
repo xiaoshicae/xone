@@ -94,12 +94,16 @@ func TestDialect_RecognizesAuthFailure(t *testing.T) {
 	}
 }
 
+// authProbeSeq 给 TestNew_NoRetryOnAuthFailure 登记的方言编号
+var authProbeSeq atomic.Int32
+
 func TestNew_NoRetryOnAuthFailure(t *testing.T) {
 	// 打在注册的方言上：没接 AuthFailed 的话，密码错也要试满三轮才报、报成连不上
 	rejected := &chgo.Exception{Code: 516, Message: "default: Authentication failed"}
 	conn := &rejectConnector{err: rejected}
 	d := dialect // 除了 Open，其余都是注册进去的那一份
-	d.Name = "clickhouse-authprobe"
+	// 方言登记是全局的、登记了就摘不掉（包外拿不到登记表）：每次跑用新名字，-count=N 才跑得了第二遍
+	d.Name = xgorm.Driver(fmt.Sprintf("clickhouse-authprobe-%d", authProbeSeq.Add(1)))
 	d.Open = func(string) gorm.Dialector {
 		return clickhouse.New(clickhouse.Config{Conn: sql.OpenDB(conn), SkipInitializeWithVersion: true})
 	}
@@ -127,6 +131,36 @@ func (c *rejectConnector) Connect(context.Context) (driver.Conn, error) {
 	return nil, c.err
 }
 func (c *rejectConnector) Driver() driver.Driver { return nil }
+
+func TestResolve_UserQueryKeptVerbatim(t *testing.T) {
+	// 注入 dial_timeout 只在后面接一段，使用者写的 query 一个字节都不动：
+	// 解开再 q.Encode() 的话参数按 key 重排，逗号成了 %2C、斜杠成了 %2F
+	cases := []struct{ dsn, want string }{
+		{
+			"clickhouse://u:p@h:9000/db?secure=false&compress=lz4&x_tag=a,b/c",
+			"clickhouse://u:p@h:9000/db?secure=false&compress=lz4&x_tag=a,b/c&dial_timeout=300ms",
+		},
+		{"clickhouse://u:p@h:9000/db", "clickhouse://u:p@h:9000/db?dial_timeout=300ms"},
+		{"clickhouse://u:p@h:9000/db?", "clickhouse://u:p@h:9000/db?dial_timeout=300ms"},
+	}
+	for _, tc := range cases {
+		dsn, _, err := resolve(cfg(tc.dsn, 300*time.Millisecond))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if dsn != tc.want {
+			t.Errorf("使用者的 query 该原样留着\n got=%s\nwant=%s", dsn, tc.want)
+		}
+		// 驱动照样解得开，读到的是注入的超时
+		opts, err := chgo.ParseDSN(dsn)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if opts.DialTimeout != 300*time.Millisecond {
+			t.Errorf("驱动该读到注入的 dial_timeout，got=%v", opts.DialTimeout)
+		}
+	}
+}
 
 func TestResolve_ZeroTimeoutNotInjected(t *testing.T) {
 	dsn, _, err := resolve(cfg("clickhouse://h:9000/db", 0))

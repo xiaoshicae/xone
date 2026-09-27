@@ -8,6 +8,10 @@ mutate("ClickHouse 的探测预算用 DSN 里的 dial_timeout", "xgorm/clickhous
 # dial_timeout，失败了一次重试都没有
 mutate("ClickHouse 首次建连受 ctx 管也会重试", "xgorm/clickhouse/clickhouse.go", "./xgorm/clickhouse", "TestNew",
        swap('SkipInitializeWithVersion: true', 'SkipInitializeWithVersion: false'))
+# 解开再 q.Encode() 会把使用者的参数按 key 重排、逗号斜杠转义掉：打在注入的调用点上
+mutate("ClickHouse 注入 dial_timeout 不改写使用者的 query", "xgorm/clickhouse/clickhouse.go", "./xgorm/clickhouse", "TestResolve_UserQueryKeptVerbatim",
+       swap('\t\tu.RawQuery = appendQuery(u.RawQuery, dialTimeoutKey, c.DialTimeout.String())\n',
+            '\t\tq.Set(dialTimeoutKey, c.DialTimeout.String())\n\t\tu.RawQuery = q.Encode()\n'))
 mutate("ClickHouse 仍然查版本", "xgorm/clickhouse/clickhouse.go", "./xgorm/clickhouse", "TestRegister",
        swap('\tReady:      probeVersion,\n', ''))
 # 原样透传的话，驱动建连时的解析错误会连同整串 DSN、包括明文密码一起进日志

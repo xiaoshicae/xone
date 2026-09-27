@@ -57,7 +57,7 @@ xone/
 │   ├── harness/         起进程、读日志 / Span / 指标 / /proc、TCP 故障代理、下游桩、压测器
 │   └── compose.yml      e2e 要的 PG / MySQL / Redis / ClickHouse
 ├── config_schema.json   配置的 JSON Schema，由结构体生成，给 IDE 用
-├── .github/workflows/   ci.yml：check.sh + test.sh，外加用 Go 1.22 单独编译核心；e2e.yml：e2e + 全量变异；
+├── .github/workflows/   ci.yml：check.sh + test.sh，外加用 Go 1.23 单独编译核心；e2e.yml：e2e + 全量变异；
 │                        release.yml：发布按钮（打 tag、跑 e2e、只推 tag、验证装得上）
 └── scripts/
     ├── check.sh         把设计约束编译成检查

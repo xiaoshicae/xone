@@ -17,7 +17,7 @@
 
 ## 快速开始
 
-**1. 安装**（核心 Go 1.22+，集成 Go 1.25+；所有模块共用一个版本号，写同一个）
+**1. 安装**（核心 Go 1.23+，集成 Go 1.25+；所有模块共用一个版本号，写同一个）
 
 ```bash
 go get github.com/xiaoshicae/xone@v1.13.0 github.com/xiaoshicae/xone/xgin@v1.13.0

@@ -270,7 +270,7 @@ mutate("Build 把实例名交给 new", "internal/xclient/xclient.go", ".", "Test
        swap('new(ctx, name, cfg)', 'new(ctx, "", cfg)'))
 # 快照发布之后不许改：把内部的 map 直接交出去，调用方一改就改到了注册表
 mutate("All 交出去的是拷贝", "internal/xclient/xclient.go", ".", "TestAll",
-       swap('return maps.Clone(r.state.Load().items)', 'return r.state.Load().items'), swap('\t"maps"\n', ''))
+       swap('return maps.Clone(r.state.Load().items)', 'return r.state.Load().items'))
 
 section("流程编排")
 # 步骤只要写 Process 和 Rollback：Name 默认取类型名，Dependency 默认强依赖

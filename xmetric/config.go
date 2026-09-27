@@ -11,6 +11,7 @@ import (
 	"maps"
 	"math"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -168,8 +169,8 @@ func (c Config) withDefaults() Config {
 // DefaultConfig 全部默认值集中在这里。
 func DefaultConfig() Config {
 	return Config{
-		HTTPDurationBuckets: append([]float64(nil), defaultHTTPDurationBuckets...),
-		HistogramBuckets:    append([]float64(nil), prometheus.DefBuckets...),
+		HTTPDurationBuckets: slices.Clone(defaultHTTPDurationBuckets),
+		HistogramBuckets:    slices.Clone(prometheus.DefBuckets),
 		GoMetrics:           true,
 		ProcessMetrics:      true,
 		LogErrorMetric:      true,

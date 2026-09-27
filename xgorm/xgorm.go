@@ -54,7 +54,8 @@ func open(ctx context.Context, name string, cfg ClientConfig) (*gorm.DB, io.Clos
 		return nil, nil, xerror.Newf("xgorm", "config", "invalid config: %w", err)
 	}
 
-	dsn, info, err := resolveDSN(cfg)
+	dialect, _ := lookupDialect(cfg.Driver) // Validate 已经确认它注册过
+	dsn, info, err := dialect.resolve(cfg)
 	if err != nil {
 		return nil, nil, xerror.New("xgorm", "config", err)
 	}
@@ -64,7 +65,6 @@ func open(ctx context.Context, name string, cfg ClientConfig) (*gorm.DB, io.Clos
 		return nil, nil, xerror.Newf("xgorm", "config", "invalid TLS config: %w", err)
 	}
 
-	dialect, _ := lookupDialect(cfg.Driver) // Validate 已经确认它注册过
 	// Logger 要看它的占位符长什么样，所以先造出来
 	dialector, err := dialect.dialector(dsn, tlsCfg)
 	if err != nil {
@@ -101,10 +101,7 @@ func open(ctx context.Context, name string, cfg ClientConfig) (*gorm.DB, io.Clos
 		//
 		// 内置方言走不到这里的认证失败：它们的 Open 不碰网络。注册进来的方言要是
 		// 在 Initialize 里建连，密码错就出在这里，照样要说清是认证失败
-		if dialect.authFailed(err) {
-			return nil, nil, xerror.Newf("xgorm", "connect", "authentication to %s failed: %w", info.Addr, err)
-		}
-		return nil, nil, xerror.Newf("xgorm", "connect", "open %s failed: %w", info.Addr, err)
+		return nil, nil, connectError(dialect, "open %s failed: %w", info.Addr, err)
 	}
 	pool, err := db.DB()
 	if err != nil {
@@ -128,10 +125,7 @@ func open(ctx context.Context, name string, cfg ClientConfig) (*gorm.DB, io.Clos
 
 	policy := probePolicy(cfg, info, dialect)
 	if err := xclient.Probe(ctx, policy, probe(pool, readyOf(dialect, db))); err != nil {
-		if dialect.authFailed(err) {
-			return nil, nil, xerror.Newf("xgorm", "connect", "authentication to %s failed: %w", info.Addr, err)
-		}
-		return nil, nil, xerror.Newf("xgorm", "connect", "cannot reach %s: %w", info.Addr, err)
+		return nil, nil, connectError(dialect, "cannot reach %s: %w", info.Addr, err)
 	}
 
 	if cfg.Trace {
@@ -144,6 +138,15 @@ func open(ctx context.Context, name string, cfg ClientConfig) (*gorm.DB, io.Clos
 
 	ok = true
 	return db, &poolCloser{pool: pool, info: info}, nil
+}
+
+// connectError 建连失败时报的错。方言认得出是服务端拒绝了凭证的，报认证失败；
+// 其余按 format 报（format 里依次是地址和底层错误）
+func connectError(d Dialect, format, addr string, err error) error {
+	if d.authFailed(err) {
+		return xerror.Newf("xgorm", "connect", "authentication to %s failed: %w", addr, err)
+	}
+	return xerror.Newf("xgorm", "connect", format, addr, err)
 }
 
 // probe 一次建连验证：Ping，通过之后接着执行方言的 Ready（见 Dialect.Ready），
@@ -191,6 +194,19 @@ func readyOf(d Dialect, db *gorm.DB) func(context.Context) error {
 // 拿建连预算当整体预算，连接刚建成就会被判超时。
 func probeTimeout(cfg ClientConfig, info ConnInfo) time.Duration {
 	return cmp.Or(info.ProbeTimeout, 2*cfg.DialTimeout, fallbackPingTimeout)
+}
+
+// logConn 记一条建连日志，只写确定不含凭证的字段。
+//
+// name 是实例名，框架按配置建的才有；直接调 New 的没有名字，这个字段就不写
+func logConn(name string, info ConnInfo, c ClientConfig) {
+	attrs := make([]any, 0, 14)
+	if name != "" {
+		attrs = append(attrs, "name", name)
+	}
+	attrs = append(attrs, "driver", info.Driver, "addr", info.Addr, "db", info.DB, "tls", c.TLS.Enable,
+		"max_open_conns", c.MaxOpenConns, "max_idle_conns", c.MaxIdleConns)
+	slog.Info("xgorm connected", attrs...)
 }
 
 type poolCloser struct {

@@ -8,7 +8,6 @@ import (
 	"net"
 	"net/http"
 	"slices"
-	"sort"
 	"strings"
 	"sync/atomic"
 
@@ -87,7 +86,7 @@ func newHeaderPropagator(globalHeaders []string, rules []ForwardHeaderRule) (*He
 		}
 	}
 	if len(conflicts) > 0 {
-		sort.Strings(conflicts)
+		slices.Sort(conflicts)
 		return nil, fmt.Errorf("header %s appears in both ForwardHeaders and ForwardHeaderRules; "+
 			"the former sends it to every domain, the latter only to the listed ones — remove one of them",
 			strings.Join(conflicts, ", "))

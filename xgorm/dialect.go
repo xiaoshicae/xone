@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"maps"
 	"slices"
 	"sync"
 	"time"
@@ -136,6 +137,16 @@ func (d Dialect) dialector(dsn string, cfg *tls.Config) (gorm.Dialector, error) 
 	return d.OpenTLS(dsn, cfg)
 }
 
+// resolve 把配置里的超时等参数注入 DSN，并解出可安全记录的连接信息。
+// 具体怎么解由方言的 Resolve 决定
+func (d Dialect) resolve(c ClientConfig) (string, ConnInfo, error) {
+	if d.Resolve == nil {
+		// 没提供解析逻辑：DSN 原样用，日志里只写得出驱动名
+		return c.DSN, ConnInfo{Driver: string(c.Driver)}, nil
+	}
+	return d.Resolve(c)
+}
+
 // authFailed 方言认不认得出这是认证失败，方言没提供就是认不出
 func (d Dialect) authFailed(err error) bool {
 	return err != nil && d.AuthFailed != nil && d.AuthFailed(err)
@@ -175,12 +186,7 @@ func lookupDialect(name Driver) (Dialect, bool) {
 func Drivers() []Driver {
 	dialectMu.RLock()
 	defer dialectMu.RUnlock()
-	out := make([]Driver, 0, len(dialects))
-	for name := range dialects {
-		out = append(out, name)
-	}
-	slices.Sort(out)
-	return out
+	return slices.Sorted(maps.Keys(dialects))
 }
 
 // 内置两个。直接填进 map 而不是在 init 里注册：

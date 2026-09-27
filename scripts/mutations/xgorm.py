@@ -71,7 +71,7 @@ mutate("探测预算按 DSN 里写的超时放宽", "xgorm/xgorm.go", "./xgorm",
        swap('\treturn cmp.Or(info.ProbeTimeout, 2*cfg.DialTimeout, fallbackPingTimeout)\n', '\treturn cmp.Or(2*cfg.DialTimeout, fallbackPingTimeout)\n'))
 mutate("PG 的探测预算用 DSN 里的 connect_timeout", "xgorm/dsn.go", "./xgorm", "TestProbeTimeout_DSN",
        swap('ProbeTimeout: postgresProbeTimeout(pc.ConnectTimeout, c.DialTimeout),', 'ProbeTimeout: postgresProbeTimeout(0, c.DialTimeout),'))
-mutate("MySQL 的探测预算用 DSN 里的超时", "xgorm/dsn.go", "./xgorm", "TestProbeTimeout_DSN",
+mutate("MySQL 的探测预算用 DSN 里的超时", "xgorm/mysql.go", "./xgorm", "TestProbeTimeout_DSN",
        swap('\t\tProbeTimeout: cfg.Timeout + cfg.ReadTimeout,\n', '\t\tProbeTimeout: c.DialTimeout + c.MySQL.ReadTimeout,\n'))
 # GORM 只在 Logger 实现了 ParamsFilter 时才不把参数代进 SQL：否则日志里就是真实的参数值，凭证跟着出去
 mutate("SQL 日志里没有参数值", "xgorm/logger.go", "./xgorm", "TestLogger",
@@ -88,19 +88,14 @@ mutate("认得出方言会改写 $N 占位符", "xgorm/logger.go", "./xgorm", "T
        swap('numbered:       d.Explain("$1") == "$1$",', 'numbered:       false,'))
 mutate("xgorm 认证失败不重试", "xgorm/xgorm.go", "./xgorm", "TestNew_|TestNew_MySQLNoRetryOnAuthFailureAndSaysSo",
        swap('\t\tAuthFailed: d.authFailed,\n', ''))
+# 打在调用点上：换成零值方言就是「认不出认证失败」，只影响这一条路（重试策略仍按方言认）
 mutate("认证失败报的是认证失败", "xgorm/xgorm.go", "./xgorm", "TestNew_",
-       swap('\t\tif dialect.authFailed(err) {\n\t\t\treturn nil, nil, xerror.Newf("xgorm", "connect", "authentication to %s failed: %w", info.Addr, err)\n'
-            '\t\t}\n\t\treturn nil, nil, xerror.Newf("xgorm", "connect", "cannot reach',
-            '\t\tif false {\n\t\t\treturn nil, nil, xerror.Newf("xgorm", "connect", "authentication to %s failed: %w", info.Addr, err)\n'
-            '\t\t}\n\t\treturn nil, nil, xerror.Newf("xgorm", "connect", "cannot reach'))
+       swap('connectError(dialect, "cannot reach %s: %w"', 'connectError(Dialect{}, "cannot reach %s: %w"'))
 # 注册进来的方言要是在 Initialize 里建连，认证错误就在 gorm.Open 里出来，走不到 ping：
 # 只在 ping 那条路上认的话，密码错报的是 open … failed。打在 gorm.Open 的调用点上
 # （内置的 MySQL 原先就是这样，查版本挪进 Ready 之后走的是 ping 那条路）
 mutate("MySQL 认证失败在 gorm.Open 那条路上也报认证失败", "xgorm/xgorm.go", "./xgorm", "TestNew_MySQLNoRetryOnAuthFailureAndSaysSo",
-       swap('\t\tif dialect.authFailed(err) {\n\t\t\treturn nil, nil, xerror.Newf("xgorm", "connect", "authentication to %s failed: %w", info.Addr, err)\n'
-            '\t\t}\n\t\treturn nil, nil, xerror.Newf("xgorm", "connect", "open',
-            '\t\tif false {\n\t\t\treturn nil, nil, xerror.Newf("xgorm", "connect", "authentication to %s failed: %w", info.Addr, err)\n'
-            '\t\t}\n\t\treturn nil, nil, xerror.Newf("xgorm", "connect", "open'))
+       swap('connectError(dialect, "open %s failed: %w"', 'connectError(Dialect{}, "open %s failed: %w"'))
 mutate("认得出 MySQL 的 1045 / 1044", "xgorm/mysql.go", "./xgorm", "TestNew_MySQLNoRetryOnAuthFailureAndSaysSo|TestDialect_BuiltInsRecognizeAuthFailureAndErrorCode",
        swap('return errors.As(err, &myErr) && (myErr.Number == mysqlAccessDenied || myErr.Number == mysqlDBAccessDenied)',
             'return errors.As(err, &myErr) && false'))
@@ -141,15 +136,15 @@ mutate("MySQL 方言认得出服务端错误码", "xgorm/dialect.go", "./xgorm",
 mutate("PG 方言认得出服务端错误码", "xgorm/dialect.go", "./xgorm", "TestLogger_ServerErrorLogsCodeNotMessage|TestSpan_ServerErrorRecordsCodeNotMessage",
        swap('AuthFailed: postgresAuthFailed, ErrorCode: postgresErrorCode,', 'AuthFailed: postgresAuthFailed,'))
 # 驱动默认 parseTime=false：DATETIME 扫不进 time.Time
-mutate("MySQL 没写 parseTime 时补成 true", "xgorm/dsn.go", "./xgorm", "TestResolveDSN_MySQLDefaultsParseTimeToTrue",
+mutate("MySQL 没写 parseTime 时补成 true", "xgorm/mysql.go", "./xgorm", "TestResolveDSN_MySQLDefaultsParseTimeToTrue",
        swap('\tif !mysqlParamSet(c.DSN, "parseTime") {\n', '\tif false && !mysqlParamSet(c.DSN, "parseTime") {\n'))
-mutate("DSN 里写了 parseTime 以 DSN 为准", "xgorm/dsn.go", "./xgorm", "TestResolveDSN_MySQLDefaultsParseTimeToTrue",
+mutate("DSN 里写了 parseTime 以 DSN 为准", "xgorm/mysql.go", "./xgorm", "TestResolveDSN_MySQLDefaultsParseTimeToTrue",
        swap('\tif !mysqlParamSet(c.DSN, "parseTime") {\n', '\tif true {\n'))
-mutate("密码里的 parseTime 骗不过它", "xgorm/dsn.go", "./xgorm", "TestResolveDSN_MySQLDefaultsParseTimeToTrue",
+mutate("密码里的 parseTime 骗不过它", "xgorm/mysql.go", "./xgorm", "TestResolveDSN_MySQLDefaultsParseTimeToTrue",
        swap("\ti := strings.LastIndexByte(dsn, '/')\n", "\ti := strings.IndexByte(dsn, '/')\n"))
 # 配置在读的时候就校验：负的时长底下每一处都静默变成「不限」
 mutate("负的时长被拒", "xgorm/config.go", "./xgorm", "TestValidate",
-       swap('\t\tif d.val < 0 {\n', '\t\tif false && d.val < 0 {\n'))
+       swap('\t\tif f.val < 0 {\n', '\t\tif false && f.val < 0 {\n'))
 mutate("New 也校验配置", "xgorm/xgorm.go", "./xgorm", "TestNew_NoConnectOnBadConfig",
        swap('\tif err := cfg.Validate(); err != nil {\n', '\tif err := error(nil); err != nil {\n'))
 mutate("多实例的 Validate 点名实例", "xgorm/config.go", "./xgorm", "TestConfig_ValidateNamesInstance",
@@ -200,7 +195,7 @@ mutate("PG 只有 ssl 开头的参数算冲突", "xgorm/tls.go", "./xgorm", "Tes
        swap('if strings.HasPrefix(key, "ssl") {', 'if strings.HasPrefix(key, "") {'))
 mutate("PG TLS 块不收 Unix socket", "xgorm/dsn.go", "./xgorm", "TestResolveDSN_PG_TLSBlockRejectsUnixSocket",
        swap('\t\tif err := checkPostgresTCP(pc); err != nil {', '\t\tif err := checkPostgresTCP(pc); false && err != nil {'))
-mutate("MySQL TLS 块和 DSN 里的 tls 不能同时写", "xgorm/dsn.go", "./xgorm", "TestResolveDSN_MySQL_TLSBlockConflictsWithDSNTLS",
+mutate("MySQL TLS 块和 DSN 里的 tls 不能同时写", "xgorm/mysql.go", "./xgorm", "TestResolveDSN_MySQL_TLSBlockConflictsWithDSNTLS",
        swap('\t\tif err := checkMySQLTLS(c.DSN, cfg); err != nil {', '\t\tif err := checkMySQLTLS(c.DSN, cfg); false && err != nil {'))
 mutate("MySQL 连接配置带上 TLS 块", "xgorm/tls.go", "./xgorm", "TestNew_MySQL_TLS",
        swap('\tdc.TLS = cfg.Clone()\n', ''))

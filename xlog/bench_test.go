@@ -22,6 +22,19 @@ func BenchmarkHandle_Bare(b *testing.B) {
 	}
 }
 
+// 和 BenchmarkHandle_Bare 对照：框架默认的 4 个身份字段加上 3 个 Fields
+func BenchmarkHandle_WithIdentityFields(b *testing.B) {
+	base := []slog.Attr{slog.String("service", "order-api"), slog.String("version", "v1.2.3"),
+		slog.String("hostname", "order-api-7d9f5c8b6-x2k4q"), slog.Int("pid", 1)}
+	l := withStatic(benchLogger(b), base, map[string]string{"pod": "order-api-7d9f5c8b6-x2k4q", "node": "node-3", "zone": "az1"})
+	ctx := context.Background()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		l.InfoContext(ctx, "请求完成", "状态", 200)
+	}
+}
+
 func BenchmarkHandle_TraceExtractorButNoSpanInCtx(b *testing.B) {
 	SetTraceExtractor(func(context.Context) (string, string) { return "", "" })
 	b.Cleanup(func() { SetTraceExtractor(nil) })

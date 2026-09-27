@@ -54,10 +54,47 @@ XLog:
     RotateTime: 24h        # 轮转周期，按本地时区对齐，默认一天，至少 1m
     MaxAge: 168h           # 历史保留时长，默认 7 天；0 = 不清理，负数启动失败
     Perm: "0644"           # 按八进制解析的字符串，默认 "0644"，644 / 0o644 也认
+  Fields: {}               # 每条日志都带的静态字段，值可以用 ${VAR}；见下文「每条日志都带的字段」
 ```
 
 - 文件名后缀随 `RotateTime` 的粒度：≥ 24h 是 `app.log.20260918`，≥ 1h 是 `app.log.2026091815`，更短是 `app.log.202609181504`。
 - 清理启动时一次、之后每次轮转一次，只删 `app.log.<时间后缀>`；`app.log.bak`、`app.log.1.gz` 不碰。
+
+## 每条日志都带的字段
+
+框架默认给每条日志带上「这条是谁打的」，和 xtrace 的 Span 上的 `service.name`、`host.name`、`process.pid` 对得上：
+
+| 字段 | 来源 | 说明 |
+|---|---|---|
+| `service` | `XApp.Name` | 没配就不写 |
+| `version` | `XApp.Version` | 没配就不写 |
+| `hostname` | `os.Hostname()` | 虚拟机上是机器名，K8s 里就是 Pod 名。不叫 `host`：xgin 访问日志的 `host` 是请求的 Host 头 |
+| `pid` | `os.Getpid()` | 同一台机器上的多个实例、重启前后分得开 |
+
+部署环境才知道的（Pod、节点、命名空间、机房、Pod IP）用 `XLog.Fields` 从环境变量注入，框架不去猜——
+一台机器常有好几块网卡，自动挑一个 IP 很可能挑错，而且看起来像是对的：
+
+```yaml
+XLog:
+  Fields:
+    pod_ip: ${POD_IP:}          # ${VAR:} 没设时是空串，空串的字段不写
+    node: ${NODE_NAME:}
+    namespace: ${POD_NAMESPACE:}
+    hostname: ""                # 同名的以这里为准，写成空串就是不要这个默认字段
+```
+
+```yaml
+# K8s：用 Downward API 把这些值放进环境变量
+env:
+  - {name: POD_IP, valueFrom: {fieldRef: {fieldPath: status.podIP}}}
+  - {name: NODE_NAME, valueFrom: {fieldRef: {fieldPath: spec.nodeName}}}
+  - {name: POD_NAMESPACE, valueFrom: {fieldRef: {fieldPath: metadata.namespace}}}
+```
+
+- 日志写 stdout、由 Fluent Bit / Filebeat / Vector 这类采集组件收的，它们多半已经附上了 Pod、命名空间、节点，
+  再配一遍就是重复，白白多占字节。
+- 这些值启动时算一次、序列化一次。实测默认的 4 个每行多 88 字节（hostname 是 Pod 名那么长时），时间和分配都量不出差别。
+- `UseHandler` 换了后端照样带上；`New` 是纯构造器，只带 `cfg.Fields`，不带默认的 4 个。
 
 ## API
 
@@ -87,7 +124,7 @@ func main() {
 
 - xlog 照样把它包一层再装成 `slog.Default()`：`trace_id`、`AddKV` / `CtxWithKV` 的字段、错误日志计数都还在，
   框架的访问日志、SQL 日志、启停日志也都写进它。不会出现「框架日志一条路、业务日志另一条路」。
-- 级别、格式、输出去向都由你的 handler 决定，`XLog` 块一项都不起作用：**写了就启动失败**
+- 级别、格式、输出去向都由你的 handler 决定，`XLog` 里除了 `Fields` 一项都不起作用：**写了就启动失败**
   （`XLog has no effect when xlog.UseHandler is set`），免得以为 `Level: debug` 生效了。只写默认值不算冲突。
 - 你的 handler 归你管：退出时 xlog 不关它，也不把 `slog.Default()` 换掉。
 - 日志装好之后再调不会生效，只打一条 WARN——那之前的日志已经写到别处了。

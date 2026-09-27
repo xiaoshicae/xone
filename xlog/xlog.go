@@ -6,11 +6,14 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
 
+	"github.com/xiaoshicae/xone/xapp"
 	"github.com/xiaoshicae/xone/xconfig"
 	"github.com/xiaoshicae/xone/xerror"
 	"github.com/xiaoshicae/xone/xhook"
@@ -22,7 +25,12 @@ import (
 //
 // 返回的 io.Closer 用于收尾（关闭日志文件），即便没有文件输出也不会是 nil，
 // 调用方不必判空。
-func New(cfg Config) (*slog.Logger, io.Closer, error) {
+//
+// 只带 cfg.Fields；service、hostname 这些默认字段是框架装配时（initXLog）才加的。
+func New(cfg Config) (*slog.Logger, io.Closer, error) { return build(cfg, nil) }
+
+// build 同 New，每条日志另带 base 这组字段（被 cfg.Fields 同名的覆盖）
+func build(cfg Config, base []slog.Attr) (*slog.Logger, io.Closer, error) {
 	// 配置项全部先校验完，再动文件。反过来的话，Format 写错时
 	// 日志文件已经建好、fd 也开着，而 New 返回了错误——调用方手上
 	// 没有 Closer 可关，那个 fd 和它的符号链接就留在那里了
@@ -62,7 +70,52 @@ func New(cfg Config) (*slog.Logger, io.Closer, error) {
 	out := io.MultiWriter(writers...)
 
 	opts := &slog.HandlerOptions{Level: level, AddSource: cfg.AddSource, ReplaceAttr: inLocation(loc)}
-	return slog.New(newCtxHandler(newHandler(out, opts))), multiCloser(closers), nil
+	return withStatic(slog.New(newCtxHandler(newHandler(out, opts))), base, cfg.Fields), multiCloser(closers), nil
+}
+
+// identity 框架默认给每条日志带的身份字段，和 xtrace 的 Span 上的 service.name、host.name、process.pid 对得上。
+//
+// 机器名叫 hostname 不叫 host：xgin 的访问日志里 host 是请求的 Host 头，同名就是一条日志两个 host
+func identity() []slog.Attr {
+	hostname, _ := os.Hostname()
+	return []slog.Attr{
+		slog.String("service", xapp.Name()),
+		slog.String("version", xapp.Version()),
+		slog.String("hostname", hostname),
+		slog.Int("pid", os.Getpid()),
+	}
+}
+
+// withStatic 给 logger 挂上静态字段：base 在前，同名的以 fields 为准，其余按名字排序跟在后面；值为空串的不写。
+//
+// 挂在 With 上：JSON / text handler 在这里就把它们序列化好了，之后每条日志只是拷一段现成的字节
+func withStatic(l *slog.Logger, base []slog.Attr, fields map[string]string) *slog.Logger {
+	attrs := make([]any, 0, len(base)+len(fields))
+	add := func(a slog.Attr) {
+		if a.Value.Kind() != slog.KindString || a.Value.String() != "" {
+			attrs = append(attrs, a)
+		}
+	}
+	for _, a := range base {
+		if v, ok := fields[a.Key]; ok {
+			a = slog.String(a.Key, v)
+		}
+		add(a)
+	}
+	extra := make([]string, 0, len(fields))
+	for k := range fields {
+		if !slices.ContainsFunc(base, func(a slog.Attr) bool { return a.Key == k }) {
+			extra = append(extra, k)
+		}
+	}
+	slices.Sort(extra)
+	for _, k := range extra {
+		add(slog.String(k, fields[k]))
+	}
+	if len(attrs) == 0 {
+		return l
+	}
+	return l.With(attrs...)
 }
 
 // parseLocation 解析 IANA 时区名。留空表示跟随本地时区
@@ -205,8 +258,8 @@ var (
 // xlog 照样把它包一层再装成 slog.Default()：trace_id、AddKV / CtxWithKV 的字段、
 // 错误日志计数都还在，框架的访问日志、SQL 日志也都写进它，只是最后由它来写。
 //
-// 这时 XLog 块决定的是 xlog 自己怎么写，一项都不起作用；写了就启动失败，
-// 免得你以为 Level: debug 生效了。级别、格式、输出去向都由你的 handler 决定。
+// 这时 XLog 里除了 Fields（每条都带的字段，照样带上）都是决定 xlog 自己怎么写的，一项都不起作用；
+// 写了就启动失败，免得你以为 Level: debug 生效了。级别、格式、输出去向都由你的 handler 决定。
 // 传 nil 恢复按 XLog 配置。
 //
 // 日志装好之后（xone.Run 已经走过日志那一档）再调不会生效，只打一条 WARN。
@@ -229,14 +282,17 @@ func initXLog(context.Context) error {
 		return err
 	}
 	if h := custom.Load(); h != nil {
+		// Fields 不归 handler 管，换了后端照样带上；别的项决定的是 xlog 自己怎么写。
 		// 块写了但一项都没改默认值（比如只写了 Level: info）不算冲突：它本来就是这个意思
-		if c != DefaultConfig() {
+		output := c
+		output.Fields = nil
+		if !reflect.DeepEqual(output, DefaultConfig()) {
 			return xerror.Newf("xlog", "config",
-				"%s has no effect when xlog.UseHandler is set: level, format and outputs are up to your handler; remove the %s block",
+				"%s has no effect when xlog.UseHandler is set: level, format and outputs are up to your handler; only %s.Fields applies",
 				ConfigKey, ConfigKey)
 		}
 		closer = nil
-		slog.SetDefault(slog.New(newCtxHandler(*h)))
+		slog.SetDefault(withStatic(slog.New(newCtxHandler(*h)), identity(), c.Fields))
 		installed.Store(true)
 		return nil
 	}
@@ -245,7 +301,7 @@ func initXLog(context.Context) error {
 
 // install 按配置建好 logger，并把它装成标准库的全局默认值
 func install(c Config) error {
-	l, cl, err := New(c)
+	l, cl, err := build(c, identity())
 	if err != nil {
 		return err
 	}

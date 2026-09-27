@@ -2,7 +2,7 @@ module github.com/xiaoshicae/xone/xmetric
 
 go 1.25.0
 
-require github.com/xiaoshicae/xone v1.13.0
+require github.com/xiaoshicae/xone v1.14.0
 
 require go.yaml.in/yaml/v3 v3.0.4 // indirect
 

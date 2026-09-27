@@ -45,6 +45,7 @@ XGorm:
 ```
 
 - `https://` 不必再写 `secure=true`；TLS 规则见 [xtls](../../xtls/README.md)。
+- `dial_timeout` 接在 DSN 的 query 末尾，你写的其余参数一个字节都不动（不重排、不重新转义）。
 
 ## API
 

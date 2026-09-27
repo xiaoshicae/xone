@@ -873,7 +873,10 @@ func TestStop_WaitsForHandlersAfterForceClose(t *testing.T) {
 	}()
 	time.Sleep(100 * time.Millisecond) // 等请求真的进了 handler
 
-	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	// 预算的 20% 留给断连之后的收尾（shutdownCtx）：2s 的预算留 400ms，是这里 50ms 收尾的 8 倍。
+	// 原先给 500ms、只留 100ms：-race 加上别的包并行跑时调度一慢就不够，-count=3 下三次挂两次。
+	// 实测正常负载下 Stop 在 Shutdown 到点后约 50ms 返回；余量是留给调度抖动的
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	err := g.Stop(ctx)
 	if !returned.Load() {

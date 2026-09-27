@@ -209,6 +209,11 @@ func (g *XGin) build() {
 		if c.Metric {
 			e.GET(c.MetricPath, serveMetrics)
 		}
+		// gin 默认的 404 / 405 响应体是整条中间件链跑完之后才写的（gin v1.12.0 gin.go 的 serveError），
+		// 访问日志记 bytes_out 时它还没写，实测记成 0 而客户端收到 18 字节。在链里写同样的内容，
+		// 响应一个字节不差，字节数也记得上。放在用户的路由之前：WithRoutes 里的 NoRoute 照样盖得过
+		e.NoRoute(notFound)
+		e.NoMethod(methodNotAllowed)
 		for _, f := range g.routes {
 			f(e)
 		}
@@ -512,4 +517,13 @@ func init() {
 func loadConfig(context.Context) error {
 	_, err := fileConfig()
 	return err
+}
+
+// notFound / methodNotAllowed 写的和 gin 的默认响应一样：Content-Type 是 text/plain，正文一字不差
+func notFound(c *gin.Context) {
+	c.Data(http.StatusNotFound, gin.MIMEPlain, []byte("404 page not found"))
+}
+
+func methodNotAllowed(c *gin.Context) {
+	c.Data(http.StatusMethodNotAllowed, gin.MIMEPlain, []byte("405 method not allowed"))
 }

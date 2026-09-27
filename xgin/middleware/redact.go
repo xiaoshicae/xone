@@ -315,7 +315,9 @@ func redactForm(body string) string {
 			values[k] = []string{Redacted}
 		}
 	}
-	return values.Encode()
+	// Encode 会把遮掉的值也转义成 %2A%2A%2AREDACTED%2A%2A%2A，日志里一眼认不出；
+	// 标记里没有 & 和 =，还原回来不会让键值对的边界变得有歧义
+	return strings.ReplaceAll(values.Encode(), url.QueryEscape(Redacted), Redacted)
 }
 
 // RedactHeaders 脱敏请求头，返回一个可以直接交给 slog 的值。

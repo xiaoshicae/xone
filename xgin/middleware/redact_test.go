@@ -145,6 +145,10 @@ func TestRedactBody_Form(t *testing.T) {
 	if !strings.Contains(got, "user=alice") {
 		t.Errorf("非敏感字段应保留，got=%s", got)
 	}
+	// 遮掉的值原样写成标记，不是转义之后的 %2A%2A%2AREDACTED%2A%2A%2A
+	if !strings.Contains(got, "password="+Redacted) {
+		t.Errorf("遮掉的值应写成 %s，got=%s", Redacted, got)
+	}
 }
 
 func TestRedactBody_FormPercentEncodedKeys(t *testing.T) {

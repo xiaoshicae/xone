@@ -16,33 +16,29 @@ import (
 func DB(t testing.TB) *sql.DB {
 	t.Helper()
 	Require(t)
-	db, err := sql.Open("pgx", PGDSN(PGAddr()))
-	if err != nil {
-		t.Fatalf("open postgres: %v", err)
-	}
-	t.Cleanup(func() { db.Close() })
-	return db
+	return openDB(t, "pgx", "postgres", PGDSN(PGAddr()))
 }
 
 // MySQL 直连 MySQL（不经代理），测试里核对数据用。测试结束时关掉
 func MySQL(t testing.TB) *sql.DB {
 	t.Helper()
 	Require(t)
-	db, err := sql.Open("mysql", MySQLDSN(MySQLAddr()))
-	if err != nil {
-		t.Fatalf("open mysql: %v", err)
-	}
-	t.Cleanup(func() { db.Close() })
-	return db
+	return openDB(t, "mysql", "mysql", MySQLDSN(MySQLAddr()))
 }
 
 // CH 直连 ClickHouse（native 协议，不经代理），测试里核对数据用。测试结束时关掉
 func CH(t testing.TB) *sql.DB {
 	t.Helper()
 	RequireCH(t)
-	db, err := sql.Open("clickhouse", CHDSN(CHAddr()))
+	return openDB(t, "clickhouse", "clickhouse", CHDSN(CHAddr()))
+}
+
+// openDB 用 database/sql 的 driver 打开 dsn，测试结束时关掉；name 只用在失败消息里
+func openDB(t testing.TB, driver, name, dsn string) *sql.DB {
+	t.Helper()
+	db, err := sql.Open(driver, dsn)
 	if err != nil {
-		t.Fatalf("open clickhouse: %v", err)
+		t.Fatalf("open %s: %v", name, err)
 	}
 	t.Cleanup(func() { db.Close() })
 	return db

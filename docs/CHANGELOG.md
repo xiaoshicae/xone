@@ -8,6 +8,13 @@
 
 ## [未发布]
 
+### 新增
+
+- xlog 每条日志默认带上 `service`（`XApp.Name`）、`version`（`XApp.Version`）、`hostname`、`pid`，和 Span 上的身份对得上；
+  没配 XApp 的那两个就不写。实测每行多约 88 字节，时间和分配量不出差别。
+  要去掉哪个，在 `XLog.Fields` 里写成空串。
+- `XLog.Fields`：每条日志都带的静态字段，值可以用 `${VAR}` 从环境变量取（K8s 用 Downward API 注入的 Pod IP、节点名等）。
+
 ### 修复
 
 - xgin 访问日志里，没匹配上路由（404）和方法不对（405）的请求 `bytes_out` 记成了 0：gin 默认的响应正文在中间件链跑完之后才写。

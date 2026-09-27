@@ -47,6 +47,15 @@ type Config struct {
 
 	// File 文件输出
 	File FileConfig `yaml:"File"`
+
+	// Fields 每条日志都带的静态字段。值可以用 ${VAR} 从环境变量取，比如 K8s 用 Downward API
+	// 注入的 POD_NAME、NODE_NAME；${VAR:} 没设时是空串，空串的字段不写。
+	//
+	// 框架默认已带 service（XApp.Name）、version（XApp.Version）、hostname（主机名，
+	// K8s 里就是 Pod 名）、pid。同名的以这里为准，写成空串就是不要这个默认字段。
+	// 这些值启动时算一次、序列化一次：实测默认的 4 个（Pod 名那么长的 hostname）每行多 88 字节，
+	// 时间和分配都量不出差别（BenchmarkHandle_WithIdentityFields 对照 BenchmarkHandle_Bare）。
+	Fields map[string]string `yaml:"Fields"`
 }
 
 // FileConfig 文件输出配置

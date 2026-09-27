@@ -879,3 +879,99 @@ func TestUseHandler_UsableAgainAfterClose(t *testing.T) {
 		t.Error("关掉之后再调 UseHandler 该生效")
 	}
 }
+
+// identityLines 按 yml 跑一遍 xapp、xlog 的启动钩子，打一条日志，读回文件里的每一行
+func identityLines(t *testing.T, yml string) []map[string]any {
+	t.Helper()
+	keepGlobals(t)
+	dir := t.TempDir()
+	xonetest.UseConfigYAML(t, yml+"  Console: false\n  File:\n    Enable: true\n    Path: \""+dir+"\"\n    Name: app.log\n")
+	xonetest.StartHooks(t)
+	slog.Info("hello")
+	return readLines(t, filepath.Join(dir, "app.log"))
+}
+
+func TestIdentity_DefaultFieldsOnEveryLine(t *testing.T) {
+	// 和 Span 上的 service.name / host.name / process.pid 对得上：日志平台里按服务、按实例过滤
+	lines := identityLines(t, "XApp:\n  Name: order-api\n  Version: v1.2.3\nXLog:\n")
+	host, _ := os.Hostname()
+	l := lines[len(lines)-1]
+	for k, want := range map[string]any{
+		"service": "order-api", "version": "v1.2.3", "hostname": host, "pid": float64(os.Getpid()),
+	} {
+		if l[k] != want {
+			t.Errorf("%s 应是 %v，got=%v", k, want, l[k])
+		}
+	}
+	if _, ok := l["host"]; ok {
+		t.Errorf("机器名叫 hostname：host 在 xgin 访问日志里是请求的 Host 头，got=%v", l)
+	}
+}
+
+func TestIdentity_EmptyAppFieldsAreOmitted(t *testing.T) {
+	// 没配 XApp.Name / Version 时不写一个空的 service 进去
+	lines := identityLines(t, "XLog:\n")
+	l := lines[len(lines)-1]
+	if _, ok := l["service"]; ok {
+		t.Errorf("没配 XApp.Name 就不该有 service，got=%v", l)
+	}
+	if _, ok := l["version"]; ok {
+		t.Errorf("没配 XApp.Version 就不该有 version，got=%v", l)
+	}
+	if l["hostname"] == nil || l["pid"] == nil {
+		t.Errorf("hostname、pid 照样有，got=%v", l)
+	}
+}
+
+func TestFields_ExtraOverrideAndDrop(t *testing.T) {
+	t.Setenv("XLOG_TEST_POD", "order-api-7d9f")
+	lines := identityLines(t, "XApp:\n  Name: order-api\nXLog:\n  Fields:\n"+
+		"    pod: ${XLOG_TEST_POD}\n    zone: ${XLOG_TEST_UNSET_ZONE:}\n    service: renamed\n    hostname: \"\"\n")
+	l := lines[len(lines)-1]
+	if l["pod"] != "order-api-7d9f" {
+		t.Errorf("Fields 的值该从环境变量取，got=%v", l["pod"])
+	}
+	if _, ok := l["zone"]; ok {
+		t.Errorf("${VAR:} 没设时是空串，空串的字段不写，got=%v", l)
+	}
+	if l["service"] != "renamed" {
+		t.Errorf("同名的以 Fields 为准，got=%v", l["service"])
+	}
+	if _, ok := l["hostname"]; ok {
+		t.Errorf("写成空串就是不要这个默认字段，got=%v", l)
+	}
+}
+
+func TestNew_OnlyFieldsNoIdentity(t *testing.T) {
+	// New 是纯构造器：只带 cfg.Fields，不去读 XApp、主机名
+	c, path := fileCfg(t)
+	c.Fields = map[string]string{"b": "2", "a": "1"}
+	l, cl, err := New(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l.Info("hello")
+	cl.Close()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	line := string(b)
+	if !strings.Contains(line, `"a":"1","b":"2"`) || strings.Contains(line, "hostname") {
+		t.Errorf("New 只带 Fields（按名字排序），got=%s", line)
+	}
+}
+
+func TestUseHandler_CarriesIdentityAndFields(t *testing.T) {
+	// 换了后端照样带身份字段；Fields 不归 handler 管，写了也不算冲突
+	keepGlobals(t)
+	var buf bytes.Buffer
+	UseHandler(slog.NewJSONHandler(&buf, nil))
+	xonetest.UseConfigYAML(t, "XApp:\n  Name: order-api\nXLog:\n  Fields:\n    zone: az1\n")
+	xonetest.StartHooks(t)
+	slog.Info("hello")
+	out := buf.String()
+	if !strings.Contains(out, `"service":"order-api"`) || !strings.Contains(out, `"zone":"az1"`) || !strings.Contains(out, `"pid":`) {
+		t.Errorf("自己的 handler 也该带上身份字段和 Fields，got=%s", out)
+	}
+}

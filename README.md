@@ -23,6 +23,12 @@
 go get github.com/xiaoshicae/xone@v1.13.0 github.com/xiaoshicae/xone/xgin@v1.13.0
 ```
 
+升级时同样把用到的每个 xone 模块都列上、写同一个版本号，如
+`go get github.com/xiaoshicae/xone@vX.Y.Z github.com/xiaoshicae/xone/xgin@vX.Y.Z`。
+只升核心不会带上集成：Go 的 MVS 让 xgin 留在旧版本；反过来只升一个集成，会把它依赖的核心
+（以及 xmetric、xtrace）一起拉上去——两种情况都会让各模块版本对不上。
+别用 `go get -u ./...` 来做这件事，它连所有间接依赖都一起升了。
+
 **2. 写配置** `conf/application.yml`（只写要改的，其余用默认值）
 
 ```yaml

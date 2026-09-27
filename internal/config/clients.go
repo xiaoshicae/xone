@@ -28,14 +28,9 @@ func UnmarshalClients[C any](key string, defaults func() C) (map[string]C, error
 	mu.Lock()
 	defer mu.Unlock()
 
-	if err := ensureLocked(); err != nil {
+	node, err := sectionLocked(key)
+	if err != nil || node == nil {
 		return nil, err
-	}
-	claimed[key] = true
-
-	node, ok := sections[key]
-	if !ok || isEmptyNode(node) {
-		return nil, nil
 	}
 	out, err := decodeClients(node, defaults)
 	if err != nil {
@@ -123,10 +118,8 @@ func valueOf(node *yaml.Node, key string) *yaml.Node {
 	if node.Kind != yaml.MappingNode {
 		return nil
 	}
-	for i := 0; i+1 < len(node.Content); i += 2 {
-		if node.Content[i].Value == key {
-			return node.Content[i+1]
-		}
+	if i := keyIndex(node, key); i >= 0 {
+		return node.Content[i+1]
 	}
 	return nil
 }

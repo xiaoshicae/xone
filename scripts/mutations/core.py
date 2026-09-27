@@ -41,7 +41,7 @@ mutate("打开时就清理一次过期文件", "xlog/rotate.go", ".", "TestRotat
 mutate("CtxWithKV 不写回父 ctx", "xlog/ctx.go", ".", "TestCtxWithKV",
        swap('return context.WithValue(ctx, ctxScopeKey{}, parent.copyWith(kvs))', 'parent.addAll(kvs)\n\treturn context.WithValue(ctx, ctxScopeKey{}, parent)'))
 mutate("CtxWithKV 带着父 ctx 已有的字段", "xlog/ctx.go", ".", "TestCtxWithKV",
-       swap('\tfor k, v := range s.kv {\n\t\tc.kv[k] = v\n\t}\n\tfor k, v := range kvs {', '\tfor k, v := range kvs {'))
+       swap('\tmaps.Copy(c.kv, s.kv)\n', ''))
 mutate("片段也有 profile 变体", "internal/config/source.go", ".", "TestLoad",
        swap('nested, err := fileSet(target, d, false, profiles, seen, depth+1)',
      'nested, err := withImports(target, d, profiles, seen, depth+1)'))
@@ -340,19 +340,16 @@ mutate("xapp 解进新的默认值再换上", "xapp/xapp.go", ".", "TestLoadConf
 # 档位是使用者理解生命周期的全部依据：日志最先起、链路早于客户端、
 # 服务最后起。排错一档，表现是「实例比用它的东西晚就绪」，别处都测不出来
 mutate("启动按档位升序", "internal/hook/hook.go", ".", "TestStartOrder|TestStopOrder|TestAddStart",
-       swap('sort.SliceStable(out, func(i, j int) bool { return out[i].Stage < out[j].Stage })',
-     'sort.SliceStable(out, func(i, j int) bool { return out[i].Name < out[j].Name })'))
+       swap('return cmp.Compare(a.Stage, b.Stage)', 'return cmp.Compare(a.Name, b.Name)'))
 # 同档内谁先登记谁先起。换成不稳定排序之后顺序会随实现变化，
 # 而使用者是照着 import 的先后去理解它的
-mutate("同档内保持登记顺序", "internal/hook/hook.go", ".", "TestStartOrder", swap('sort.SliceStable(out,', 'sort.Slice(out,'))
+mutate("同档内保持登记顺序", "internal/hook/hook.go", ".", "TestStartOrder", swap('slices.SortStableFunc(out,', 'slices.SortFunc(out,'))
 # 「声明一个档位就同时做到先启动、后关闭」这条承诺，全靠停止顺序是整体逆序
 mutate("停止顺序是启动顺序的整体镜像", "internal/hook/hook.go", ".", "TestStopOrder",
        swap('''\tout := startOrder(in)
-\tfor i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
-\t\tout[i], out[j] = out[j], out[i]
-\t}
-\treturn out''', '''\tout := append([]Entry(nil), in...)
-\tsort.SliceStable(out, func(i, j int) bool { return out[i].Stage > out[j].Stage })
+\tslices.Reverse(out)
+\treturn out''', '''\tout := slices.Clone(in)
+\tslices.SortStableFunc(out, func(a, b Entry) int { return cmp.Compare(b.Stage, a.Stage) })
 \treturn out'''))
 # 配对键取末段包名的话，两个末段同名的包会被当成同一个：使用者自己包一层
 # 叫 xlog 的包很常见，撞上之后它的启动钩子一失败，框架 xlog 的停止钩子
@@ -365,8 +362,11 @@ mutate("不写档位就落在业务那一档", "xhook/xhook.go", ".", "TestBefor
        swap('o := options{stage: StageBusiness}', 'o := options{stage: StageClient}'))
 # 停止钩子只在和它配对的启动钩子成功之后执行：不然启动到一半失败时，后面那些
 # 资源根本没建起来，调它们的停止钩子只会在一堆空值上出错
-mutate("启动失败的那一对不执行停止钩子", "xone.go", ".", "TestRun_InitFailureRollsBackInitialized",
+mutate("启动失败的那一对不执行停止钩子", "internal/hook/hook.go", ".", "TestStopAfter|TestRun_InitFailureRollsBackInitialized",
        swap('e.Pair != 0 && !started[e.Pair] {', 'e.Pair != 0 && !started[e.Pair] && false {'))
+# 过滤写在 hook.StopAfter 里，两个调用点各打一条：绕开它的话过滤本身再对也没用
+mutate("Run 关闭时按启动结果过滤停止钩子", "xone.go", ".", "TestRun_InitFailureRollsBackInitialized",
+       swap('hook.StopAfter(started)', 'hook.Stop()'))
 # 之前没有启动钩子的停止钩子总会执行。Runnable 被拦下、配置读不出来时从前直接返回，
 # 日志 flush 这类钩子一次都没跑。两条提前返回的路各打一条
 mutate("Runnable 写错时不依赖启动的停止钩子照样执行", "xone.go", ".", "TestRun_RunnableInvalid_UnpairedStopHooksStillRun",
@@ -388,7 +388,7 @@ mutate("配上对时才继承档位", "internal/hook/hook.go", ".", "TestAddStop
        swap('\t\t\tif e.Inherit {\n\t\t\t\te.Stage = start[i].Stage\n\t\t\t}\n', ''))
 # 测试辅助和 Run 是同一条规矩：启动失败的那一对不跑停止钩子，起来了的照样关
 mutate("xonetest 只关配对的启动钩子成功了的", "xonetest/xonetest.go", ".", "TestStartHooks",
-       swap('\t\t\tif e.Pair != 0 && !started[e.Pair] {', '\t\t\tif false {'))
+       swap('hook.StopAfter(started)', 'hook.Stop()'))
 mutate("xonetest 记下成功了的启动钩子", "xonetest/xonetest.go", ".", "TestStartHooks",
        swap('\t\tstarted[e.Seq] = true\n', ''))
 mutate("xonetest 结束时清掉配置", "xonetest/xonetest.go", ".", "TestUseConfig",
@@ -459,24 +459,30 @@ mutate("关实例先摘再关", "internal/xclient/xclient.go", ".", "TestClose",
 # 不再 Unmarshal，于是这个 key 没人认领，而 Unclaimed 报出来的两条原因
 # （拼错了、忘了 import）都不成立，照着查什么都查不出来
 mutate("问过配置就算认领了它", "internal/config/config.go", ".", "TestHas|TestUnclaimed",
-       swap('''\tif ensureLocked() != nil {
-\t\treturn false
+       swap('''\t\treturn nil, err
 \t}
 \tclaimed[key] = true
-\tnode, ok := sections[key]''', '''\tif ensureLocked() != nil {
-\t\treturn false
+\tif node := sections[key];''', '''\t\treturn nil, err
 \t}
-\tnode, ok := sections[key]'''))
+\tif node := sections[key];'''))
+# 认领记在 sectionLocked 里，这一条打在调用点上：Has 绕开它自己去查，就回到了当初那个 bug 的形状
+mutate("Has 也记一笔认领", "internal/config/config.go", ".", "TestHas|TestUnclaimed",
+       swap('\tnode, err := sectionLocked(key)\n\treturn err == nil && node != nil',
+            '\terr := ensureLocked()\n\treturn err == nil && !isEmptyNode(sections[key])'))
 # 要防的是：读得早就静默拿到空值，服务带着一套默认配置正常起来。
 # 现在第一次读就先加载，这条变异把它改回「没加载就当没配」
 mutate("读得早也拿到文件里的值", "internal/config/config.go", ".", "TestUnmarshal_LoadsFirstIfNotLoaded|TestRun_ReadingConfigBeforeRunGetsFileValues",
        swap('''\tif err := ensureLocked(); err != nil {
-\t\treturn err
+\t\treturn nil, err
 \t}
 \tclaimed[key] = true''', '''\tif !ready {
-\t\treturn nil
+\t\treturn nil, nil
 \t}
 \tclaimed[key] = true'''))
+# 调用点：Unmarshal 绕开 sectionLocked 直接查 sections 的话，没加载时同样静默拿到空值
+mutate("Unmarshal 读之前先加载", "internal/config/config.go", ".", "TestUnmarshal_LoadsFirstIfNotLoaded|TestRun_ReadingConfigBeforeRunGetsFileValues",
+       swap('\tnode, err := sectionLocked(key)\n\tif err != nil {\n\t\treturn err\n\t}',
+            '\tnode, err := sections[key], error(nil)\n\tif err != nil {\n\t\treturn err\n\t}'))
 # 从前没有配置文件时配置一直停在「还没加载」，每个集成读配置都报错，
 # 一个不需要任何配置的服务根本起不来
 mutate("没有配置文件时全用默认值", "internal/config/config.go", ".", "TestEnsure_UsesDefaultsWhenNoConfigFile|TestRun_StartsWithDefaultsWhenNoConfigFile",

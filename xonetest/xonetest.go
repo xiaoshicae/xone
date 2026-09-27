@@ -57,10 +57,7 @@ func StartHooks(t testing.TB) {
 	t.Helper()
 	started := map[int]bool{}
 	t.Cleanup(func() {
-		for _, e := range hook.Stop() {
-			if e.Pair != 0 && !started[e.Pair] {
-				continue // 和它配对的启动钩子没跑成功，资源不存在
-			}
+		for _, e := range hook.StopAfter(started) {
 			if err := e.Run(context.Background()); err != nil {
 				t.Errorf("xonetest: stop hook %s: %v", e.Name, err)
 			}

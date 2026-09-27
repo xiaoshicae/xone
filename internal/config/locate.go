@@ -18,16 +18,11 @@ const (
 	ProfileEnvKey = "XONE_PROFILE"
 )
 
-// Profiles 决定激活哪些 profile：启动参数 > 环境变量 > 配置文件里的 XApp.Profiles。
+// profiles 决定激活哪些 profile：启动参数 > 环境变量 > 配置文件里的 XApp.Profiles，
+// 另外说明是从哪来的（XONE_DEBUG 打出来）。
 //
 // 与 Spring 一致：靠后的 profile 压过靠前的，
 // 所以 --profile=base,prod 里 prod 的值最终生效。
-func Profiles(fromFile []string) []string {
-	p, _ := profiles(fromFile)
-	return p
-}
-
-// profiles 同 Profiles，另外说明是从哪来的（XONE_DEBUG 打出来）
 func profiles(fromFile []string) ([]string, string) {
 	if v := fromArgs(ProfileArgKey); v != "" {
 		return splitProfiles(v), "--" + ProfileArgKey
@@ -59,15 +54,9 @@ var SearchPaths = []string{
 	"application.yaml",
 }
 
-// Locate 定位配置文件：启动参数 > 环境变量 > 约定路径。
+// locate 定位配置文件：启动参数 > 环境变量 > 约定路径，另外说明是怎么找到的（XONE_DEBUG 打出来）。
 //
 // 都找不到时返回空串，由调用方决定是报错还是全用默认值起。
-func Locate() string {
-	p, _ := locate()
-	return p
-}
-
-// locate 同 Locate，另外说明是怎么找到的（XONE_DEBUG 打出来）
 func locate() (path, from string) {
 	if v := fromArgs(ArgKey); v != "" {
 		return v, "--" + ArgKey

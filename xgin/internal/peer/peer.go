@@ -6,6 +6,6 @@ package peer
 
 // TrustedKey gin.Context 里的 key，值为 true 表示直连的对端在 XGin.TrustedProxies 里。
 //
-// 只在可信时才写：绝大多数服务不配 TrustedProxies，不必为每个请求付一次
-// 写 gin.Context.Keys 的分配。读的一侧没写过就是 false，正好是安全的那一边。
+// 只在可信时才写：对端不可信的请求不必付一次写 gin.Context.Keys 的分配。
+// 读的一侧没写过就是 false，正好是安全的那一边——漏写只会少信，不会多信。
 const TrustedKey = "xone/xgin.trusted_peer"

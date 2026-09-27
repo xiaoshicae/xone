@@ -175,6 +175,11 @@ func entryOf[T any](p Processor[T]) entry[T] {
 	return s
 }
 
+// fail 把这一步出的错记成 StepError
+func (s entry[T]) fail(err error) *StepError {
+	return &StepError{Processor: s.name, Dependency: s.dep, Err: err}
+}
+
 // typeName 没写 Name 的步骤用它的类型名：&扣券{} → 扣券
 func typeName(p any) string {
 	t := reflect.TypeOf(p)
@@ -259,7 +264,7 @@ func (f *Flow[T]) Execute(ctx context.Context, data T) *Result {
 			continue
 		}
 
-		se := &StepError{Processor: s.name, Dependency: s.dep, Err: err}
+		se := s.fail(err)
 
 		if s.dep == Weak {
 			res.Skipped = append(res.Skipped, se)
@@ -305,11 +310,8 @@ func (f *Flow[T]) rollback(ctx context.Context, data T, done []entry[T], res *Re
 
 		// 预算耗尽也要把剩下的逐个记下来：调用方得知道还有哪些资源悬着
 		if err := rbCtx.Err(); err != nil {
-			res.RollbackErrors = append(res.RollbackErrors, &StepError{
-				Processor:  s.name,
-				Dependency: s.dep,
-				Err:        fmt.Errorf("rollback budget exhausted, this step never ran: %w", err),
-			})
+			res.RollbackErrors = append(res.RollbackErrors,
+				s.fail(fmt.Errorf("rollback budget exhausted, this step never ran: %w", err)))
 			continue
 		}
 
@@ -319,9 +321,7 @@ func (f *Flow[T]) rollback(ctx context.Context, data T, done []entry[T], res *Re
 		f.notifyStep(rbCtx, m, true, s, err, stepStart)
 
 		if err != nil {
-			res.RollbackErrors = append(res.RollbackErrors, &StepError{
-				Processor: s.name, Dependency: s.dep, Err: err,
-			})
+			res.RollbackErrors = append(res.RollbackErrors, s.fail(err))
 		}
 	}
 }

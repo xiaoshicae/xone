@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"slices"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -127,7 +128,7 @@ func (g *XGin) WithRecoverFunc(f gin.RecoveryFunc) *XGin {
 // 装配只有一次：之后再 WithConfig / WithRoutes / WithMiddleware / WithRecoverFunc
 // 就不生效了，Start 也沿用这一次的配置。
 //
-// 配置不合法时照样返回一个 engine，按默认值装配（不信任何代理、8MB 的 multipart 阈值，
+// 配置不合法时照样返回一个 engine，按默认值装配（只信私有网段的代理、8MB 的 multipart 阈值，
 // 都是偏安全的那一侧），并记一条告警。那个错误由 Start 返回，xone.Run 在启动时就会报出来。
 func (g *XGin) Engine() *gin.Engine {
 	g.build()
@@ -182,7 +183,7 @@ func (g *XGin) build() {
 			e.Use(g.markTrustedPeer, middleware.Propagate())
 		}
 		if c.Log {
-			skip := append([]string{}, c.LogSkipPaths...)
+			skip := slices.Clone(c.LogSkipPaths)
 			if c.Metric {
 				// 指标端点会被抓取系统按秒轮询，记日志纯属刷屏
 				skip = append(skip, c.MetricPath)
@@ -284,12 +285,7 @@ func trustedAddr(ps []netip.Prefix, ip string) bool {
 		return false
 	}
 	a = a.Unmap()
-	for _, p := range ps {
-		if p.Contains(a) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(ps, func(p netip.Prefix) bool { return p.Contains(a) })
 }
 
 // cfg 这个实例该用的配置：WithConfig 给的那份，不给就是配置文件里的 XGin 块。

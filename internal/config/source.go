@@ -295,31 +295,38 @@ func takeFromApp(doc *yaml.Node, key string) *yaml.Node {
 	if root.Kind != yaml.MappingNode {
 		return nil
 	}
-	for i := 0; i+1 < len(root.Content); i += 2 {
-		app := root.Content[i+1]
-		if root.Content[i].Value != AppKey || app.Kind != yaml.MappingNode {
-			continue
-		}
-		val := removeKey(app, key)
-		if val != nil && len(app.Content) == 0 {
-			root.Content = append(root.Content[:i], root.Content[i+2:]...)
-		}
-		return val
+	i := keyIndex(root, AppKey)
+	if i < 0 || root.Content[i+1].Kind != yaml.MappingNode {
+		return nil
 	}
-	return nil
+	app := root.Content[i+1]
+	val := removeKey(app, key)
+	if val != nil && len(app.Content) == 0 {
+		root.Content = append(root.Content[:i], root.Content[i+2:]...)
+	}
+	return val
 }
 
 // removeKey 取出 mapping m 里的某个 key 并把它摘掉，没有则返回 nil
 func removeKey(m *yaml.Node, key string) *yaml.Node {
-	for i := 0; i+1 < len(m.Content); i += 2 {
-		if m.Content[i].Value != key {
-			continue
-		}
-		val := m.Content[i+1]
-		m.Content = append(m.Content[:i], m.Content[i+2:]...)
-		return val
+	i := keyIndex(m, key)
+	if i < 0 {
+		return nil
 	}
-	return nil
+	val := m.Content[i+1]
+	m.Content = append(m.Content[:i], m.Content[i+2:]...)
+	return val
+}
+
+// keyIndex mapping m 里 key 所在的下标（值在 i+1），没有则返回 -1。
+// 重复的 key 在解析时就拦下了（见 checkDuplicates），所以第一个就是唯一的那个
+func keyIndex(m *yaml.Node, key string) int {
+	for i := 0; i+1 < len(m.Content); i += 2 {
+		if m.Content[i].Value == key {
+			return i
+		}
+	}
+	return -1
 }
 
 // profilePath 由 application.yml 推出 application-prod.yml，目录和扩展名都跟着原文件

@@ -16,7 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -47,7 +47,7 @@ var (
 
 // Ensure 确保配置已经加载，由 xone.Run 在启动时调用。
 //
-// path 是 WithConfigPath 点名要的文件，留空按 Locate 的顺序找。已经有人提前
+// path 是 WithConfigPath 点名要的文件，留空按 locate 的顺序找。已经有人提前
 // 读过配置（于是已经加载过）时沿用那一份：提前读到的值和之后生效的必须是
 // 同一份。所以点名的文件和它不是同一个时报错，而不是悄悄换一份。
 func Ensure(path string, log *slog.Logger) error {
@@ -87,7 +87,7 @@ func sameFile(a, b string) bool {
 	return errA == nil && errB == nil && os.SameFile(infoA, infoB)
 }
 
-// ensureLocked 第一次读的时候按 Locate 的顺序找文件、加载。调用方持有 mu
+// ensureLocked 第一次读的时候按 locate 的顺序找文件、加载。调用方持有 mu
 func ensureLocked() error {
 	if ready || failed != nil {
 		return failed
@@ -118,7 +118,7 @@ func loadLocked(path string, log *slog.Logger) error {
 		sections, claimed, ready = nil, map[string]bool{}, true
 		return nil
 	case !xutil.FileExist(path):
-		// Locate 只在文件确实存在时才返回约定路径，所以走到这里的一定是点名要的
+		// locate 只在文件确实存在时才返回约定路径，所以走到这里的一定是点名要的
 		failed = xerror.Newf("xconfig", "config", "config file does not exist: %s", path)
 		return failed
 	}
@@ -213,13 +213,11 @@ func Unmarshal(key string, into any) error {
 	mu.Lock()
 	defer mu.Unlock()
 
-	if err := ensureLocked(); err != nil {
+	node, err := sectionLocked(key)
+	if err != nil {
 		return err
 	}
-	claimed[key] = true
-
-	node, ok := sections[key]
-	if !ok || isEmptyNode(node) {
+	if node == nil {
 		return nil // 没配这一块，或者写了个空块，都保持默认值
 	}
 	if err := DecodeStrict(node, into); err != nil {
@@ -250,12 +248,25 @@ func Unmarshal(key string, into any) error {
 func Has(key string) bool {
 	mu.Lock()
 	defer mu.Unlock()
-	if ensureLocked() != nil {
-		return false
+	node, err := sectionLocked(key)
+	return err == nil && node != nil
+}
+
+// sectionLocked 取出 key 那一段，调用方持有 mu。Unmarshal、Has、UnmarshalClients 共用。
+//
+// 三步的顺序是有意的：还没加载就先加载（读得早也拿到文件里的值）；
+// 加载成功就记一笔认领——问过就算有人要，哪怕这一块没配或者是空的；
+// 最后才看有没有写。没配这一块、或者写了个空块时返回 nil。
+// 加载失败时原样返回那个错误，不记认领。
+func sectionLocked(key string) (*yaml.Node, error) {
+	if err := ensureLocked(); err != nil {
+		return nil, err
 	}
 	claimed[key] = true
-	node, ok := sections[key]
-	return ok && !isEmptyNode(node)
+	if node := sections[key]; !isEmptyNode(node) {
+		return node, nil
+	}
+	return nil, nil
 }
 
 // Unclaimed 返回配置文件里没有任何人读过的顶层 key，按名字排序。
@@ -272,7 +283,7 @@ func Unclaimed() []string {
 			out = append(out, key)
 		}
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 
@@ -380,7 +391,8 @@ func expand(n *yaml.Node, missing *[]string, values map[*yaml.Node]string) {
 // 这不会让环境变量的值改变 YAML 结构：重新判定的对象仍是这一个标量，
 // 值里的冒号、换行、星号都留在标量内部。
 //
-// 两种情况保持原样：
+// 分三种情况：
+//
 // 使用者显式加了引号或写了标签（Style 非 0）时保持原样：那是明确的
 // 「按字符串处理」，数字形态的密码、版本号都指望它。
 //
@@ -393,7 +405,7 @@ func expand(n *yaml.Node, missing *[]string, values map[*yaml.Node]string) {
 // 合并发生在展开之前，所以这里的「没写」落回的是结构体默认值，
 // 不是低优先级文件里写的那个值。
 //
-// 除此之外展开出来的值永远不是 null：变量的值恰好是 null、~、Null 这类
+// 其余的清掉标签重新判定，但展开出来的值永远不是 null：变量的值恰好是 null、~、Null 这类
 // YAML 的 null 写法时，重新判定会把它当成「没写」，字段悄悄留在默认值上。
 // 那种情况固定成 !!str——字符串字段拿到字面量，别的字段报一个看得懂的类型错误。
 func retag(n *yaml.Node) {

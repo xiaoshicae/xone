@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"maps"
 	"net/http"
 	"net/url"
 	"slices"
@@ -45,12 +46,12 @@ var defaultHeaders = []string{
 	"Authorization", "Proxy-Authorization", "Cookie", "Set-Cookie", "X-Api-Key", "X-Auth-Token",
 }
 
+// 两张表都是写时复制：追加时整张换一份新的，已经交出去的那份从此不再改动，
+// 读的一侧拿到之后不用再持锁。
 var (
-	mu          sync.RWMutex
-	extraFields []string
-	extraHead   []string
-	fieldWords  []string // 规范化之后的敏感词：默认词表 + AddSensitiveFields
-	headerSet   map[string]bool
+	mu         sync.RWMutex
+	fieldWords = normalizeAll(defaultWords) // 规范化之后的敏感词：默认词表 + AddSensitiveFields
+	headerSet  = lowerSet(defaultHeaders)   // 小写的请求头名单：默认名单 + AddSensitiveHeaders
 )
 
 // AddSensitiveFields 追加敏感词，大小写与分隔符不敏感。
@@ -60,8 +61,8 @@ var (
 func AddSensitiveFields(fields ...string) {
 	mu.Lock()
 	defer mu.Unlock()
-	extraFields = append(extraFields, fields...)
-	fieldWords = nil
+	// Clip 之后 append 一定另起一个底层数组，不会写进别人手上那份
+	fieldWords = append(slices.Clip(fieldWords), normalizeAll(fields)...)
 }
 
 // AddSensitiveHeaders 追加按名字精确遮掉的请求头，大小写不敏感。
@@ -71,51 +72,45 @@ func AddSensitiveFields(fields ...string) {
 func AddSensitiveHeaders(headers ...string) {
 	mu.Lock()
 	defer mu.Unlock()
-	extraHead = append(extraHead, headers...)
-	headerSet = nil
+	set := maps.Clone(headerSet)
+	for _, h := range headers {
+		set[strings.ToLower(h)] = true
+	}
+	headerSet = set
 }
 
-// words 取规范化之后的敏感词
+// words 取规范化之后的敏感词。拿到的那份不会再变，只读
 func words() []string {
 	mu.RLock()
-	w := fieldWords
-	mu.RUnlock()
-	if w != nil {
-		return w
-	}
-
-	mu.Lock()
-	defer mu.Unlock()
-	if fieldWords == nil {
-		all := append(append([]string{}, defaultWords...), extraFields...)
-		fieldWords = make([]string, 0, len(all))
-		for _, f := range all {
-			if n := normalize(f); n != "" {
-				fieldWords = append(fieldWords, n)
-			}
-		}
-	}
+	defer mu.RUnlock()
 	return fieldWords
 }
 
+// headers 取小写的请求头名单。拿到的那份不会再变，只读
 func headers() map[string]bool {
 	mu.RLock()
-	set := headerSet
-	mu.RUnlock()
-	if set != nil {
-		return set
-	}
+	defer mu.RUnlock()
+	return headerSet
+}
 
-	mu.Lock()
-	defer mu.Unlock()
-	if headerSet == nil {
-		all := append(append([]string{}, defaultHeaders...), extraHead...)
-		headerSet = make(map[string]bool, len(all))
-		for _, h := range all {
-			headerSet[strings.ToLower(h)] = true
+// normalizeAll 逐个规范化，丢掉规范化之后为空的（全是分隔符的词会匹配一切）
+func normalizeAll(fields []string) []string {
+	out := make([]string, 0, len(fields))
+	for _, f := range fields {
+		if n := normalize(f); n != "" {
+			out = append(out, n)
 		}
 	}
-	return headerSet
+	return out
+}
+
+// lowerSet 转成小写的集合
+func lowerSet(names []string) map[string]bool {
+	set := make(map[string]bool, len(names))
+	for _, h := range names {
+		set[strings.ToLower(h)] = true
+	}
+	return set
 }
 
 // isSeparator 比较字段名时忽略的字符
@@ -172,12 +167,7 @@ func foldRune(r rune) rune {
 // 再 Contains 之后是 2.4µs、2.5ms / 2.9ms，代价是多一份 body 大小的分配。
 func sensitive(name string, ws []string) bool {
 	n := normalize(name)
-	for _, w := range ws {
-		if strings.Contains(n, w) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(ws, func(w string) bool { return strings.Contains(n, w) })
 }
 
 // newlines 把换行去掉，免得一条日志被撑成好几行
@@ -352,15 +342,11 @@ func RedactHeaders(h http.Header) slog.Value {
 	attrs := make([]slog.Attr, 0, len(keys))
 	for _, k := range keys {
 		name := strings.ToLower(k) // 两张名单都按小写查，转一次就够了
-		if set[name] {
+		if set[name] || sensitive(k, ws) {
 			attrs = append(attrs, slog.String(k, Redacted))
 			continue
 		}
-		if sensitive(k, ws) {
-			attrs = append(attrs, slog.String(k, Redacted))
-			continue
-		}
-		v := headerValue(h[k])
+		v := strings.Join(h[k], ", ") // 单值时原样返回、不分配，绝大多数头都是单值
 		if urlHeaders[name] {
 			v = stripQuery(v)
 		}
@@ -392,16 +378,4 @@ func stripQuery(u string) string {
 		return u[:i]
 	}
 	return u
-}
-
-// headerValue 把一个头的多个取值拼成一个字符串
-func headerValue(v []string) string {
-	switch len(v) {
-	case 0:
-		return ""
-	case 1:
-		return v[0] // 绝大多数头都是单值，这一支不分配
-	default:
-		return strings.Join(v, ", ")
-	}
 }

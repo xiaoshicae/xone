@@ -3,6 +3,7 @@ package xlog
 import (
 	"context"
 	"log/slog"
+	"slices"
 	"sync/atomic"
 )
 
@@ -51,22 +52,16 @@ func AddObserver(o Observer) {
 	}
 	for {
 		old := observers.Load()
-		next := make([]Observer, 0, lenOf(old)+1)
+		var cur []Observer
 		if old != nil {
-			next = append(next, *old...)
+			cur = *old
 		}
-		next = append(next, o)
+		// Clip 之后 append 一定另起一个底层数组：别的协程可能正在 notify 里读 *old
+		next := append(slices.Clip(cur), o)
 		if observers.CompareAndSwap(old, &next) {
 			return
 		}
 	}
-}
-
-func lenOf(p *[]Observer) int {
-	if p == nil {
-		return 0
-	}
-	return len(*p)
 }
 
 // notify 把记录交给所有观察者，逐个隔离 panic

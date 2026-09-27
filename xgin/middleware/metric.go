@@ -37,13 +37,7 @@ func Metric() gin.HandlerFunc {
 		// 用 defer 记：即使 panic 穿过本层（比如用户自定义的 RecoveryFunc 自己炸了），
 		// 这个请求也仍然会被计入，不会在错误率里凭空消失
 		defer func() {
-			// 用路由模板而不是真实路径：按真实路径打标签会让时间序列
-			// 随 URL 里的 id 无限增长，Prometheus 会被撑垮
-			route := c.FullPath()
-			if route == "" {
-				route = "unmatched"
-			}
-			method, code := normalizeMethod(c.Request.Method), strconv.Itoa(status(c))
+			route, method, code := routeOf(c), normalizeMethod(c.Request.Method), strconv.Itoa(status(c))
 
 			total.WithLabelValues(method, route, code).Inc()
 			// 用秒而不是毫秒：毫秒取整会把 0.4ms 的请求记成 0

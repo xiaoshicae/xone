@@ -5,6 +5,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -138,18 +139,11 @@ func Log(opts ...LogOption) gin.HandlerFunc {
 		defer func() {
 			elapsed := time.Since(start)
 
-			// 没匹配上路由时和指标、Span 一样记 unmatched：填真实路径的话，
-			// 日志里分不出 /nope 是一个路由还是一次 404。真实路径在 path 里
-			route := c.FullPath()
-			if route == "" {
-				route = "unmatched"
-			}
-
 			// 直接给 slog.Attr，不给交替的 key、value：后者每个值都要先装进 any
 			// 再由 slog 拆出来，实测每条访问日志多 6 次分配（记 body 时 8 次）
 			attrs := []slog.Attr{
 				slog.String("method", c.Request.Method),
-				slog.String("route", route),
+				slog.String("route", routeOf(c)), // 没匹配上时记 unmatched，真实路径在 path 里
 				// 只记 Path，不含查询串：GET /login?token=... 这种请求里
 				// 凭证就在 URL 上。换成 RequestURI() 或 URL.String() 看着
 				// 都像是「把日志记全一点」，实际是把凭证明文写进日志
@@ -206,12 +200,7 @@ func (o *logOptions) shouldSkip(path string) bool {
 	if o.skipExact[path] {
 		return true
 	}
-	for _, p := range o.skipPrefix {
-		if strings.HasPrefix(path, p) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(o.skipPrefix, func(p string) bool { return strings.HasPrefix(path, p) })
 }
 
 // isText 判断是不是适合直接记进日志的文本类型

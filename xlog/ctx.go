@@ -2,6 +2,7 @@ package xlog
 
 import (
 	"context"
+	"maps"
 	"sync"
 	"sync/atomic"
 )
@@ -40,9 +41,7 @@ func (s *scope) addAll(kvs map[string]any) {
 	if s.kv == nil {
 		s.kv = make(map[string]any, max(len(kvs), scopeInitCap))
 	}
-	for k, v := range kvs {
-		s.kv[k] = v
-	}
+	maps.Copy(s.kv, kvs)
 }
 
 // each 在读锁内遍历，避免为每一行日志复制一次 map
@@ -59,12 +58,8 @@ func (s *scope) copyWith(kvs map[string]any) *scope {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	c := &scope{kv: make(map[string]any, max(len(s.kv)+len(kvs), scopeInitCap))}
-	for k, v := range s.kv {
-		c.kv[k] = v
-	}
-	for k, v := range kvs {
-		c.kv[k] = v
-	}
+	maps.Copy(c.kv, s.kv)
+	maps.Copy(c.kv, kvs)
 	return c
 }
 

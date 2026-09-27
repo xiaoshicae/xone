@@ -255,7 +255,7 @@ func TestRedactBody_EmptyBody(t *testing.T) {
 func TestAddSensitiveFields(t *testing.T) {
 	reset := func() {
 		mu.Lock()
-		extraFields, fieldWords = nil, nil
+		fieldWords = normalizeAll(defaultWords)
 		mu.Unlock()
 	}
 	reset()
@@ -308,8 +308,9 @@ func TestRedactHeaders_LoggedAsNestedObjectNotEscapedString(t *testing.T) {
 
 func TestRedactHeaders_JoinsMultiValueHeader(t *testing.T) {
 	// 同一个字段名忽而是字符串忽而是数组，日志系统建索引时会直接拒收
-	got := headerLog(http.Header{"X-Multi": {"a", "b"}})
-	if !strings.Contains(got, `"X-Multi":"a, b"`) {
+	// 单值原样、没有值的是空串
+	got := headerLog(http.Header{"X-Multi": {"a", "b"}, "X-One": {"c"}, "X-None": {}})
+	if !strings.Contains(got, `{"X-Multi":"a, b","X-None":"","X-One":"c"}`) {
 		t.Errorf("多值应拼成一个字符串，got=%s", got)
 	}
 }
@@ -336,7 +337,7 @@ func TestRedactHeaders_MasksAddedSensitiveHeaders(t *testing.T) {
 	// 「按名单遮」那一段代码唯一的看守——默认名单里的头都带着敏感词
 	reset := func() {
 		mu.Lock()
-		extraHead, headerSet = nil, nil
+		headerSet = lowerSet(defaultHeaders)
 		mu.Unlock()
 	}
 	reset()

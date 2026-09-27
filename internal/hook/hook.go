@@ -8,8 +8,9 @@
 package hook
 
 import (
+	"cmp"
 	"context"
-	"sort"
+	"slices"
 	"sync"
 )
 
@@ -43,8 +44,8 @@ type Func func(ctx context.Context) error
 
 // Entry 一个登记项
 type Entry struct {
-	Name  string // 出现在日志和错误里，取的是登记它的那个函数名
-	Pkg   string // 登记它的包，用来把启动和停止配成对
+	Name  string // 出现在日志和错误里，取的是钩子函数自己的名字
+	Pkg   string // 登记它的包（调用栈上的 init 所在的包），用来把启动和停止配成对
 	Stage Stage
 	Run   Func
 	Seq   int // 启动钩子的登记序号，从 1 编起
@@ -106,8 +107,8 @@ func Start() []Entry {
 
 // startOrder 按启动顺序排：档位升序，同档内保持登记顺序。
 func startOrder(in []Entry) []Entry {
-	out := append([]Entry(nil), in...)
-	sort.SliceStable(out, func(i, j int) bool { return out[i].Stage < out[j].Stage })
+	out := slices.Clone(in)
+	slices.SortStableFunc(out, func(a, b Entry) int { return cmp.Compare(a.Stage, b.Stage) })
 	return out
 }
 
@@ -123,8 +124,22 @@ func Stop() []Entry {
 // stopOrder 按停止顺序排：Start 顺序的整体镜像。
 func stopOrder(in []Entry) []Entry {
 	out := startOrder(in)
-	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
-		out[i], out[j] = out[j], out[i]
+	slices.Reverse(out)
+	return out
+}
+
+// StopAfter 取出该执行的停止钩子，顺序同 Stop：跳过那些配对的启动钩子没成功的——
+// 它们管的资源根本没建起来。started 是成功了的启动钩子的 Seq；
+// 没有配对（Pair 为 0）的总会留下。
+func StopAfter(started map[int]bool) []Entry {
+	mu.Lock()
+	defer mu.Unlock()
+	var out []Entry
+	for _, e := range stopOrder(stop) {
+		if e.Pair != 0 && !started[e.Pair] {
+			continue // 和它配对的启动钩子没跑成功，资源不存在
+		}
+		out = append(out, e)
 	}
 	return out
 }

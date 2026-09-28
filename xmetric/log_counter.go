@@ -10,7 +10,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 
-	"github.com/xiaoshicae/xone/xlog"
+	"github.com/xiaoshicae/xone/internal/logext"
 )
 
 // observerOnce 观察者只注入一次。
@@ -49,7 +49,7 @@ func newLogCounter(m *Metrics) *prometheus.CounterVec {
 		return nil
 	}
 
-	observerOnce.Do(func() { xlog.AddObserver(observeLog) })
+	observerOnce.Do(func() { logext.AddObserver(observeLog) })
 	return cv
 }
 
@@ -95,10 +95,10 @@ func trimPath(p string) string {
 
 // exemplarOf 取链路标识做 exemplar，让面板能从指标点回到链路。
 //
-// 走 xlog.TraceIDs 而不是直接读 OpenTelemetry：本模块因此不依赖 OTel，
+// 走 logext.TraceIDs（xtrace 注入的提取器）而不是直接读 OpenTelemetry：本模块因此不依赖 OTel，
 // 用不用链路都能编译、都能跑。
 func exemplarOf(ctx context.Context) prometheus.Labels {
-	traceID, spanID := xlog.TraceIDs(ctx)
+	traceID, spanID := logext.TraceIDs(ctx)
 	if traceID == "" && spanID == "" {
 		return nil
 	}

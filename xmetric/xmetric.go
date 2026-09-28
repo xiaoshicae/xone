@@ -81,7 +81,7 @@ func New(cfg Config) (*Metrics, io.Closer, error) {
 //
 // 开启 LogErrorMetric 时还会把当前的 slog 默认 logger 包一层，
 // 让 Error 及以上级别的日志自动计入 log_errors_total。
-// 计数走的是 xlog.AddObserver，所以它只统计经 xlog 写出去的日志：
+// 计数走的是 xlog 的观察者（internal/logext），所以它只统计经 xlog 写出去的日志：
 // 自己另起一套 slog handler 的话，这个指标是空的。
 func (m *Metrics) Install() {
 	// 先把 logCounter 填好，最后才发布 —— 顺序反过来的话，current 已经指向

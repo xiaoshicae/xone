@@ -22,6 +22,10 @@ import (
 	// 用了 xecho 就有链路：xtrace 装好全局的 TracerProvider 和 Propagator，
 	// 中间件经 otel 的全局 API 用上它们。不要链路配 XTrace.Enable: false
 	_ "github.com/xiaoshicae/xone/xtrace"
+
+	// 用了 Web 框架就有 xlog：访问日志、请求级字段（xlog.AddKV）都靠它。
+	// 根包不带它，只用 xhook、xgorm 的程序不会被它接管日志
+	_ "github.com/xiaoshicae/xone/xlog"
 )
 
 // XEcho 一个待启动的 HTTP 服务。

@@ -1,5 +1,5 @@
 // Package withhandler 根包加上 xlog.UseHandler 的程序。和 coreonly 分开：这里要 import xlog，
-// 放进 coreonly 的话，「根包带着 xlog」就验不出来了
+// 放进 coreonly 的话，「根包不带 xlog」就验不出来了
 package withhandler
 
 import (

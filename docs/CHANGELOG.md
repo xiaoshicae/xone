@@ -8,6 +8,13 @@
 
 ## [未发布]
 
+### 不兼容变更
+
+- `xlog` 不再跟着 `xone` 根包来，改为跟着 xgin / xecho 来：只用核心（`xone.Func`、`xone.UntilSignal`）或只用 xgorm、xredis、xhttp、xcache 的程序，
+  框架不再替你换掉 `slog.Default()`，日志保持标准库默认（stderr 上的 `2026/09/28 14:00:00 INFO msg k=v`），`xlog.AddKV` 的字段、`trace_id`、
+  `log_errors_total` 计数也随之没有；这时写了 `XLog` 块启动失败，报错里给出要加的 import。用 xgin / xecho 的程序不受影响。
+  迁移：这类程序要继续用 xlog，在 `main` 包加一行 `import _ "github.com/xiaoshicae/xone/xlog"`，行为和原来完全一样。
+
 ## [v1.15.1] - 2026-09-28
 
 ### 修复

@@ -8,6 +8,8 @@
 
 ## [未发布]
 
+## [v1.16.0] - 2026-09-28
+
 ### 不兼容变更
 
 - `xlog` 不再跟着 `xone` 根包来，改为跟着 xgin / xecho 来：只用核心（`xone.Func`、`xone.UntilSignal`）或只用 xgorm、xredis、xhttp、xcache 的程序，

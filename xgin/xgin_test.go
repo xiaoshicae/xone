@@ -28,6 +28,7 @@ import (
 	"github.com/xiaoshicae/xone/internal/config"
 	"github.com/xiaoshicae/xone/internal/hook"
 	"github.com/xiaoshicae/xone/internal/testkit"
+	"github.com/xiaoshicae/xone/internal/web"
 	"github.com/xiaoshicae/xone/xerror"
 	"github.com/xiaoshicae/xone/xgin/middleware"
 	"github.com/xiaoshicae/xone/xgin/trans"
@@ -1476,5 +1477,42 @@ func TestNoRoute_UserHandlerStillWins(t *testing.T) {
 	e.ServeHTTP(w, httptest.NewRequest("GET", "/nope", nil))
 	if w.Body.String() != "custom" {
 		t.Errorf("用户自己的 NoRoute 该生效，got=%q", w.Body)
+	}
+}
+
+func TestClientIP_SharedRuleMatchesGin(t *testing.T) {
+	// xecho 没有 gin 可用，client_ip 按 internal/web 的 Proxies.ClientIP 算；它的规则照抄 gin。
+	// 同一个服务换一个框架 client_ip 不该变，所以逐条比对 gin 自己算出来的
+	for _, proxies := range [][]string{{web.TrustPrivate}, {}, {"10.0.0.0/8", "203.0.113.7"}, {web.TrustPrivate, "203.0.113.0/24"}} {
+		e := New().WithConfig(configWith(quiet, func(c *Config) { c.TrustedProxies = proxies })).WithRoutes(echoClientIP).Engine()
+		shared := web.ParseProxies(proxies)
+		for _, remote := range []string{"203.0.113.9:1", "203.0.113.7:1", "10.0.0.5:1", "[::ffff:10.0.0.5]:1", "[::1]:1", "[2001:db8::1]:1", "junk"} {
+			for _, h := range []map[string][]string{
+				{},
+				{"X-Forwarded-For": {"1.2.3.4"}},
+				{"X-Forwarded-For": {"1.2.3.4, 10.0.0.9"}},
+				{"X-Forwarded-For": {"1.2.3.4, 5.6.7.8, 10.0.0.9"}},
+				{"X-Forwarded-For": {"10.0.0.7, 10.0.0.8"}},
+				{"X-Forwarded-For": {"1.2.3.4", "5.6.7.8"}},
+				{"X-Forwarded-For": {"junk, 10.0.0.9"}},
+				{"X-Forwarded-For": {"1.2.3.4, junk"}},
+				{"X-Forwarded-For": {"junk"}, "X-Real-Ip": {"9.9.9.9"}},
+				{"X-Real-Ip": {"9.9.9.9"}},
+				{"X-Forwarded-For": {" 1.2.3.4 ,10.0.0.9 "}},
+			} {
+				req := httptest.NewRequest("GET", "/client-ip", nil)
+				req.RemoteAddr = remote
+				for k, vs := range h {
+					for _, v := range vs {
+						req.Header.Add(k, v)
+					}
+				}
+				w := httptest.NewRecorder()
+				e.ServeHTTP(w, req)
+				if got := shared.ClientIP(req); got != w.Body.String() {
+					t.Errorf("proxies=%v remote=%s headers=%v：gin=%q web=%q", proxies, remote, h, w.Body.String(), got)
+				}
+			}
+		}
 	}
 }

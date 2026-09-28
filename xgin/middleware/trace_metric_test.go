@@ -278,8 +278,8 @@ func TestMetric_CustomMethodNormalizedToOTHER(t *testing.T) {
 	// 而 HTTP 方法是个自由 token，谁都能发 CUSTOM1、CUSTOM2，
 	// 每来一个新值就多一组时间序列，没有淘汰机制。
 	//
-	// 这一段走真实的中间件，而不是直接调 normalizeMethod：
-	// 变异测试发现只测那个函数的话，把调用点绕开（`normalizeMethod(m)` → `m`）
+	// 这一段走真实的中间件，而不是直接调 web.NormalizeMethod：
+	// 变异测试发现只测那个函数的话，把调用点绕开（`web.NormalizeMethod(m)` → `m`）
 	// 一样能过——函数本身是对的，只是没人用它，而那正是这个 bug 的形状
 	m := withMetrics(t)
 	for _, method := range []string{"CUSTOM1", "FOOBAR", "PROPFIND"} {
@@ -296,16 +296,7 @@ func TestMetric_CustomMethodNormalizedToOTHER(t *testing.T) {
 		}
 	}
 
-	// 再单独确认这个函数自己的映射表是对的
-	for _, c := range []struct{ in, want string }{
-		{"GET", "GET"}, {"POST", "POST"}, {"PATCH", "PATCH"}, {"DELETE", "DELETE"},
-		{"CONNECT", "CONNECT"}, {"OPTIONS", "OPTIONS"}, {"TRACE", "TRACE"}, {"HEAD", "HEAD"},
-		{"CUSTOM1", "OTHER"}, {"FOOBAR", "OTHER"}, {"get", "OTHER"}, {"", "OTHER"},
-	} {
-		if got := normalizeMethod(c.in); got != c.want {
-			t.Errorf("normalizeMethod(%q)=%q want %q", c.in, got, c.want)
-		}
-	}
+	// 映射表本身的用例在 internal/web（TestNormalizeMethod）
 }
 
 func TestTrace_ErrAbortHandlerAbortRecordedAsError(t *testing.T) {

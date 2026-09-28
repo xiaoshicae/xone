@@ -12,14 +12,11 @@ package middleware
 import (
 	"errors"
 	"log/slog"
-	"net"
 	"net/http"
-	"os"
-	"runtime"
-	"strings"
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/xiaoshicae/xone/internal/web"
 	"github.com/xiaoshicae/xone/xlog"
 )
 
@@ -39,19 +36,14 @@ func LogScope() gin.HandlerFunc {
 
 // routeOf 取这个请求的路由模板，访问日志、指标、Span 共用。
 //
-// 用模板而不是真实路径：/user/123 和 /user/456 是同一个接口，按真实路径记的话
-// 指标标签和 Span 名的基数随 URL 里的 id 无限增长，Prometheus 会被撑垮。
-// 没匹配上任何路由时记固定的 unmatched：填真实路径的话，同样撑爆基数，
-// 日志里也分不出 /nope 是一个路由还是一次 404。真实路径在访问日志的 path 里
+// 没匹配上任何路由（404）、方法不对（405）时 gin 给的都是空串，记成 web.RouteUnmatched，
+// 理由见那里
 func routeOf(c *gin.Context) string {
 	if route := c.FullPath(); route != "" {
 		return route
 	}
-	return "unmatched"
+	return web.RouteUnmatched
 }
-
-// maxStack panic 栈信息的上限
-const maxStack = 16 * 1024
 
 // Recover 兜住 panic，把它变成一条错误日志和一个 500。
 //
@@ -81,18 +73,18 @@ func Recover(handle gin.RecoveryFunc) gin.HandlerFunc {
 			}
 
 			// 连接断了不算故障，不值得打一份完整栈
-			broken := isBrokenPipe(err)
+			broken := web.IsBrokenPipe(err)
 			ctx := c.Request.Context()
 			if broken {
 				slog.ErrorContext(ctx, "connection broken", "error", err)
-				_ = c.Error(err.(error)) //nolint:errcheck // isBrokenPipe 保证它是 *net.OpError
+				_ = c.Error(err.(error)) //nolint:errcheck // web.IsBrokenPipe 保证它是 *net.OpError
 				c.Abort()
 				return
 			}
 
 			slog.ErrorContext(ctx, "panic while handling request",
 				"error", err,
-				"stack", stack(),
+				"stack", web.Stack(),
 				"path", c.Request.URL.Path,
 				"method", c.Request.Method)
 
@@ -107,11 +99,8 @@ func Recover(handle gin.RecoveryFunc) gin.HandlerFunc {
 	}
 }
 
-// statusAborted handler 以 http.ErrAbortHandler 中止的请求，在访问日志、
-// 指标、链路里记成这个状态码。借用的是 nginx 的 499：这个码不会真的发给
-// 客户端（连接直接断了），只是给「没有正常结束的请求」一个固定的、
-// 查得到的值，不和任何真实的响应混在一起
-const statusAborted = 499
+// statusAborted handler 以 http.ErrAbortHandler 中止的请求记成的状态码（499），见 web.StatusAborted
+const statusAborted = web.StatusAborted
 
 // status 本次请求该记下的状态码。
 //
@@ -124,27 +113,4 @@ func status(c *gin.Context) int {
 		}
 	}
 	return c.Writer.Status()
-}
-
-// isBrokenPipe 判断是不是客户端提前断开连接
-func isBrokenPipe(err any) bool {
-	ne, ok := err.(*net.OpError)
-	if !ok {
-		return false
-	}
-	var se *os.SyscallError
-	if !errors.As(ne, &se) {
-		return false
-	}
-	msg := strings.ToLower(se.Error())
-	return strings.Contains(msg, "broken pipe") || strings.Contains(msg, "connection reset by peer")
-}
-
-// stack 当前协程的栈
-//
-// 用 runtime.Stack 而不是逐帧读源码文件：panic 恢复期间去做文件 I/O，
-// 磁盘一慢就把这条错误日志也拖住了。
-func stack() string {
-	buf := make([]byte, maxStack)
-	return string(buf[:runtime.Stack(buf, false)])
 }

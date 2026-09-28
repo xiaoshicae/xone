@@ -3,6 +3,7 @@ package web
 import (
 	"fmt"
 	"net"
+	"net/http"
 	"net/netip"
 	"slices"
 	"strings"
@@ -83,9 +84,78 @@ func ParseProxies(list []string) Proxies {
 // Unmap 是为了 ::ffff:10.0.0.1 这种写法的 IPv4 也能对上 10.0.0.0/8
 func (ps Proxies) Trusts(ip string) bool {
 	a, err := netip.ParseAddr(ip)
-	if err != nil {
-		return false
-	}
+	return err == nil && ps.has(a)
+}
+
+// has a 是否落在任一网段里
+func (ps Proxies) has(a netip.Addr) bool {
 	a = a.Unmap()
 	return slices.ContainsFunc(ps, func(p netip.Prefix) bool { return p.Contains(a) })
+}
+
+// RemoteIP 直连对端（RemoteAddr）的地址，不带端口；解不出来是空串。
+//
+// 该问「可不可信」的就是它，见 Trusts
+func RemoteIP(r *http.Request) string {
+	ip, _, err := net.SplitHostPort(strings.TrimSpace(r.RemoteAddr))
+	if err != nil {
+		return ""
+	}
+	return ip
+}
+
+// forwardedHeaders 算 client IP 时按顺序看的请求头
+var forwardedHeaders = []string{"X-Forwarded-For", "X-Real-IP"}
+
+// ClientIP 访问日志里的 client_ip：直连对端可信时从 X-Forwarded-For / X-Real-IP 里往回找，否则就是对端本身。
+//
+// 规则和 gin v1.12.0 的 Context.ClientIP 一字不差（xgin 用的是 gin 自己的那个）：
+//
+//   - 直连对端不可信：就是对端地址，转发头一概不看；
+//   - 可信：先看 X-Forwarded-For，再看 X-Real-IP。同名的头有好几行时拼成一个列表，
+//     从右往左找第一个不可信的地址——每一跳代理都往右边追加，最右边那个不可信的
+//     就是离我们最近、没法再往回追的那一跳；全都可信时取最左边的；
+//     碰到解不出的一项就放弃这个头；
+//   - 两个头都没有可用的值：退回对端地址。
+//
+// 两边一致是 xgin 的测试钉着的（逐条比对 gin 的结果）：同一个服务换一个框架，client_ip 不该变。
+// 对端解不出来时返回空串，与 gin 相同
+func (ps Proxies) ClientIP(r *http.Request) string {
+	remote := net.ParseIP(RemoteIP(r))
+	if remote == nil {
+		return ""
+	}
+	if ps.contains(remote) {
+		for _, name := range forwardedHeaders {
+			if ip, ok := ps.fromHeader(strings.Join(r.Header.Values(name), ",")); ok {
+				return ip
+			}
+		}
+	}
+	return remote.String()
+}
+
+// fromHeader 从一个转发头里找 client IP，规则见 ClientIP
+func (ps Proxies) fromHeader(header string) (string, bool) {
+	if header == "" {
+		return "", false
+	}
+	items := strings.Split(header, ",")
+	for i := len(items) - 1; i >= 0; i-- {
+		s := strings.TrimSpace(items[i])
+		ip := net.ParseIP(s)
+		if ip == nil {
+			break
+		}
+		if i == 0 || !ps.contains(ip) {
+			return s, true
+		}
+	}
+	return "", false
+}
+
+// contains 同 Trusts，收的是解好的地址
+func (ps Proxies) contains(ip net.IP) bool {
+	a, ok := netip.AddrFromSlice(ip)
+	return ok && ps.has(a)
 }

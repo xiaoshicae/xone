@@ -73,13 +73,18 @@ mutate("Mode 在建 engine 之前设", "xgin/xgin.go", "./xgin", "TestBuild_Mode
 
 section("中间件")
 mutate("代理网段写错要启动失败", "internal/web/proxy.go", "./xgin", "TestValidate", swap('if p != TrustPrivate && !isIPOrCIDR(p) {','if false {'))
+# xecho 没有 gin 可用，client_ip 按 internal/web 的 Proxies.ClientIP 算；它和 gin 的规则一致由这里逐条比对着。
+# 改坏规则里的任何一处（这里挑「全都可信时取最左边」），和 gin 的结果就对不上
+mutate("共用的 client_ip 规则和 gin 一致", "internal/web/proxy.go", "./xgin", "TestClientIP_SharedRuleMatchesGin",
+       swap('if i == 0 || !ps.contains(ip) {', 'if !ps.contains(ip) {'))
 # 词表进程里只有一张（internal/web）：公开的这两个名字不转过去的话，使用者补的词谁都不认
 mutate("AddSensitiveFields 写进共用的词表", "xgin/middleware/redact.go", "./xgin", "TestAddSensitive",
        swap('{ web.AddSensitiveFields(fields...) }', '{}'))
 mutate("AddSensitiveHeaders 写进共用的名单", "xgin/middleware/redact.go", "./xgin", "TestAddSensitive",
        swap('{ web.AddSensitiveHeaders(headers...) }', '{}'))
 mutate("指标的 method 标签收敛", "xgin/middleware/metric.go", "./xgin", "TestMetric",
-       swap('normalizeMethod(c.Request.Method)', 'c.Request.Method'))
+       swap('web.NormalizeMethod(c.Request.Method)', 'c.Request.Method'),
+       swap('\t\tlatency *prometheus.HistogramVec\n\t)\n', '\t\tlatency *prometheus.HistogramVec\n\t)\n\t_ = web.NormalizeMethod\n'))
 mutate("配置在装配时落到 engine 上", "xgin/xgin.go", "./xgin", "TestBuild", swap('\t\tapplyConfig(e, c)\n', ''))
 # 回调在配置落到 engine 上之后才跑，所以回调里明确设了的以回调为准。
 # 两种改坏的写法：配置挪到回调之后落，或者 Start 时再落一遍（原先就是这样）
@@ -141,7 +146,8 @@ mutate("指标把中止的请求记成 499", "xgin/middleware/metric.go", "./xgi
 mutate("链路把中止的请求记成错误", "xgin/middleware/trace.go", "./xgin", "TestTrace_ErrAbortHandler",
        swap('st := status(c)', 'st := c.Writer.Status()'))
 mutate("链路的 method 收敛", "xgin/middleware/trace.go", "./xgin", "TestTrace",
-       swap('method := normalizeMethod(c.Request.Method)', 'method := c.Request.Method'))
+       swap('method := web.NormalizeMethod(c.Request.Method)', 'method := c.Request.Method'),
+       swap('\t\troute := routeOf(c)\n', '\t\troute := routeOf(c)\n\t\t_ = web.NormalizeMethod\n'))
 # 「谁是自己人」只看 TrustedProxies。记号打错一次，要么伪造的头被带进内网，要么透传整个失效
 mutate("对端在 TrustedProxies 里才算可信", "xgin/xgin.go", "./xgin", "TestBuild_PassthroughHeadersOnlyFromTrustedProxies|TestBuild_PassthroughHeadersOnlyFromPrivateByDefault",
        swap('if g.trusted.Trusts(c.RemoteIP()) {', 'if len(g.trusted) > 0 {'))
@@ -222,7 +228,7 @@ mutate("没写响应体时 bytes_out 记 0", "xgin/middleware/log.go", "./xgin",
 # 取值写在 routeOf 里，三个中间件共用；这一条改坏它本身，下面三条各打一个调用点
 mutate("没匹配上的路由记 unmatched", "xgin/middleware/middleware.go", "./xgin",
        "TestLog_UnmatchedRouteIsUnmatched|TestMetric_UnmatchedRouteUsesFixedValue|TestTrace_UnmatchedRouteUsesFixedValue",
-       swap('\treturn "unmatched"\n', '\treturn c.Request.URL.Path\n'))
+       swap('\treturn web.RouteUnmatched\n', '\treturn c.Request.URL.Path\n'))
 mutate("访问日志里没匹配上的路由记 unmatched", "xgin/middleware/log.go", "./xgin", "TestLog_UnmatchedRouteIsUnmatched",
        swap('Route:    routeOf(c),', 'Route:    c.FullPath(),'))
 mutate("指标里没匹配上的路由记 unmatched", "xgin/middleware/metric.go", "./xgin", "TestMetric_UnmatchedRouteUsesFixedValue",

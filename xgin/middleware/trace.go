@@ -10,6 +10,7 @@ import (
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/xiaoshicae/xone/internal/web"
 	"github.com/xiaoshicae/xone/xgin/internal/peer"
 )
 
@@ -35,7 +36,7 @@ func Trace() gin.HandlerFunc {
 		// 方法和指标一样收敛到固定集合：它是个自由 token，照抄进 Span 名的话
 		// 谁都能发 CUSTOM1、CUSTOM2 把链路后端的 Span 名撑爆。
 		// 原始值放进 method_original（OTel 语义约定里的写法），排查时看得到
-		method := normalizeMethod(c.Request.Method)
+		method := web.NormalizeMethod(c.Request.Method)
 		attrs := []attribute.KeyValue{
 			attribute.String("http.request.method", method),
 			attribute.String("http.route", route),

@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"errors"
 	"net"
 	"net/http"
@@ -20,13 +21,25 @@ import (
 // 真实路径在访问日志的 path 里
 const RouteUnmatched = "unmatched"
 
-// StatusAborted handler 以 http.ErrAbortHandler 中止的请求，在访问日志、指标、链路里记成这个状态码。
+// StatusAborted 没有正常结束的请求在访问日志、指标、链路里记成这个状态码。两种情况：
 //
-// 借用的是 nginx 的 499：这个码不会真的发给客户端（连接直接断了），只是给
+//   - handler 以 panic(http.ErrAbortHandler) 中止：net/http 直接断开连接。中止的请求往往已经写出了
+//     200 的响应头，照读框架记下的状态码的话，一个被截断的响应在三处都记成成功；
+//   - 客户端已经走了（见 ClientGone），而响应一个字节都还没发：handler 照惯例 return ctx.Err()
+//     会被渲染成 500，什么都不写就返回会记成 200——客户端其实什么都没收到。
+//
+// 借用的是 nginx 的 499（client closed request）：这个码不会真的发给客户端，只是给
 // 「没有正常结束的请求」一个固定的、查得到的值，不和任何真实的响应混在一起。
-// 中止的请求往往已经写出了 200 的响应头，照读框架记下的状态码的话，
-// 一个被截断的响应在三处都记成成功
+// 响应已经开始发了的，记已经发出去的那个状态码：客户端至少收到了一部分
 const StatusAborted = 499
+
+// ClientGone 请求的 ctx 是不是被 net/http 取消了：客户端断开了连接（HTTP/2 是流被重置），
+// 或者停止时到点强制断连。
+//
+// ctx 要取中间件一进来时的那个：里面几层换上的 ctx 可能是业务自己的——echo 的 ContextTimeout
+// 返回时 defer cancel() 了它，出了那一层就是 Canceled，客户端却还在等响应。
+// 只认 Canceled 不认 DeadlineExceeded 是同一个道理：截止时间是业务自己设的，net/http 不设
+func ClientGone(ctx context.Context) bool { return errors.Is(ctx.Err(), context.Canceled) }
 
 // knownMethods RFC 9110 定的那几个方法，加上 PATCH
 var knownMethods = map[string]struct{}{

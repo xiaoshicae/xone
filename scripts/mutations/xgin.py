@@ -140,11 +140,29 @@ mutate("ErrAbortHandler 原样抛给 net/http", "xgin/middleware/middleware.go",
 mutate("ErrAbortHandler 中止的请求登记下来", "xgin/middleware/middleware.go", "./xgin", "TestLog_ErrAbortHandlerAbortLoggedAs499|TestMetric_ErrAbortHandlerAbortRecordedAs499|TestTrace_ErrAbortHandlerAbortRecordedAsError",
        swap('\t\t\t\t_ = c.Error(http.ErrAbortHandler) //nolint:errcheck // 只是登记\n', ''))
 mutate("访问日志把中止的请求记成 499", "xgin/middleware/log.go", "./xgin", "TestLog_ErrAbortHandler",
-       swap('Status:   status(c),', 'Status:   c.Writer.Status(),'))
+       swap('Status:   status(c, ctx),', 'Status:   c.Writer.Status(),'), swap('\t\tstart, ctx := time.Now(), c.Request.Context()\n', '\t\tstart, ctx := time.Now(), c.Request.Context()\n\t\t_ = ctx\n'))
 mutate("指标把中止的请求记成 499", "xgin/middleware/metric.go", "./xgin", "TestMetric_ErrAbortHandler",
-       swap('strconv.Itoa(status(c))', 'strconv.Itoa(c.Writer.Status())'))
+       swap('strconv.Itoa(status(c, ctx))', 'strconv.Itoa(c.Writer.Status())'), swap('\t\tstart, ctx := time.Now(), c.Request.Context()\n', '\t\tstart, ctx := time.Now(), c.Request.Context()\n\t\t_ = ctx\n'))
 mutate("链路把中止的请求记成错误", "xgin/middleware/trace.go", "./xgin", "TestTrace_ErrAbortHandler",
-       swap('st := status(c)', 'st := c.Writer.Status()'))
+       swap('st := status(c, ctx)', 'st := c.Writer.Status()'))
+# 客户端走了、什么都没写就返回：原先记成 bytes_out 为 0 的 200，客户端其实什么都没收到
+mutate("XGin 客户端走了记 499", "xgin/middleware/middleware.go", "./xgin", "TestClientGoneBeforeAnythingSentRecordedAs499",
+       swap('\tif aborted(c) || (!c.Writer.Written() && web.ClientGone(ctx)) {', '\tif aborted(c) {'))
+mutate("XGin 响应写出去了就记写出去的", "xgin/middleware/middleware.go", "./xgin", "TestClientGoneAfterResponseWrittenKeepsSentStatus",
+       swap('\tif aborted(c) || (!c.Writer.Written() && web.ClientGone(ctx)) {', '\tif aborted(c) || web.ClientGone(ctx) {'))
+# 判的是这一层一进来时的 ctx：里面几层换上的、返回时 cancel 掉的 ctx 不算客户端走了。三个调用点各一条
+mutate("XGin 访问日志按一进来时的 ctx 判客户端", "xgin/middleware/log.go", "./xgin", "TestClientGoneIgnoresContextsSetByInnerMiddleware",
+       swap('Status:   status(c, ctx),', 'Status:   status(c, c.Request.Context()),'), swap('\t\tstart, ctx := time.Now(), c.Request.Context()\n', '\t\tstart, ctx := time.Now(), c.Request.Context()\n\t\t_ = ctx\n'))
+mutate("XGin 指标按一进来时的 ctx 判客户端", "xgin/middleware/metric.go", "./xgin", "TestClientGoneIgnoresContextsSetByInnerMiddleware",
+       swap('strconv.Itoa(status(c, ctx))', 'strconv.Itoa(status(c, c.Request.Context()))'), swap('\t\tstart, ctx := time.Now(), c.Request.Context()\n', '\t\tstart, ctx := time.Now(), c.Request.Context()\n\t\t_ = ctx\n'))
+mutate("XGin 链路按一进来时的 ctx 判客户端", "xgin/middleware/trace.go", "./xgin", "TestClientGoneIgnoresContextsSetByInnerMiddleware",
+       swap('st := status(c, ctx)', 'st := status(c, c.Request.Context())'))
+# 客户端走了不是服务端的错，只有 handler 自己中止的才标错
+mutate("XGin 客户端走了的 Span 不标错", "xgin/middleware/trace.go", "./xgin", "TestClientGoneBeforeAnythingSentRecordedAs499",
+       swap('\t\t\tcase aborted(c):\n', '\t\t\tcase st == statusAborted:\n'))
+# 压缩中间件排在访问日志里面：截下来的是压缩过的字节，原先整段乱码进了 response_body
+mutate("压缩过的响应体不记内容", "internal/web/accesslog.go", "./xgin", "TestLog_EncodedResponseBodyOmitted",
+       swap('\t\t\tbody := encodedOmitted(a.RespHeader)\n', '\t\t\tbody := ""\n'))
 mutate("链路的 method 收敛", "xgin/middleware/trace.go", "./xgin", "TestTrace",
        swap('method := web.NormalizeMethod(c.Request.Method)', 'method := c.Request.Method'),
        swap('\t\troute := routeOf(c)\n', '\t\troute := routeOf(c)\n\t\t_ = web.NormalizeMethod\n'))

@@ -3,8 +3,11 @@
 package web
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -54,5 +57,23 @@ func TestShutdownCtx_LeavesTailForHandlers(t *testing.T) {
 	defer cancelShut()
 	if _, ok := shut.Deadline(); ok {
 		t.Error("no caller deadline means no Shutdown deadline either")
+	}
+}
+
+func TestServer_ErrorLogRoutedToSlog(t *testing.T) {
+	// 回归用例：http.Server.ErrorLog 不设时 net/http 写标准库的 log（TLS 握手失败、Accept 出错……）：
+	// 进了 slog 也是 INFO，消息是每次都不一样的那一整行，没法按消息检索和告警
+	var buf bytes.Buffer
+	old := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(old) })
+
+	srv := (&Server{}).newServer("xtest", ServerConfig{}, "127.0.0.1:0", http.NotFoundHandler())
+	if srv.ErrorLog == nil {
+		t.Fatal("ErrorLog 该接到 slog 上")
+	}
+	srv.ErrorLog.Printf("http: TLS handshake error from %s: EOF", "203.0.113.9:1234")
+	if want := `"level":"WARN","msg":"xtest http server error","error":"http: TLS handshake error from 203.0.113.9:1234: EOF"`; !strings.Contains(buf.String(), want) {
+		t.Errorf("该记成 %s，got=%s", want, buf.String())
 	}
 }

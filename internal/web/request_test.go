@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"errors"
 	"net"
 	"os"
@@ -42,5 +43,25 @@ func TestStack_CapturesCurrentGoroutineWithinLimit(t *testing.T) {
 	}
 	if len(s) > maxStack {
 		t.Errorf("stack longer than the %d byte limit: %d", maxStack, len(s))
+	}
+}
+
+func TestClientGone(t *testing.T) {
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	expired, cancel2 := context.WithTimeout(context.Background(), 0)
+	defer cancel2()
+	<-expired.Done()
+	for name, c := range map[string]struct {
+		ctx  context.Context
+		want bool
+	}{
+		"被 net/http 取消了": {canceled, true},
+		"业务自己的截止时间到了":    {expired, false},
+		"还在":             {context.Background(), false},
+	} {
+		if got := ClientGone(c.ctx); got != c.want {
+			t.Errorf("%s：ClientGone=%v，want %v", name, got, c.want)
+		}
 	}
 }

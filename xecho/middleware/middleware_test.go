@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -18,6 +19,7 @@ import (
 	"time"
 
 	"github.com/labstack/echo/v4"
+	echomw "github.com/labstack/echo/v4/middleware"
 
 	"github.com/xiaoshicae/xone/xlog"
 )
@@ -385,7 +387,14 @@ var errorCases = []struct {
 	{"方法不对（405）", "POST", "/only-get", 405, "unmatched", "code=405, message=Method Not Allowed"},
 	{"普通 error（500）", "GET", "/plain", 500, "/plain", Redacted}, // 错误原文带着 password=，整段遮掉
 	{"echo.NewHTTPError(418)", "GET", "/teapot", 418, "/teapot", "code=418, message=I'm a teapot"},
+	// 带中间件的分组：echo 悄悄给它注册了 RouteNotFound 兜底（/api/v1、/api/v1/*），c.Path() 是兜底的模板
+	{"分组下没匹配上的路径", "GET", "/api/v1/nope", 404, "unmatched", "code=404, message=Not Found"},
+	{"分组下方法不对（echo 回的是 404，不是 405）", "POST", "/api/v1/users", 404, "unmatched", "code=404, message=Not Found"},
+	{"使用者自己注册的 RouteNotFound", "GET", "/custom/x", 404, "unmatched", "code=404, message=custom"},
 }
+
+// passThrough 什么都不做的分组中间件：有了它，echo 就给分组注册 RouteNotFound 兜底
+func passThrough(next echo.HandlerFunc) echo.HandlerFunc { return next }
 
 // errorEcho 注册 errorCases 用到的路由
 func errorEcho(mws ...echo.MiddlewareFunc) *echo.Echo {
@@ -394,7 +403,39 @@ func errorEcho(mws ...echo.MiddlewareFunc) *echo.Echo {
 	e.GET("/only-get", statusOnly(200))
 	e.GET("/plain", func(echo.Context) error { return errors.New("db down: password=s3cret") })
 	e.GET("/teapot", func(echo.Context) error { return echo.NewHTTPError(http.StatusTeapot) })
+	e.Group("/api/v1", passThrough).GET("/users", statusOnly(200))
+	e.RouteNotFound("/custom/*", func(echo.Context) error { return echo.NewHTTPError(http.StatusNotFound, "custom") })
 	return e
+}
+
+func TestLog_FallbackTemplateKeptForMethodsRegisteredOnIt(t *testing.T) {
+	// 兜底和真正的路由可以是同一个模板：分组里 GET("/*") 做转发，echo 又给分组注册了 /proxy/* 的兜底。
+	// GET 命中的是真正的路由，记模板；别的方法落到兜底上（404），记 unmatched
+	lines := capture(t)
+	e := echo.New()
+	e.Use(Log())
+	e.Group("/proxy", passThrough).GET("/*", statusOnly(200))
+	e.ServeHTTP(httptest.NewRecorder(), get("/proxy/a"))
+	e.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("POST", "/proxy/a", nil))
+	got := accessLogs(lines())
+	if len(got) != 2 || got[0]["route"] != "/proxy/*" || got[0]["status"] != float64(200) ||
+		got[1]["route"] != "unmatched" || got[1]["status"] != float64(404) {
+		t.Errorf("GET 该记模板 /proxy/*、POST 落到兜底该记 unmatched，got=%v", got)
+	}
+}
+
+func TestLog_StaticMissingFileKeepsRouteTemplate(t *testing.T) {
+	// e.Static 注册的是一条真正的 GET 路由（/static*），文件不存在时由它自己回 404：
+	// 记它的模板，基数照样是有界的
+	lines := capture(t)
+	e := echo.New()
+	e.Use(Log())
+	e.Static("/static", t.TempDir())
+	w := httptest.NewRecorder()
+	e.ServeHTTP(w, get("/static/missing.txt"))
+	if l := lines()[0]; w.Code != 404 || l["route"] != "/static*" || l["status"] != float64(404) {
+		t.Errorf("静态文件不存在该记 404 和 /static*，got code=%d log=%v", w.Code, l)
+	}
 }
 
 func TestLog_ErrorStatusIsTheRenderedResponse(t *testing.T) {
@@ -883,6 +924,150 @@ func TestRecover_PanicValueIsRedacted(t *testing.T) {
 		}
 		if got != want {
 			t.Errorf("panic(%q) 的 error 字段=%v，want %q", msg, got, want)
+		}
+	}
+}
+
+func TestLog_EncodedResponseBodyOmitted(t *testing.T) {
+	// 回归用例：Log 在 echo 的 Gzip 外面，截下来的是压缩过的字节：JSON 解不出来，
+	// 原先整个记成 ***REDACTED***，什么都看不到。压缩过的不记内容，记一句 omitted
+	lines := capture(t)
+	req := get("/hello")
+	req.Header.Set("Accept-Encoding", "gzip")
+	body := strings.Repeat("hello ", 200)
+	w := serve(t, req, []echo.MiddlewareFunc{Log(WithBody(false, true)), echomw.Gzip()}, func(c echo.Context) error {
+		return c.JSON(200, map[string]string{"greeting": body})
+	})
+	if w.Header().Get("Content-Encoding") != "gzip" {
+		t.Fatalf("前提：响应该是 gzip 压缩过的，got=%v", w.Header())
+	}
+	l := lines()[0]
+	if got := l["response_body"]; got != "[gzip-encoded content omitted]" {
+		t.Errorf("压缩过的响应体该记 omitted，got=%q", got)
+	}
+	// 钉住 README 里写的数：echo 的 Response.Size 数的是交给 Gzip 之前的字节，不是线上的
+	if want := len(`{"greeting":""}`+"\n") + len(body); l["bytes_out"] != float64(want) || w.Body.Len() >= want {
+		t.Errorf("bytes_out 该是压缩前的 %d 字节（线上 %d），got=%v", want, w.Body.Len(), l["bytes_out"])
+	}
+}
+
+func TestLog_ResponseCaptureSatisfiesFlusherAndHijacker(t *testing.T) {
+	// 回归用例：打开响应体日志之后 c.Response().Writer 是截响应的 writer。原先它只有 Unwrap：
+	// http.ResponseController 和 c.Response().Flush() 找得到下面的 writer，直接做类型断言的代码
+	// （老的 SSE、WebSocket 库）却断言失败
+	capture(t)
+	var flusher, hijacker bool
+	serve(t, get("/hello"), []echo.MiddlewareFunc{Log(WithBody(false, true))}, func(c echo.Context) error {
+		_, flusher = c.Response().Writer.(http.Flusher)
+		_, hijacker = c.Response().Writer.(http.Hijacker)
+		return nil
+	})
+	if !flusher || !hijacker {
+		t.Errorf("截响应的 writer 该满足 http.Flusher=%v、http.Hijacker=%v", flusher, hijacker)
+	}
+}
+
+func TestLog_ResponseCaptureFlushReachesClient(t *testing.T) {
+	// 真实连接上：经类型断言 Flush 的那一段，客户端要在 handler 返回之前就读得到
+	capture(t)
+	release := make(chan struct{})
+	e := newEcho([]echo.MiddlewareFunc{Log(WithBody(false, true))}, func(c echo.Context) error {
+		c.Response().Header().Set("Content-Type", "text/event-stream")
+		c.Response().WriteHeader(200)
+		_, _ = c.Response().Write([]byte("data: 1\n\n"))
+		c.Response().Writer.(http.Flusher).Flush()
+		<-release
+		return nil
+	})
+	srv := httptest.NewServer(e)
+	defer srv.Close()
+	defer close(release)
+	resp, err := http.Get(srv.URL + "/hello")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	line, err := bufio.NewReader(resp.Body).ReadString('\n')
+	if err != nil || line != "data: 1\n" {
+		t.Errorf("Flush 之后客户端该读到第一段，got=%q err=%v", line, err)
+	}
+}
+
+func TestLog_ResponseCaptureHijack(t *testing.T) {
+	// 真实连接上经类型断言 Hijack，拿到的是原始连接；下面的 writer 不支持时返回错误，和 net/http 一样
+	capture(t)
+	e := newEcho([]echo.MiddlewareFunc{Log(WithBody(false, true))}, func(c echo.Context) error {
+		conn, buf, err := c.Response().Writer.(http.Hijacker).Hijack()
+		if err != nil {
+			return err
+		}
+		defer conn.Close()
+		_, _ = buf.WriteString("HTTP/1.1 200 OK\r\nContent-Length: 6\r\nConnection: close\r\n\r\nhijack")
+		return buf.Flush()
+	})
+	srv := httptest.NewServer(e)
+	defer srv.Close()
+	resp, err := http.Get(srv.URL + "/hello")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if string(b) != "hijack" {
+		t.Errorf("Hijack 该拿到原始连接，got=%q", b)
+	}
+
+	var herr error
+	serve(t, get("/hello"), []echo.MiddlewareFunc{Log(WithBody(false, true))}, func(c echo.Context) error {
+		_, _, herr = c.Response().Writer.(http.Hijacker).Hijack() // httptest.ResponseRecorder 不支持
+		return nil
+	})
+	if !errors.Is(herr, http.ErrNotSupported) {
+		t.Errorf("下面的 writer 不支持 Hijack 时该返回 http.ErrNotSupported，got=%v", herr)
+	}
+}
+
+func TestLog_ResponseCaptureKeepsResponseControllerFeatures(t *testing.T) {
+	// Flush、Hijack 之外，http.ResponseController 的读写超时、全双工也得落到真正的连接上：
+	// 它靠 Unwrap 一层层找下去，截响应的 writer 不交出原来的 writer 的话一律 ErrNotSupported
+	capture(t)
+	var werr, rerr error
+	e := newEcho([]echo.MiddlewareFunc{Log(WithBody(false, true))}, func(c echo.Context) error {
+		rc := http.NewResponseController(c.Response())
+		werr = rc.SetWriteDeadline(time.Now().Add(time.Minute))
+		rerr = rc.SetReadDeadline(time.Now().Add(time.Minute))
+		return c.String(200, "ok")
+	})
+	srv := httptest.NewServer(e)
+	defer srv.Close()
+	resp, err := http.Get(srv.URL + "/hello")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if werr != nil || rerr != nil {
+		t.Errorf("读写超时该设到真正的连接上，got write=%v read=%v", werr, rerr)
+	}
+}
+
+func TestContextSwapUndoneWhenRequestLeaves(t *testing.T) {
+	// LogScope、Trace、Propagate 原地换请求的 ctx（理由见 setContext），出了自己那一层要换回去：
+	// 调 e.ServeHTTP 的一方拿回的该是原样的请求；同一个请求交进来两次，ctx 也不该越套越深
+	recording(t) // 装上 TraceContext：Propagate 接上游的 traceparent，ctx 才真的变了
+	for name, mw := range map[string]echo.MiddlewareFunc{"LogScope": LogScope(), "Trace": Trace(), "Propagate": Propagate()} {
+		req := get("/hello")
+		req.Header.Set("traceparent", "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01")
+		before := req.Context()
+		var inside context.Context
+		serve(t, req, []echo.MiddlewareFunc{mw}, func(c echo.Context) error {
+			inside = c.Request().Context()
+			return nil
+		})
+		if req.Context() != before {
+			t.Errorf("%s：请求出来之后 ctx 该换回原来的", name)
+		}
+		if inside == before {
+			t.Errorf("%s：handler 看到的该是换过的 ctx", name)
 		}
 	}
 }

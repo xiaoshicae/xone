@@ -29,9 +29,9 @@ const (
 // 按 XEcho.TrustedProxies 判断直连的对端。单独用本中间件、没经过 xecho 装配时
 // 没人做这个判断，一律当作不可信。链路标识（traceparent 等）不受影响。
 func Trace() echo.MiddlewareFunc {
+	var rs routes
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
-			route := routeOf(c) // router 在中间件之前就跑完了，这里已经取得到
 			r := c.Request()
 
 			// 每次都取当前的全局 Propagator：构造中间件时链路可能还没初始化
@@ -43,26 +43,28 @@ func Trace() echo.MiddlewareFunc {
 			method := web.NormalizeMethod(r.Method)
 			attrs := []attribute.KeyValue{
 				attribute.String("http.request.method", method),
-				attribute.String("http.route", route),
 				attribute.String("url.path", r.URL.Path),
 			}
 			if method != r.Method {
 				attrs = append(attrs, attribute.String("http.request.method_original", r.Method))
 			}
 
-			ctx, span := otel.Tracer(tracerName).Start(ctx, method+" "+route,
+			// Span 名先只写方法，路由模板在收尾时补上：xecho 把这一层挂在 e.Pre 上，
+			// 这时 router 还没跑，c.Path() 是空的
+			ctx, span := otel.Tracer(tracerName).Start(ctx, method,
 				trace.WithSpanKind(trace.SpanKindServer),
 				trace.WithAttributes(attrs...),
 			)
-			// 状态码在 defer 里记：以 http.ErrAbortHandler 中止的请求是带着 panic
+			// 路由和状态码在 defer 里记：以 http.ErrAbortHandler 中止的请求是带着 panic
 			// 穿过这一层的，写在 next(c) 后面的代码根本走不到
 			defer func() {
-				st := status(c)
-				span.SetAttributes(attribute.Int("http.response.status_code", st))
+				route, st := rs.of(c), status(c)
+				span.SetName(method + " " + route)
+				span.SetAttributes(attribute.String("http.route", route), attribute.Int("http.response.status_code", st))
 				// 只有 5xx 和中止算服务端的错。4xx 是客户端传错了，标成错误会让
-				// 链路里满屏是「错误」，真正的故障反而看不出来
+				// 链路里满屏是「错误」，真正的故障反而看不出来；客户端走了的 499 同理
 				switch {
-				case st == web.StatusAborted:
+				case aborted(c):
 					span.SetStatus(codes.Error, "handler aborted")
 				case st >= 500:
 					span.SetStatus(codes.Error, http.StatusText(st))
@@ -73,7 +75,8 @@ func Trace() echo.MiddlewareFunc {
 				span.End()
 			}()
 
-			c.SetRequest(r.WithContext(ctx))
+			defer setContext(r, r.Context())
+			setContext(r, ctx)
 
 			// 必须在 next(c) 之前写：响应一旦开始发送，header 就改不动了。
 			// 错误响应也带着它：e.HTTPErrorHandler 写错误响应时不清响应头
@@ -81,7 +84,7 @@ func Trace() echo.MiddlewareFunc {
 				c.Response().Header().Set(TraceIDHeader, sc.TraceID().String())
 			}
 
-			finish(c, next(c))
+			finish(c, ctx, next(c))
 			return nil
 		}
 	}
@@ -96,7 +99,8 @@ func Propagate() echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
 			r := c.Request()
-			c.SetRequest(r.WithContext(otel.GetTextMapPropagator().Extract(r.Context(), inbound(c))))
+			defer setContext(r, r.Context())
+			setContext(r, otel.GetTextMapPropagator().Extract(r.Context(), inbound(c)))
 			return next(c)
 		}
 	}

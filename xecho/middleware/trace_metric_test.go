@@ -3,6 +3,8 @@ package middleware
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"strings"
@@ -144,7 +146,10 @@ func TestTrace_ReturnedErrorRecordedOnSpanAndResponseKeepsTraceID(t *testing.T) 
 func TestTrace_UnmatchedRouteUsesFixedValue(t *testing.T) {
 	// 用真实路径的话，扫描器随便打几个 URL 就能把链路和指标的基数撑爆。
 	// 方法不对（405）也记 unmatched：echo 给的是那条路由的模板，和 xgin 对不上
-	for _, c := range errorCases[:2] {
+	for _, c := range errorCases {
+		if c.route != "unmatched" {
+			continue
+		}
 		spans := recording(t)
 		errorEcho(Trace()).ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(c.method, c.path, nil))
 		got := spans()
@@ -304,6 +309,7 @@ func TestMetric_UnmatchedRouteUsesFixedValue(t *testing.T) {
 	e.ServeHTTP(httptest.NewRecorder(), get("/nope/12345"))
 	e.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("POST", "/only-get", nil))
 	e.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("OPTIONS", "/only-get", nil))
+	e.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("POST", "/api/v1/users", nil)) // 落到分组的兜底上
 
 	out := testkit.Scrape(m.Handler)
 	for _, want := range []string{
@@ -311,10 +317,15 @@ func TestMetric_UnmatchedRouteUsesFixedValue(t *testing.T) {
 		`http_requests_total{method="POST",route="unmatched",status="405"} 1`,
 		// OPTIONS 由 echo 自己回 204 和 Allow，同样不是注册过的路由
 		`http_requests_total{method="OPTIONS",route="unmatched",status="204"} 1`,
+		// 分组下方法不对：兜底比 405 优先，echo 回 404
+		`http_requests_total{method="POST",route="unmatched",status="404"} 1`,
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("该有 %s\n实际=\n%s", want, out)
 		}
+	}
+	if strings.Contains(out, `route="/api/v1/*"`) {
+		t.Errorf("落到分组兜底上的请求不该记成兜底的模板\n实际=\n%s", out)
 	}
 	if strings.Contains(out, `route="/only-get"`) {
 		t.Errorf("方法不对的请求不该记成那条路由\n实际=\n%s", out)
@@ -410,5 +421,98 @@ func TestTrace_DSNPasswordInErrorIsMaskedOnSpan(t *testing.T) {
 	})
 	if got, want := attrsOf(spans()[0])["echo.errors"], "dial postgres://app:"+Redacted+"@db:5432/prod failed"; got != want {
 		t.Errorf("echo.errors=%q, want %q", got, want)
+	}
+}
+
+// ---- 499 的规矩：只记真的没发出去的 ----
+
+// recordedAs 跑一次请求，返回客户端收到的状态码，以及访问日志、指标、Span 各自记下的状态码和 Span 是否标错
+func recordedAs(t *testing.T, req *http.Request, h echo.HandlerFunc) (sent int, logged any, metric string, span string, spanErr bool) {
+	t.Helper()
+	lines := capture(t)
+	spans := recording(t)
+	m := withMetrics(t)
+	w := serve(t, req, []echo.MiddlewareFunc{Trace(), Log(), Metric(), Recover(nil)}, h)
+
+	logged = accessLogs(lines())[0]["status"]
+	out := testkit.Scrape(m.Handler)
+	if i := strings.Index(out, `http_requests_total{method="GET",route="/hello",status="`); i >= 0 {
+		rest := out[i+len(`http_requests_total{method="GET",route="/hello",status="`):]
+		metric = rest[:strings.Index(rest, `"`)]
+	}
+	got := spans()
+	if len(got) != 1 {
+		t.Fatalf("应产出一个 Span，got=%d", len(got))
+	}
+	return w.Code, logged, metric, attrsOf(got[0])["http.response.status_code"], got[0].Status.Code == codes.Error
+}
+
+func TestReturnedErrAbortHandlerRecordsWhatWasSent(t *testing.T) {
+	// 回归用例：handler 返回（不是 panic）一个包着 http.ErrAbortHandler 的错误，连接并没有断，
+	// 客户端收到的是 HTTPErrorHandler 渲染的 500，三处却都记成了 499。只有 panic 才会让 net/http 断开连接
+	sent, logged, metric, span, spanErr := recordedAs(t, get("/hello"), func(echo.Context) error {
+		return fmt.Errorf("proxy: %w", http.ErrAbortHandler)
+	})
+	if sent != 500 || logged != float64(500) || metric != "500" || span != "500" || !spanErr {
+		t.Errorf("返回的错误该按发出去的 500 记，got sent=%d log=%v metric=%s span=%s spanErr=%v", sent, logged, metric, span, spanErr)
+	}
+}
+
+// goneRequest 客户端已经走了的请求：net/http 在连接断开（HTTP/2 是流被重置）、强制断连时取消请求的 ctx
+func goneRequest() *http.Request {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	return get("/hello").WithContext(ctx)
+}
+
+func TestClientGoneBeforeAnythingSentRecordedAs499(t *testing.T) {
+	// 回归用例：客户端断开之后 handler 照惯例 return ctx.Err()，原先记成 500、Span 标错、进 5xx 的指标——
+	// 客户端其实什么都没收到。c.Error 往断开的连接上写错误响应照样置上 Committed、Status 记 500（实测），
+	// 所以要在交给它之前判
+	for name, h := range map[string]echo.HandlerFunc{
+		"return ctx.Err()": func(c echo.Context) error { return c.Request().Context().Err() },
+		"什么都不写就返回":         func(echo.Context) error { return nil },
+	} {
+		_, logged, metric, span, spanErr := recordedAs(t, goneRequest(), h)
+		if logged != float64(499) || metric != "499" || span != "499" || spanErr {
+			t.Errorf("%s：该记 499、Span 不标错（不是服务端的错），got log=%v metric=%s span=%s spanErr=%v", name, logged, metric, span, spanErr)
+		}
+	}
+}
+
+func TestClientGoneAfterResponseCommittedKeepsSentStatus(t *testing.T) {
+	// 响应已经开始发了：客户端收到了（至少是一部分），记已经发出去的那个状态码
+	_, logged, metric, span, _ := recordedAs(t, goneRequest(), func(c echo.Context) error {
+		_ = c.String(201, "partial")
+		return c.Request().Context().Err()
+	})
+	if logged != float64(201) || metric != "201" || span != "201" {
+		t.Errorf("该记已经发出去的 201，got log=%v metric=%s span=%s", logged, metric, span)
+	}
+}
+
+func TestClientDeadlineIsNotClientGone(t *testing.T) {
+	// ContextTimeout 这类中间件给请求套的是截止时间：到点了客户端还在等，收到的是 503，不是 499
+	_, logged, metric, _, _ := recordedAs(t, get("/hello"), func(c echo.Context) error {
+		ctx, cancel := context.WithTimeout(c.Request().Context(), 0)
+		defer cancel()
+		<-ctx.Done()
+		return echo.ErrServiceUnavailable.WithInternal(ctx.Err())
+	})
+	if logged != float64(503) || metric != "503" {
+		t.Errorf("该记 503，got log=%v metric=%s", logged, metric)
+	}
+}
+
+func TestClientGoneIgnoresContextsSetByInnerLayers(t *testing.T) {
+	// 里面几层换上的 ctx 是业务自己的：套了一层、返回时 cancel 掉，出了那一层就是 Canceled，客户端却还在等
+	_, logged, metric, span, _ := recordedAs(t, get("/hello"), func(c echo.Context) error {
+		ctx, cancel := context.WithCancel(c.Request().Context())
+		cancel()
+		c.SetRequest(c.Request().WithContext(ctx))
+		return nil
+	})
+	if logged != float64(200) || metric != "200" || span != "200" {
+		t.Errorf("客户端还在，该记 200，got log=%v metric=%s span=%s", logged, metric, span)
 	}
 }

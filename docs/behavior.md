@@ -31,6 +31,9 @@
 | [`XEcho` panic](../xecho/README.md#行为与实测) | 不兜：连接断掉，栈由 net/http 写 stderr | 兜住，记 ERROR 日志、回 500 | 栈进不了日志平台，客户端只看到 EOF |
 | [`XEcho` 服务器超时](../xecho/README.md#行为与实测) | `e.Server` 四个超时全是 0 | 不用 `e.Start`，同 `XGin` 的四个超时 | 同 `XGin.ReadHeaderTimeout` |
 | [echo 自己的日志](../xecho/README.md#行为与实测) | gommon 写 `os.Stdout`，自己的 JSON 格式 | 接到 slog，级别不变 | 绕开 slog 的输出进不了日志平台 |
+| [`XEcho` 分组的兜底路由](../xecho/README.md#行为与实测) | 带中间件的分组悄悄注册 `RouteNotFound`，`c.Path()` 是 `/api/v1/*` | 落到兜底上的记 `unmatched` | 否则 404 在看板上是 `/api/v1/*`，和 xgin 对不上 |
+| [`XEcho` 的 `e.Pre`](../xecho/README.md#行为与实测) | 挂在 `e.Use` 上的中间件看不到 Pre 里结束的请求，也兜不住 Pre 里的 panic | 内置中间件挂在 `e.Pre` 上，原地换请求的 ctx | Pre 里的鉴权、限流、301 不进日志和指标；换成副本的话 `MethodOverride` 失效 |
+| [`http.Server.ErrorLog`](../xgin/README.md#日志) | nil：写标准库的 log（经 slog 是 INFO、消息每行不同） | 接到 slog，WARN，消息 `<模块> http server error` | TLS 握手失败这类错误没法按消息检索和告警 |
 | [`XGorm.Log: false`](../xgorm/README.md#行为与实测) | 换成 GORM 自己的 stdout logger | 真的不打 | 那个默认实现带 ANSI 颜色直写 `os.Stdout` |
 | [`XGorm.Log: true`](../xgorm/README.md#行为与实测) | 参数值代进 SQL 再记 | 只记带占位符的 SQL | 否则 `WHERE password = ?` 记下来的是真实的密码 |
 | [`XGorm` 建连](../xgorm/README.md#行为与实测) | `gorm.Open` 自己 ping 一次 | 关掉，走框架的 ctx-aware 探测 | 它用自己的 context，退出信号和重试都管不到 |
@@ -82,7 +85,7 @@ XGorm、XRedis 启动时各探一次，共用同一份实现（`internal/xclient
 | [xcache](../xcache/README.md#行为与实测) | ristretto：内部开销、停止、指标开销、TTL |
 | [xhttp](../xhttp/README.md#行为与实测) | resty / otelhttp / 标准库 Transport 的默认 |
 | [xgin](../xgin/README.md#行为与实测) | gin / net/http：代理、上传、超时、h2c、TLS、优雅退出 |
-| [xecho](../xecho/README.md#行为与实测) | echo：client_ip、错误渲染、路由模板、panic、gommon 日志、multipart 阈值、路由的严格匹配 |
+| [xecho](../xecho/README.md#行为与实测) | echo：client_ip、错误渲染、路由模板、分组的兜底路由、`e.Pre`、超时中间件、panic、gommon 日志、压缩、multipart 阈值、路由的严格匹配 |
 | [xmetric](../xmetric/README.md#行为与实测) | client_golang：桶、名字、常量标签 |
 | [xtrace](../xtrace/README.md#行为与实测) | OTel SDK：采样、service.name、透传 |
 | [xlog](../xlog/README.md#行为与实测) | `Perm`、轮转文件名、时区 |

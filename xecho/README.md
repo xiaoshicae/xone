@@ -6,6 +6,7 @@ client_ip 信谁、退出时等不等 handler，两边一字不差（写在两�
 
 - 访问日志（凭证逐字段脱敏）、链路、指标（自动挂 `/metrics`）、panic 恢复已经装好
 - handler 返回的错误在中间件里就渲染成响应：404、405、500 在访问日志、指标、链路里记的是客户端真正收到的状态码和字节数
+- 内置中间件挂在 `e.Pre` 上：你在 `e.Pre` 里拒掉、重定向的请求照样进访问日志、指标、链路，Pre 里的 panic 也兜得住
 - 默认只信私有网段的代理（echo 自己默认全信）：负载均衡、Ingress、Pod 转发来的 `X-Forwarded-For` 照收，公网直连的伪造不了
 - 慢连接有防线：`ReadHeaderTimeout` 10s、`IdleTimeout` 60s，写 0 启动失败（echo 自己的 `e.Server` 全是 0）
 - HTTPS、双向认证、h2c 都在配置里开
@@ -102,7 +103,7 @@ admin := xecho.New().WithConfig(c).WithRoutes(adminRoutes)
 |---|---|
 | `New() *XEcho` | 创建一个服务（Runnable），什么都不读，配置在装配那一刻才取 |
 | `(*XEcho).WithRoutes(f ...func(*echo.Echo))` | 注册路由，回调拿到原生 echo；可以调多次，按顺序生效 |
-| `(*XEcho).WithMiddleware(m ...echo.MiddlewareFunc)` | 追加自定义中间件，排在所有内置中间件之后，对每个请求都生效（含 `/metrics` 和 404） |
+| `(*XEcho).WithMiddleware(m ...echo.MiddlewareFunc)` | 追加自定义中间件（`e.Use`，router 之后），排在所有内置中间件之后，对每个请求都生效（含 `/metrics` 和 404） |
 | `(*XEcho).WithRecoverFunc(f func(echo.Context, any) error)` | 自定义 panic 之后的响应；返回的错误交给 `e.HTTPErrorHandler`，默认回 500 |
 | `(*XEcho).WithConfig(c Config)` | 用这份完整配置起服务，不读配置文件里的 XEcho 块 |
 | `(*XEcho).Engine() *echo.Echo` | 触发装配并返回原生 echo；之后再 `With...` 不生效 |
@@ -129,7 +130,13 @@ admin := xecho.New().WithConfig(c).WithRoutes(adminRoutes)
   `TrustedProxies`，两边要一起改就改配置。XEcho 块在装配（`Engine()` 或 `Start`）那一刻才读。
 - **路由比 gin 严**：末尾斜杠严格匹配（`/a/` 是 404，gin 默认 301 到 `/a`）；HEAD 不自动走 GET（405）；
   路径参数在路由末尾时吃得下后面的 `/`（`/users/:id` 匹配 `/users/1/z`，`id` 是 `1/z`）。要放宽末尾斜杠用 `e.Pre(echomw.RemoveTrailingSlash())`。
-- **中间件用 `e.Use`，别用 `e.Pre` 挂观测类的**：`Pre` 在 router 之前跑，那时还没有路由模板，错误也还没渲染。
+- **中间件的顺序**，自外向内：`LogScope → Trace → Log → Metric → Recover →` 你的 `e.Pre` `→ router →` `WithMiddleware` / 你的 `e.Use` `→ handler`。
+  内置的挂在 `e.Pre` 上、排在你的 `e.Pre` 外面：Pre 里拒掉（`return echo.ErrUnauthorized`）、重定向（`RemoveTrailingSlashWithConfig` 的 301）的请求
+  照样进访问日志、指标、链路、带 `X-Trace-Id`，Pre 里的 panic 兜住回 500。这时 router 还没跑，`route` 记 `unmatched`。
+  要用 `c.Path()`、`c.Param()` 的中间件挂 `e.Use` 或 `WithMiddleware`；`e.Pre(echomw.MethodOverride())` 照常生效，记下的是改过之后的方法。
+- **超时用 `echomw.ContextTimeout`，别用 `echomw.Timeout`**：后者（echo 已标弃用）在另一个协程里跑 handler、自己往原始的 writer 写 503，
+  实测客户端收到 503，访问日志、指标、链路记的却是 200、`bytes_out` 0，`-race` 下还和访问日志中间件读写同一个响应。
+  `ContextTimeout` 只给请求套截止时间，handler 看 `c.Request().Context()` 返回，由它换成 503，记的就是 503。
 - `e.Debug = true` 时 echo 的错误响应会带上错误原文（`{"message":...,"error":"..."}`），线上别开。
 
 ## 在负载均衡 / Cloudflare 后面
@@ -148,22 +155,27 @@ echo 自带的 `ExtractIPFromXFFHeader` 默认信任回环、链路本地和私�
 | 字段 | 内容 |
 |---|---|
 | `method` | 请求方法，原样 |
-| `route` | 路由模板，如 `/users/:id`；没匹配上路由（404）、方法不对（405）、echo 自动应答的 OPTIONS 都是 `unmatched`，真实路径看 `path` |
+| `route` | 路由模板，如 `/users/:id`；没匹配上路由（404）、方法不对（405）、echo 自动应答的 OPTIONS、落到 `RouteNotFound` 兜底上的（含分组悄悄注册的，见[「行为与实测」](#行为与实测)）、在 `e.Pre` 里就结束了的都是 `unmatched`，真实路径看 `path` |
 | `path` | 请求路径，**不带查询串** |
-| `status` | 客户端收到的状态码（handler 返回的错误渲染之后的那个）；中止的请求记 `499` |
+| `status` | 客户端收到的状态码（handler 返回的错误渲染之后的那个）；中止的、客户端走了还什么都没发的记 `499`，见[下文](#499中止的请求) |
 | `elapsed_ms` | 耗时，毫秒，保留到微秒 |
 | `client_ip` | `c.RealIP()`：直连对端，或 `XEcho.TrustedProxies` 里的代理转发来的地址 |
 | `host` / `proto` / `user_agent` | 请求的 `Host`、`HTTP/1.1` / `HTTP/2.0`、`User-Agent` |
 | `bytes_in` | 请求头里的 `Content-Length`；分块上传记 `-1` |
-| `bytes_out` | 写出的响应体字节数（`c.Response().Size`），不含响应头；错误响应也算 |
-| `query` / `request_headers` / `request_body` / `response_headers` / `response_body` | 各自的开关打开时，脱敏规则同 xgin |
+| `bytes_out` | 写出的响应体字节数（`c.Response().Size`），不含响应头；错误响应也算。挂了 `echomw.Gzip` 时是**压缩前**的字节数（xgin 配 gin-contrib/gzip 是压缩后的），见[「行为与实测」](#行为与实测) |
+| `query` / `request_headers` / `request_body` / `response_headers` / `response_body` | 各自的开关打开时，脱敏规则同 xgin；响应带着 `Content-Encoding`（`echomw.Gzip` 压缩过）时 `response_body` 只记一句 `[gzip-encoded content omitted]` |
 | `errors` | handler 返回的错误（`err.Error()`，如 `code=404, message=Not Found`）、中止或断连的原因；没有就不写；出现敏感词就整段记成 `***REDACTED***`，否则只把 `postgres://app:pw@db`、`app:pw@tcp(db:3306)` 里的密码换成 `***REDACTED***`（Span 的 `echo.errors` 同理） |
 | `trace_id` / `span_id` | 有链路时 |
 
 `middleware.AddSensitiveFields(...)` / `AddSensitiveHeaders(...)` 和 xgin 的同名函数写的是同一张表，用哪个都行。
 
-panic 由 Recover 中间件记一条 `panic while handling request`（ERROR，带 `error`、`stack`、`path`、`method`；`error` 按 `errors` 字段的规矩脱敏，`stack` 只有函数和行号、原样记）并回 500；
-客户端提前断开导致的写失败记 `connection broken`，不打栈。
+panic 由 Recover 中间件记一条 `panic while handling request`（ERROR，带 `error`、`stack`、`path`、`method`；`error` 按 `errors` 字段的规矩脱敏，`stack` 只有函数和行号、原样记）并回 500，
+`e.Pre` 里的 panic 也一样。响应已经开始写了（写出了状态码）再 panic 的，不再改状态码：访问日志、指标、链路记的是已经发出去的那个（通常 200），
+`errors` 为空、Span 不标错，那条 panic 日志是唯一的迹象（xgin 相同）。
+
+客户端提前断开之后的写失败，echo 是**返回**错误而不是 panic：访问日志照常一条，`status` 是已经发出去的那个（通常 200），
+`errors` 是 `write tcp …: write: broken pipe`（或 `connection reset by peer`），不打栈；错误响应已经写不出去，echo 的错误处理见 `Committed` 什么都不做。
+只有 handler 自己把这样的错误 panic 出来时才记 `connection broken`（ERROR，不打栈，规则同 xgin）。
 
 ### 日志
 
@@ -171,6 +183,7 @@ panic 由 Recover 中间件记一条 `panic while handling request`（ERROR，�
 |---|---|---|
 | `xecho listening` | INFO | `addr`、`tls`、`mtls`、`h2c` |
 | `echo internal log` | echo 的级别（默认只有 ERROR） | `message`：echo 自己写的那一行，如错误响应写失败时的 `write: broken pipe` |
+| `xecho http server error` | WARN | `error`：net/http 自己报的那一行，如 `http: TLS handshake error from 203.0.113.9:1234: EOF`；`e.StdLogger` 写的也在这里 |
 
 日志的全局约定见 [`docs/observability.md`](../docs/observability.md#日志)。
 
@@ -197,8 +210,12 @@ panic 由 Recover 中间件记一条 `panic while handling request`（ERROR，�
 
 ### 499：中止的请求
 
-handler 以 `http.ErrAbortHandler` 中止的请求在访问日志、指标、链路里记 499，规则同
-[xgin「499：中止的请求」](../xgin/README.md#499中止的请求)。
+两种请求在访问日志、指标、链路里记 499，规则同 [xgin「499：中止的请求」](../xgin/README.md#499中止的请求)：
+
+- handler `panic(http.ErrAbortHandler)` 中止的（Span 标错）。**返回**一个包着它的错误（`fmt.Errorf("proxy: %w", http.ErrAbortHandler)`）不算：
+  连接没断，客户端收到的是 `HTTPErrorHandler` 渲染的 500，记 500；
+- 客户端已经走了、响应还一个字节都没发的（Span 不标错）：handler 照惯例 `return ctx.Err()`，原本会被渲染成一个谁也收不到的 500。
+  echo 往断开的连接上写错误响应照样把 `Committed` 置上、`Status` 记成 500（实测），所以在交给 `HTTPErrorHandler` 之前就判。
 
 ## 行为与实测
 
@@ -222,13 +239,49 @@ handler 先写了 200 再返回错误时，echo 默认的错误处理见 `Commit
 `MethodNotAllowedHandler`（405），方法是 OPTIONS 时 echo 自己回 204 和 `Allow`。后两种和 404 一样记 `unmatched`，
 和 xgin（gin 在这两种情况下都没有模板）对得上。
 
+**分组的兜底路由**：`g.Use(...)` 和 `e.Group("/api/v1", mw)` 会悄悄给分组注册两条 `RouteNotFound`（`e.Routes()` 里 `Method` 是
+`echo.RouteNotFound`，即 `echo_route_not_found`）：`/api/v1` 和 `/api/v1/*`，好让分组中间件对分组下的 404 也生效；不带中间件的
+`e.Group` 不注册。于是 `GET /api/v1/nope` 的 `c.Path()` 是 `/api/v1/*`；方法不对也落到兜底上——兜底比 405 优先，
+`POST /api/v1/users`（只注册了 GET）回的是 **404** 不是 405，这是 echo 的行为，框架不改。落到兜底上的（包括自己 `e.RouteNotFound` 注册的）
+都记 `unmatched`；兜底和真正的路由是同一个模板时（分组里 `g.GET("/*", proxy)`），命中那条路由的方法照记模板 `/api/v1/*`。
+兜底的表在第一个请求到来时从 `e.Routes()`（连同 `e.Routers()` 里按 Host 分的）取一次。
+`e.Static("/static", dir)` 注册的是一条真正的 GET 路由 `/static*`，文件不存在时由它自己回 404，记的是 `/static*`：基数照样有界。
+
+**`e.Pre`**：`Echo.ServeHTTP` 有 Pre 中间件时把 router 包在 Pre 链的最里面，所以挂在 Pre 上的内置中间件在 `next(c)` 返回时
+`c.Path()`、`c.Handler()` 已经有了，405 的 `Allow` 也已经留在 c 上。router 找路由用的是请求刚进来时的那个 `*http.Request`
+（闭包里捕获的），不是 `c.Request()`：Pre 里换成 `r.WithContext` 的副本的话，排在后面的 `e.Pre(echomw.MethodOverride())`
+改的是副本上的 `Method`，实测 `POST` + `X-HTTP-Method-Override: PUT` 走进了 POST 的 handler。所以内置中间件原地换请求的 ctx，
+不换 `*http.Request`，出了自己那一层再换回原来的：调 `e.ServeHTTP` 的一方拿回的是原样的请求。原来每个请求要复制两次
+`*http.Request`，这一改基准测试里整条链少 2 次分配、约 600 字节。
+
+**超时中间件**：`echomw.Timeout`（已弃用）配 50ms、handler 睡 200ms：客户端收到 503 和一页 HTML，包在外面的中间件读到的是
+`Status 200`、`Size 0`，`-race` 报数据竞争。`echomw.ContextTimeout` 返回 `echo.ErrServiceUnavailable`，由 `HTTPErrorHandler` 渲染成
+`{"message":"Service Unavailable"}`，记的是 503；它返回时 `defer cancel()` 了自己套的 ctx，出了那一层请求的 ctx 就是 `Canceled`——
+判「客户端走了」用的是内置中间件一进来时的 ctx，不受它影响。
+
 **panic** echo 默认不兜：实测客户端读到 `EOF`（连接被 net/http 断掉），栈由 net/http 写进 stderr
-（`http: panic serving 127.0.0.1:…: boom`），不经过 slog。这里的 Recover 记一条 ERROR 日志并回 500。
+（`http: panic serving 127.0.0.1:…: boom`），不经过 slog；`e.Use(echomw.Recover())` 也兜不住 `e.Pre` 里的 panic（实测同样是 EOF）。
+这里的 Recover 挂在 Pre 上，记一条 ERROR 日志并回 500。
 
 **echo 自己的日志**（gommon）默认写 `os.Stdout`，是它自己的 JSON：错误响应写失败（客户端已经断开）时实测留下
 `{"time":…,"level":"ERROR","prefix":"echo","file":"echo.go","line":"492","message":"write: broken pipe"}`。
 级别默认 ERROR，`Warn("response already committed")` 这类写不出来，`Print` 系列不看级别、总会写。
 这里把它接到 slog（消息 `echo internal log`），级别沿用 echo 的。
+`e.StdLogger` 在 `echo.New` 里就绑定了 `e.Logger` 当时的输出（`os.Stdout`），换 `e.Logger` 的输出改不到它；它是 echo 给
+`http.Server.ErrorLog` 准备的（`e.Start` 里这么用），这里接到和服务的 `ErrorLog` 同一处（`xecho http server error`，WARN）。
+
+**客户端断开之后**：handler 等到请求的 ctx 取消、再 `c.Error(ctx.Err())`，调用前 `Committed false`、`Status 200`，调用后
+`Committed true`、`Status 500`、`Size 36`——写失败了照样这么记。往断开的连接上 `c.Response().Write` 写 1MB 的块，
+实测写出 3963 字节之后返回 `write tcp …: write: broken pipe`，`Committed true`、`Status 200`。
+
+**压缩**：`echomw.Gzip` 把 `c.Response().Writer` 换成它的 gzip writer，`c.Response().Size` 数的是交给它之前的字节：
+一个 12000 字节的 `c.String`，线上是 77 字节，`bytes_out` 记 12000。xgin 配 gin-contrib/gzip v1.2.8 记的是线上的 77（它换的是
+`c.Writer`，访问日志读的是它下面那个）。要让 xecho 也记线上的字节数，得在 Gzip 下面每个请求再包一层计数的 writer，框架没这么做。
+截响应体的 writer 在 Gzip 外面，截到的是压缩过的字节，`response_body` 只记一句 `[gzip-encoded content omitted]`。
+
+**截响应体的 writer**（`LogResponseBody: true` 时换进 `c.Response().Writer` 的那个）实现了 `http.Flusher`、`http.Hijacker` 和 `Unwrap`：
+直接做类型断言的老代码、`c.Response().Flush()`、`http.ResponseController` 的读写超时都落到真正的连接上；
+下面的 writer 不支持 Hijack 时返回 `http.ErrNotSupported`，和 net/http 一样。
 
 **服务器**：`e.Server` 的 `ReadHeaderTimeout`、`ReadTimeout`、`WriteTimeout`、`IdleTimeout` 全是 0，banner 只在 `e.Start` 时打。
 这里不用 `e.Start`，服务由和 xgin 共用的 `web.Server` 按配置起，超时、TLS、h2c、优雅退出的实测见

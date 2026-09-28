@@ -1764,7 +1764,15 @@ func xlogCapture(t *testing.T) func() string {
 	}
 	old := slog.Default()
 	slog.SetDefault(l)
-	t.Cleanup(func() { slog.SetDefault(old); closer.Close() })
+	// trace_id 靠提取器写进日志，平时由 xtrace 的 Install 装上；测试自己装，不依赖别的用例先跑过
+	xlog.SetTraceExtractor(func(ctx context.Context) (string, string) {
+		sc := trace.SpanContextFromContext(ctx)
+		if !sc.IsValid() {
+			return "", ""
+		}
+		return sc.TraceID().String(), sc.SpanID().String()
+	})
+	t.Cleanup(func() { xlog.SetTraceExtractor(nil); slog.SetDefault(old); closer.Close() })
 	return func() string {
 		closer.Close()
 		files, _ := filepath.Glob(filepath.Join(dir, "app.log.*"))

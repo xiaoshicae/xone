@@ -10,6 +10,7 @@
 package middleware
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -103,18 +104,27 @@ func Recover(handle gin.RecoveryFunc) gin.HandlerFunc {
 	}
 }
 
-// statusAborted handler 以 http.ErrAbortHandler 中止的请求记成的状态码（499），见 web.StatusAborted
+// statusAborted 没有正常结束的请求记成的状态码（499），见 web.StatusAborted
 const statusAborted = web.StatusAborted
 
-// status 本次请求该记下的状态码。
+// status 本次请求该记下的状态码。ctx 是这一层一进来时请求的 ctx，用来判客户端是不是已经走了
+// （见 web.ClientGone）。
 //
-// 不能直接读 c.Writer.Status()：中止的请求往往已经写出了 200 的响应头，
-// 照读的话一个被截断的响应在日志、指标、链路里全都记成成功
-func status(c *gin.Context) int {
-	for _, e := range c.Errors { // 由 Recover 登记
-		if errors.Is(e.Err, http.ErrAbortHandler) {
-			return statusAborted
-		}
+// 不能直接读 c.Writer.Status()：中止的请求往往已经写出了 200 的响应头，客户端走了、
+// 什么都没写就返回的请求是一个谁也收不到的 200。这两种记 499，见 web.StatusAborted
+func status(c *gin.Context, ctx context.Context) int {
+	if aborted(c) || (!c.Writer.Written() && web.ClientGone(ctx)) {
+		return statusAborted
 	}
 	return c.Writer.Status()
+}
+
+// aborted handler 是不是以 panic(http.ErrAbortHandler) 中止的，由 Recover 登记在 c.Errors 里
+func aborted(c *gin.Context) bool {
+	for _, e := range c.Errors {
+		if errors.Is(e.Err, http.ErrAbortHandler) {
+			return true
+		}
+	}
+	return false
 }

@@ -87,7 +87,7 @@ func Log(opts ...LogOption) gin.HandlerFunc {
 			return
 		}
 
-		start := time.Now()
+		start, ctx := time.Now(), c.Request.Context()
 		var reqBody []byte
 		if o.ReqBody {
 			reqBody = web.SnapshotBody(c.Request)
@@ -110,7 +110,7 @@ func Log(opts ...LogOption) gin.HandlerFunc {
 				Request:  c.Request,
 				Elapsed:  time.Since(start),
 				Route:    routeOf(c), // 没匹配上时记 unmatched，真实路径在 path 里
-				Status:   status(c),
+				Status:   status(c, ctx),
 				ClientIP: c.ClientIP(),
 				// 一个字节都没写时 gin 给的是 -1，记成 0
 				BytesOut:   max(c.Writer.Size(), 0),

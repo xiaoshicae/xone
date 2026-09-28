@@ -7,7 +7,7 @@ Web 服务：拿到的是原生 `*gin.Engine`，`xgin.New()` 就是交给 `xone.
 - 慢连接有防线：`ReadHeaderTimeout` 10s、`IdleTimeout` 60s，写 0 启动失败
 - HTTPS、双向认证、h2c 都在配置里开
 - 停止时等在途请求做完，到点断连并报出还没返回的 handler 数
-- 中止的请求记 499，不记成 200
+- 中止的请求、客户端走了还什么都没发的请求记 499，不记成 200
 
 ## 快速上手
 
@@ -155,19 +155,19 @@ admin := xgin.New().WithConfig(c).WithRoutes(adminRoutes)
 | `method` | 请求方法，原样 |
 | `route` | 路由模板，如 `/users/:id`；没匹配上路由时是 `unmatched`（和指标、Span 一致），真实路径看 `path` |
 | `path` | 请求路径，**不带查询串** |
-| `status` | 状态码；中止的请求记 `499`，见[下文](#499中止的请求) |
+| `status` | 状态码；中止的、客户端走了还什么都没发的记 `499`，见[下文](#499中止的请求) |
 | `elapsed_ms` | 耗时，毫秒，保留到微秒（如 `0.051`） |
 | `client_ip` | 客户端地址：直连对端，或 `XGin.TrustedProxies` 里的代理转发来的 `X-Forwarded-For` |
 | `host` | 请求的 `Host`（HTTP/2 是 `:authority`），原样 |
 | `proto` | `HTTP/1.1`、`HTTP/2.0` |
 | `user_agent` | `User-Agent`，没有就是空串 |
 | `bytes_in` | 请求头里的 `Content-Length`；分块上传没有这个头，记 `-1` |
-| `bytes_out` | 写出的响应体字节数，不含响应头；没写响应体是 `0` |
+| `bytes_out` | 写出的响应体字节数，不含响应头；没写响应体是 `0`；配了 gin-contrib/gzip 时是压缩后（线上）的字节数 |
 | `query` | `LogQuery: true` 且有查询串时，逐字段脱敏，规则同表单 body |
 | `request_headers` | `LogRequestHeaders: true` 时，凭证类已脱敏 |
 | `request_body` | `LogRequestBody: true` 时，最多前 256KB，逐字段脱敏；multipart 和 `application/octet-stream` 只记一句 `omitted` |
 | `response_headers` | `LogResponseHeaders: true` 时，脱敏规则同请求头（`Set-Cookie` 等遮掉） |
-| `response_body` | `LogResponseBody: true` 且是文本类响应时，最多前 4KB，逐字段脱敏 |
+| `response_body` | `LogResponseBody: true` 且是文本类响应时，最多前 4KB，逐字段脱敏；响应带着 `Content-Encoding`（压缩中间件压过的）时只记一句 `[gzip-encoded content omitted]` |
 | `errors` | handler 里 `c.Error(...)` 登记的错误，没有就不写；多条用 `; ` 隔开（`Error #01: a; Error #02: b`）；出现敏感词就整段记成 `***REDACTED***`，否则只把 `postgres://app:pw@db`、`app:pw@tcp(db:3306)` 里的密码换成 `***REDACTED***`（Span 的 `gin.errors` 同理） |
 | `trace_id` / `span_id` | 有链路时 |
 
@@ -186,13 +186,15 @@ admin := xgin.New().WithConfig(c).WithRoutes(adminRoutes)
 会误中 `author`、`Idempotency-Key`、随机串。
 
 panic 由 Recover 中间件记一条 `panic while handling request`（ERROR，带 `error`、`stack`、`path`、`method`；`error` 按 `errors` 字段的规矩脱敏，`stack` 只有函数和行号、原样记）并回 500；
-客户端提前断开导致的写失败记 `connection broken`，不打栈。
+客户端提前断开导致的写失败记 `connection broken`，不打栈。响应已经开始写了（写出了状态码）再 panic 的，不再改状态码：
+访问日志、指标、链路记的是已经发出去的那个（通常 200），`errors` 为空、Span 不标错，那条 panic 日志是唯一的迹象。
 
 ### 日志
 
 | 消息 | 级别 | 字段 |
 |---|---|---|
 | `xgin listening` | INFO | `addr`、`tls`、`mtls`、`h2c` |
+| `xgin http server error` | WARN | `error`：net/http 自己报的那一行（`http.Server.ErrorLog`），如 `http: TLS handshake error from 203.0.113.9:1234: EOF` |
 
 日志的全局约定（`trace_id` 注入、`xlog.AddKV`、框架的启停日志）见 [`docs/observability.md`](../docs/observability.md#日志)。
 
@@ -222,9 +224,15 @@ xgin 的 `Trace` 开着时，每个响应带 `X-Trace-Id: <32 位 trace id>`，�
 
 ### 499：中止的请求
 
-handler 以 `http.ErrAbortHandler` 中止的请求（`httputil.ReverseProxy` 转发到一半上游断开时也是这样），访问日志、
-指标、链路里的状态码一律记成 **499**，Span 标为错误，访问日志的 `errors` 里带着 `net/http: abort Handler`。
-这个码不会发给客户端——连接直接断了；不这样记的话，一个被截断的响应在三处都记成已经发出去的 200。
+两种请求在访问日志、指标、链路里的状态码记成 **499**（借 nginx 的 client closed request）。这个码不会发给客户端：
+
+- handler 以 `panic(http.ErrAbortHandler)` 中止的（`httputil.ReverseProxy` 转发到一半上游断开时也是这样）：连接直接断了，
+  响应往往已经写出了 200 的响应头，不这样记的话一个被截断的响应在三处都记成成功。Span 标为错误，访问日志的 `errors` 里带着 `net/http: abort Handler`。
+- 客户端已经走了（断开连接、HTTP/2 的流被重置，或者停止时到点强制断连——请求的 ctx 被 net/http 取消），而响应一个字节都还没写：
+  什么都没写就返回的原本记成 `bytes_out` 为 0 的 200，客户端其实什么都没收到。Span **不**标错：那不是服务端的错。
+
+响应已经开始写了的照记已经写出去的状态码：客户端至少收到了一部分。「客户端走了」只看中间件一进来时请求的 ctx——
+里面几层换上的、业务自己的 ctx 到了截止时间或者被 cancel 掉，不算（客户端还在等）。
 
 ## 行为与实测
 

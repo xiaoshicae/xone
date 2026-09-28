@@ -6,6 +6,5 @@ package peer
 
 // TrustedKey echo.Context 里的 key，值为 true 表示直连的对端在 XEcho.TrustedProxies 里。
 //
-// 只在可信时才写：对端不可信的请求不必付一次建 echo.Context 存储的分配。
-// 读的一侧没写过就是 false，正好是安全的那一边——漏写只会少信，不会多信。
+// 只在可信时才写：读的一侧没写过就是 false，正好是安全的那一边——漏写只会少信，不会多信。
 const TrustedKey = "xone/xecho.trusted_peer"

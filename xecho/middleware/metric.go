@@ -30,25 +30,26 @@ func Metric() echo.MiddlewareFunc {
 		once    sync.Once
 		total   *prometheus.CounterVec
 		latency *prometheus.HistogramVec
+		rs      routes
 	)
 
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
 			once.Do(func() { total, latency = newCollectors() })
 
-			start := time.Now()
+			start, ctx := time.Now(), contextOf(c)
 
 			// 用 defer 记：即使 panic 穿过本层（比如自定义的 recover 函数自己炸了），
 			// 这个请求也仍然会被计入，不会在错误率里凭空消失
 			defer func() {
-				route, method, code := routeOf(c), web.NormalizeMethod(c.Request().Method), strconv.Itoa(status(c))
+				route, method, code := rs.of(c), web.NormalizeMethod(c.Request().Method), strconv.Itoa(status(c))
 
 				total.WithLabelValues(method, route, code).Inc()
 				// 用秒而不是毫秒：毫秒取整会把 0.4ms 的请求记成 0
 				latency.WithLabelValues(method, route, code).Observe(time.Since(start).Seconds())
 			}()
 
-			finish(c, next(c))
+			finish(c, ctx, next(c))
 			return nil
 		}
 	}

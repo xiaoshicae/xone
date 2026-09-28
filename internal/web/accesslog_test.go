@@ -165,3 +165,29 @@ func TestAccessLog_ErrorsFieldIsRedacted(t *testing.T) {
 		}
 	}
 }
+
+func TestAccessLog_EncodedResponseBodyOmitted(t *testing.T) {
+	// 压缩过的字节进日志是一串乱码；identity 就是没压缩
+	var buf bytes.Buffer
+	old := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(old) })
+
+	l := AccessLog{RespBody: true}
+	for enc, want := range map[string]string{
+		"gzip":     `"response_body":"[gzip-encoded content omitted]"`,
+		" BR ":     `"response_body":"[br-encoded content omitted]"`,
+		"identity": `"response_body":"hello"`,
+		"":         `"response_body":"hello"`,
+	} {
+		buf.Reset()
+		h := http.Header{"Content-Type": {"text/plain"}}
+		if enc != "" {
+			h.Set("Content-Encoding", enc)
+		}
+		l.Log(&Access{Request: httptest.NewRequest("GET", "/x", nil), RespHeader: h, RespBody: []byte("hello")})
+		if !strings.Contains(buf.String(), want) {
+			t.Errorf("Content-Encoding=%q 该记 %s，got=%s", enc, want, buf.String())
+		}
+	}
+}

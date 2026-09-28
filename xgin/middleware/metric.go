@@ -32,12 +32,12 @@ func Metric() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		once.Do(func() { total, latency = newCollectors() })
 
-		start := time.Now()
+		start, ctx := time.Now(), c.Request.Context()
 
 		// 用 defer 记：即使 panic 穿过本层（比如用户自定义的 RecoveryFunc 自己炸了），
 		// 这个请求也仍然会被计入，不会在错误率里凭空消失
 		defer func() {
-			route, method, code := routeOf(c), web.NormalizeMethod(c.Request.Method), strconv.Itoa(status(c))
+			route, method, code := routeOf(c), web.NormalizeMethod(c.Request.Method), strconv.Itoa(status(c, ctx))
 
 			total.WithLabelValues(method, route, code).Inc()
 			// 用秒而不是毫秒：毫秒取整会把 0.4ms 的请求记成 0

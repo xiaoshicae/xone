@@ -10,10 +10,12 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"log"
 	"log/slog"
 	"net"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -51,7 +53,7 @@ func (s *Server) Start(module string, c ServerConfig, h http.Handler) error {
 		return xerror.New(module, "config", err)
 	}
 	addr := net.JoinHostPort(c.Host, strconv.Itoa(c.Port))
-	srv := s.newServer(c, addr, h)
+	srv := s.newServer(module, c, addr, h)
 	srv.TLSConfig = tlsCfg // ListenAndServeTLS 在它的副本上补证书和 h2
 
 	s.mu.Lock()
@@ -185,8 +187,8 @@ func (s *Server) waitHandlers(ctx context.Context) int64 {
 	}
 }
 
-// newServer 按配置构建 http.Server
-func (s *Server) newServer(c ServerConfig, addr string, h http.Handler) *http.Server {
+// newServer 按配置构建 http.Server，module 是它自己的错误日志里的模块名（见 ErrorLog）
+func (s *Server) newServer(module string, c ServerConfig, addr string, h http.Handler) *http.Server {
 	// 超时必须显式设置：零值是「永不超时」，慢客户端可以一直占着连接，
 	// 连接数打满之后服务整体不可用
 	return &http.Server{
@@ -197,6 +199,7 @@ func (s *Server) newServer(c ServerConfig, addr string, h http.Handler) *http.Se
 		ReadTimeout:       c.ReadTimeout,
 		WriteTimeout:      c.WriteTimeout,
 		IdleTimeout:       c.IdleTimeout,
+		ErrorLog:          ErrorLog(module),
 	}
 }
 
@@ -219,4 +222,19 @@ func protocols(c ServerConfig) *http.Protocols {
 	p.SetHTTP2(true) // 只对 TLS 生效，明文连接上它不起作用
 	p.SetUnencryptedHTTP2(c.UseH2C && !c.tlsEnabled())
 	return p
+}
+
+// ErrorLog 给 http.Server.ErrorLog 用的 logger：net/http 自己报的错（TLS 握手失败、Accept 出错、
+// 重复的 WriteHeader……）接到 slog，级别 WARN，消息固定是 "<module> http server error"，原文在 error 字段里。
+//
+// 不设的话 net/http 写的是标准库的 log：进了 slog 也是 INFO，消息是每次都不一样的那一整行，
+// 没法按消息检索和告警。WARN 而不是 ERROR：其中最多的是扫描器、健康检查打出来的 TLS 握手失败，不是服务的故障
+func ErrorLog(module string) *log.Logger { return log.New(serverLog(module), "", 0) }
+
+// serverLog 把 net/http 写进来的一行转给 slog，见 ErrorLog
+type serverLog string
+
+func (m serverLog) Write(p []byte) (int, error) {
+	slog.Warn(string(m)+" http server error", "error", strings.TrimSpace(string(p)))
+	return len(p), nil
 }

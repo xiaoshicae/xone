@@ -53,12 +53,12 @@ func Trace() gin.HandlerFunc {
 		// 状态码在 defer 里记：以 http.ErrAbortHandler 中止的请求是带着 panic
 		// 穿过这一层的，写在 c.Next() 后面的代码根本走不到
 		defer func() {
-			st := status(c)
+			st := status(c, ctx)
 			span.SetAttributes(attribute.Int("http.response.status_code", st))
 			// 只有 5xx 和中止算服务端的错。4xx 是客户端传错了，标成错误会让
-			// 链路里满屏是「错误」，真正的故障反而看不出来
+			// 链路里满屏是「错误」，真正的故障反而看不出来；客户端走了的 499 同理
 			switch {
-			case st == statusAborted:
+			case aborted(c):
 				span.SetStatus(codes.Error, "handler aborted")
 			case st >= 500:
 				span.SetStatus(codes.Error, http.StatusText(st))

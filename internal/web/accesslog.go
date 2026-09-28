@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"io"
 	"log/slog"
 	"net/http"
@@ -71,7 +72,8 @@ func (l *AccessLog) skipPath(path string) bool {
 // echo 的错误在中间件返回之后才渲染成响应）。其余的从 Request 上取。
 type Access struct {
 	Request  *http.Request
-	Route    string // 路由模板，没匹配上时是 unmatched
+	Ctx      context.Context // 记这条日志用的 ctx（trace_id、xlog.AddKV 的字段从这里取）；nil 时用 Request 的
+	Route    string          // 路由模板，没匹配上时是 unmatched
 	Status   int
 	Elapsed  time.Duration
 	ClientIP string
@@ -129,14 +131,34 @@ func (l *AccessLog) Log(a *Access) {
 	if l.RespBody {
 		ct := a.RespHeader.Get("Content-Type")
 		if isText(ct) && len(a.RespBody) > 0 {
-			attrs = append(attrs, slog.String("response_body", RedactBody(a.RespBody, ct)))
+			body := encodedOmitted(a.RespHeader)
+			if body == "" {
+				body = RedactBody(a.RespBody, ct)
+			}
+			attrs = append(attrs, slog.String("response_body", body))
 		}
 	}
 	if a.Errors != "" {
 		attrs = append(attrs, slog.String("errors", RedactText(a.Errors)))
 	}
 
-	slog.LogAttrs(r.Context(), slog.LevelInfo, "request completed", attrs...)
+	ctx := a.Ctx
+	if ctx == nil {
+		ctx = r.Context()
+	}
+	slog.LogAttrs(ctx, slog.LevelInfo, "request completed", attrs...)
+}
+
+// encodedOmitted 响应体按 Content-Encoding 压缩过（gzip、br……）时记进日志的那一句，没压缩过返回空串。
+//
+// 压缩中间件（echo 的 middleware.Gzip、gin-contrib/gzip）排在访问日志里面，截下来的是压缩过的字节：
+// 照记的话是一串二进制乱码，JSON 还会解不出来。解压一遍只为了记日志不值得，和上传的文件一样只记一句 omitted
+func encodedOmitted(h http.Header) string {
+	enc := strings.ToLower(strings.TrimSpace(h.Get("Content-Encoding")))
+	if enc == "" || enc == "identity" {
+		return ""
+	}
+	return "[" + enc + "-encoded content omitted]"
 }
 
 // isText 判断是不是适合直接记进日志的文本类型

@@ -13,6 +13,7 @@ import (
 	"github.com/xiaoshicae/xone/internal/web"
 	"github.com/xiaoshicae/xone/xconfig"
 	"github.com/xiaoshicae/xone/xecho/internal/peer"
+	"github.com/xiaoshicae/xone/xecho/internal/reqctx"
 	"github.com/xiaoshicae/xone/xecho/middleware"
 	"github.com/xiaoshicae/xone/xerror"
 	"github.com/xiaoshicae/xone/xhook"
@@ -100,6 +101,8 @@ func (x *XEcho) WithRoutes(f ...func(*echo.Echo)) *XEcho {
 
 // WithMiddleware 追加自定义中间件，排在所有内置中间件之后。
 //
+// 它们挂在 e.Use 上，在 router 之后跑，取得到 c.Path()、c.Param()；内置的挂在 e.Pre 上，
+// 在使用者自己的 e.Pre 外面，顺序见 build。
 // 它们对每个请求都生效，包括框架挂的 MetricPath 和没匹配上路由的请求（echo 的 e.Use 如此）。
 func (x *XEcho) WithMiddleware(m ...echo.MiddlewareFunc) *XEcho {
 	x.extra = append(x.extra, m...)
@@ -155,22 +158,29 @@ func (x *XEcho) build() {
 		x.trusted = web.ParseProxies(c.TrustedProxies)
 
 		// 洋葱模型，自外向内：
-		//   LogScope → Trace → Log → Metric → Recover → 用户中间件 → handler
+		//   LogScope → Trace → Log → Metric → Recover → 用户的 e.Pre → router → 用户中间件 → handler
 		//
 		// Recover 必须是内置里最内层的：panic 在哪一层被兜住，
 		// 比它更内层的中间件里 next(c) 之后的代码就都不执行了。
 		// 放最内层，外面几层的收尾（记指标、写访问日志）才还跑得到。
 		//
-		// 用 e.Use 而不是 e.Pre：前者在 router 之后跑，中间件里取得到路由模板（c.Path()）
+		// 内置的用 e.Pre 而不是 e.Use：后者在 router 之后才跑，使用者在 e.Pre 里拒掉、重定向的请求
+		// （鉴权、限流、末尾斜杠的 301 常写在那里）经过不了它们——不进访问日志、指标、链路，
+		// Pre 里的 panic 也没人兜（echo 自己不兜，客户端读到 EOF）。挂在 Pre 上照样取得到路由模板：
+		// router 在 Pre 链的最里面跑（Echo.ServeHTTP），next(c) 返回时 c.Path() 已经有了，
+		// 没走到 router 的是空串，记 unmatched。它们在 WithRoutes 之前挂上，排在使用者的 e.Pre 外面。
+		//
+		// Pre 里不动请求：日志作用域、Span 只挂在 ctx 上、存进 echo.Context，路由之后由 attachContext
+		// 换到请求上，理由见 reqctx。所以使用者的 e.Pre 看到的是请求原来的 ctx（那里打的日志不带 trace_id）
+		e.Pre(x.enter)
 		if c.Log {
-			e.Use(middleware.LogScope())
+			e.Pre(middleware.LogScope())
 		}
-		// 先判对端可不可信，Trace / Propagate 才知道收不收透传 Header 和 baggage。
 		// Trace 只管 Span：关掉时照样接上游的链路标识和透传 Header，只是不开 Span
 		if c.Trace {
-			e.Use(x.markTrustedPeer, middleware.Trace())
+			e.Pre(middleware.Trace())
 		} else {
-			e.Use(x.markTrustedPeer, middleware.Propagate())
+			e.Pre(middleware.Propagate())
 		}
 		if c.Log {
 			skip := slices.Clone(c.LogSkipPaths)
@@ -178,7 +188,7 @@ func (x *XEcho) build() {
 				// 指标端点会被抓取系统按秒轮询，记日志纯属刷屏
 				skip = append(skip, c.MetricPath)
 			}
-			e.Use(middleware.Log(
+			e.Pre(middleware.Log(
 				middleware.WithSkipPaths(skip...),
 				middleware.WithBody(c.LogRequestBody, c.LogResponseBody),
 				middleware.WithQuery(c.LogQuery),
@@ -186,9 +196,12 @@ func (x *XEcho) build() {
 			))
 		}
 		if c.Metric {
-			e.Use(middleware.Metric())
+			e.Pre(middleware.Metric())
 		}
-		e.Use(middleware.Recover(x.recover))
+		e.Pre(middleware.Recover(x.recover))
+		// 用户中间件在 router 之后：它们要的是 c.Path()、c.Param()，和使用者自己 e.Use 的一样。
+		// 在它们之前先把 Pre 里建好的 ctx 换到请求上，它们和 handler 看到的就是带着 Span 和日志作用域的 ctx
+		e.Use(attachContext)
 		e.Use(x.extra...)
 
 		// echo 的 e.Use 在每个请求到来时才套上，和路由注册的先后无关（gin 是注册那一刻定死的）：
@@ -226,6 +239,10 @@ func applyConfig(e *echo.Echo, c Config) {
 	// 接到 slog，级别沿用 echo 的默认（ERROR 以上才写）
 	e.Logger.SetHeader("${level}")
 	e.Logger.SetOutput(echoLog{})
+	// e.StdLogger 是 echo 给 http.Server.ErrorLog 准备的（e.Start 里就这么用），在 echo.New 里就绑定了
+	// e.Logger 当时的输出，也就是 os.Stdout（实测 v4.16.0），上面换 Logger 的输出改不到它。
+	// 和服务真正用的 ErrorLog 接到同一处
+	e.StdLogger = web.ErrorLog("xecho")
 }
 
 // echoLog 把 echo 自己的日志一行一行转给 slog。
@@ -254,6 +271,31 @@ func echoLevel(s string) slog.Level {
 	return slog.LevelInfo // INFO，以及 Print 系列（级别是 -）
 }
 
+// enter 挂在 Pre 链的最外面，给内置中间件备好两样东西：请求原来的 ctx（内置中间件见到它就只往 echo.Context
+// 里写、不动请求，见 reqctx），和直连的对端可不可信（Trace / Propagate 据此决定收不收透传 Header，见 markTrustedPeer）。
+//
+// c.Set 会建 echo.Context 的存储，一个请求一次，之后的 c.Set 都用它
+func (x *XEcho) enter(next echo.HandlerFunc) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		c.Set(reqctx.Key, c.Request().Context())
+		x.markTrustedPeer(c)
+		return next(c)
+	}
+}
+
+// attachContext 路由之后、使用者的中间件之前：把 Pre 里建好的 ctx 换到请求上，照常用 r.WithContext 的副本。
+//
+// 使用者在 e.Pre 里换过请求的 ctx 的话，那一层放进去的值到这里就丢了：两棵 ctx 没法合并，
+// 这里保的是 Span 和日志作用域
+func attachContext(next echo.HandlerFunc) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		if ctx, ok := c.Get(reqctx.Key).(context.Context); ok && ctx != c.Request().Context() {
+			c.SetRequest(c.Request().WithContext(ctx))
+		}
+		return next(c)
+	}
+}
+
 // markTrustedPeer 直连的对端在 TrustedProxies 里时给链路中间件留个记号：
 // 只有这样的对端发来的透传 Header（XTrace.ForwardHeaders）才会被收下。
 //
@@ -262,12 +304,9 @@ func echoLevel(s string) slog.Level {
 // 「谁是自己人」用的是信任代理的那张表，不另设开关——同一件事只该有一个地方说。
 //
 // 判的是直连的对端（RemoteAddr），不是 c.RealIP()：后者正是从这些可伪造的头里推出来的。
-func (x *XEcho) markTrustedPeer(next echo.HandlerFunc) echo.HandlerFunc {
-	return func(c echo.Context) error {
-		if x.trusted.Trusts(web.RemoteIP(c.Request())) {
-			c.Set(peer.TrustedKey, true)
-		}
-		return next(c)
+func (x *XEcho) markTrustedPeer(c echo.Context) {
+	if x.trusted.Trusts(web.RemoteIP(c.Request())) {
+		c.Set(peer.TrustedKey, true)
 	}
 }
 

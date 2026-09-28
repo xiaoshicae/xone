@@ -45,14 +45,14 @@ section("错误在中间件里渲染")
 # echo 在整条链返回之后才渲染错误：中间件拿到错误时 Status 200、Size 0。三个中间件各自
 # 在自己这一层渲染（finish），打在每个调用点上——哪一个退回「原样返回错误」，它记下的就全是 200
 mutate("访问日志记的是渲染之后的状态码", "xecho/middleware/log.go", "./xecho", "TestLog_ErrorStatus",
-       swap('\t\t\tfinish(c, next(c))\n\t\t\treturn nil\n', '\t\t\treturn next(c)\n'))
+       swap('\t\t\tfinish(c, ctx, next(c))\n\t\t\treturn nil\n', '\t\t\t_ = ctx\n\t\t\treturn next(c)\n'))
 mutate("指标记的是渲染之后的状态码", "xecho/middleware/metric.go", "./xecho", "TestMetric_ReturnedErrorRecordedWithRenderedStatus",
-       swap('\t\t\tfinish(c, next(c))\n\t\t\treturn nil\n', '\t\t\treturn next(c)\n'))
+       swap('\t\t\tfinish(c, ctx, next(c))\n\t\t\treturn nil\n', '\t\t\t_ = ctx\n\t\t\treturn next(c)\n'))
 mutate("Span 记的是渲染之后的状态码", "xecho/middleware/trace.go", "./xecho", "TestTrace_OnlyServerErrorsMarkedAsError|TestTrace_ReturnedError",
-       swap('\t\t\tfinish(c, next(c))\n\t\t\treturn nil\n', '\t\t\treturn next(c)\n'))
+       swap('\t\t\tfinish(c, ctx, next(c))\n\t\t\treturn nil\n', '\t\t\treturn next(c)\n'))
 # 渲染完照样把错误往外返回的话，echo 会再调一遍 HTTPErrorHandler：自定义的错误处理把错误响应写两遍
 mutate("错误响应只渲染一次", "xecho/middleware/metric.go", "./xecho", "TestFinish_HTTPErrorHandlerRunsOnce",
-       swap('\t\t\tfinish(c, next(c))\n\t\t\treturn nil\n', '\t\t\terr := next(c)\n\t\t\tfinish(c, err)\n\t\t\treturn err\n'))
+       swap('\t\t\tfinish(c, ctx, next(c))\n\t\t\treturn nil\n', '\t\t\terr := next(c)\n\t\t\tfinish(c, ctx, err)\n\t\t\treturn err\n'))
 # 外面几层拿到的是 nil：错误不记在 c 上的话，访问日志的 errors、Span 的 echo.errors 都是空的
 mutate("渲染时把错误记在请求上", "xecho/middleware/middleware.go", "./xecho", "TestLog_ErrorStatus|TestTrace_ReturnedError",
        swap('\tc.Set(errKey, err)\n\tc.Error(err)\n', '\tc.Error(err)\n'))
@@ -65,48 +65,62 @@ section("路由标签")
 # 取值写在 routeOf 里，三个中间件共用；前两条改坏它本身，后三条各打一个调用点
 mutate("XEcho 没匹配上的路由记 unmatched", "xecho/middleware/middleware.go", "./xecho",
        "TestLog_UnmatchedRouteIsUnmatched|TestMetric_UnmatchedRouteUsesFixedValue|TestTrace_UnmatchedRouteUsesFixedValue",
-       swap('\treturn web.RouteUnmatched\n', '\treturn c.Request().URL.Path\n'))
+       swap('\tif p == "" || c.Get(echo.ContextKeyHeaderAllow) != nil {\n\t\treturn web.RouteUnmatched\n',
+            '\tif p == "" || c.Get(echo.ContextKeyHeaderAllow) != nil {\n\t\treturn c.Request().URL.Path\n'))
 # echo 在 405 时给的是那条路由的模板：照记的话和 xgin（记 unmatched）对不上
 mutate("方法不对（405）也记 unmatched", "xecho/middleware/middleware.go", "./xecho",
        "TestMetric_UnmatchedRouteUsesFixedValue|TestTrace_UnmatchedRouteUsesFixedValue|TestLog_ErrorStatus",
-       swap(' && c.Get(echo.ContextKeyHeaderAllow) == nil', ''))
+       swap(' || c.Get(echo.ContextKeyHeaderAllow) != nil', ''))
+# 带中间件的分组，echo 悄悄给它注册了 RouteNotFound 兜底（<prefix>、<prefix>/*）：落到兜底上的记成了 /api/v1/*
+mutate("落到 RouteNotFound 兜底上的记 unmatched", "xecho/middleware/middleware.go", "./xecho",
+       "TestLog_ErrorStatus|TestMetric_UnmatchedRouteUsesFixedValue|TestTrace_UnmatchedRouteUsesFixedValue",
+       swap('if methods, ok := rs.fallback[p]; ok && !methods[c.Request().Method] {', 'if methods, ok := rs.fallback[p]; false && ok && !methods[c.Request().Method] {'))
+mutate("兜底的表认的是 RouteNotFound", "xecho/middleware/middleware.go", "./xecho", "TestLog_ErrorStatus",
+       swap('\t\tif r.Method == echo.RouteNotFound {\n', '\t\tif r.Method == "" {\n'))
+# 兜底和真正的路由可以是同一个模板（分组里 GET("/*") 做转发）：命中真正路由的方法照记模板
+mutate("兜底模板上注册了的方法记模板", "xecho/middleware/middleware.go", "./xecho", "TestLog_FallbackTemplateKeptForMethodsRegisteredOnIt",
+       swap('if methods, ok := rs.fallback[p]; ok && !methods[c.Request().Method] {', 'if _, ok := rs.fallback[p]; ok {'))
 mutate("XEcho 访问日志的路由取 routeOf", "xecho/middleware/log.go", "./xecho", "TestLog_UnmatchedRouteIsUnmatched",
-       swap('Route:      routeOf(c),', 'Route:      c.Path(),'))
+       swap('Route:      rs.of(c),', 'Route:      c.Path(),'), swap('\tvar rs routes\n', '\tvar _ routes\n'))
 mutate("XEcho 指标的路由取 routeOf", "xecho/middleware/metric.go", "./xecho", "TestMetric_UnmatchedRouteUsesFixedValue",
-       swap('route, method, code := routeOf(c),', 'route, method, code := c.Path(),'))
+       swap('route, method, code := rs.of(c),', 'route, method, code := c.Path(),'), swap('\t\trs      routes\n', '\t\t_       routes\n'))
 mutate("XEcho Span 的路由取 routeOf", "xecho/middleware/trace.go", "./xecho", "TestTrace_UnmatchedRouteUsesFixedValue",
-       swap('\t\t\troute := routeOf(c) //', '\t\t\troute := c.Path() //'))
+       swap('route, st := rs.of(c), status(c)', 'route, st := c.Path(), status(c)'), swap('\tvar rs routes\n', '\tvar _ routes\n'))
+# 内置中间件挂在 Pre 上，Span 开始时 router 还没跑：名字在收尾时才补上路由模板
+mutate("XEcho Span 名收尾时补上路由模板", "xecho/middleware/trace.go", "./xecho", "TestTrace_UnmatchedRouteUsesFixedValue|TestBuild_RouteTemplateKnownWithBuiltinsInPre",
+       swap('\t\t\t\tspan.SetName(method + " " + route)\n', ''))
 mutate("XEcho 指标的 method 标签收敛", "xecho/middleware/metric.go", "./xecho", "TestMetric_CustomMethod",
-       swap('web.NormalizeMethod(c.Request().Method)', 'c.Request().Method'), swap('\t\tlatency *prometheus.HistogramVec\n\t)\n', '\t\tlatency *prometheus.HistogramVec\n\t)\n\t_ = web.NormalizeMethod\n'))
+       swap('web.NormalizeMethod(c.Request().Method)', 'c.Request().Method'), swap('\t\trs      routes\n\t)\n', '\t\trs      routes\n\t)\n\t_ = web.NormalizeMethod\n'))
 mutate("XEcho Span 的 method 收敛", "xecho/middleware/trace.go", "./xecho", "TestTrace_CustomMethod",
        swap('method := web.NormalizeMethod(r.Method)', 'method := r.Method'))
 
 section("panic 恢复")
 # echo 默认不兜 panic：连接直接断掉，栈进 stderr
 mutate("XEcho 装上了 Recover", "xecho/xecho.go", "./xecho", "TestBuild_PanicRecovered",
-       swap('\t\te.Use(middleware.Recover(x.recover))\n', ''))
+       swap('\t\te.Pre(middleware.Recover(x.recover))\n', ''))
 # Recover 排在外面的话，panic 穿过 Log / Metric 时它们记下的是 200
 mutate("Recover 是内置里最内层的", "xecho/xecho.go", "./xecho", "TestBuild_PanicRecoveredAndStillLogged",
-       swap('\t\te.Use(middleware.Recover(x.recover))\n', ''),
-       swap('\t\tif c.Log {\n\t\t\te.Use(middleware.LogScope())', '\t\te.Use(middleware.Recover(x.recover))\n\t\tif c.Log {\n\t\t\te.Use(middleware.LogScope())'))
+       swap('\t\te.Pre(middleware.Recover(x.recover))\n', ''),
+       swap('\t\tif c.Log {\n\t\t\te.Pre(middleware.LogScope())', '\t\te.Pre(middleware.Recover(x.recover))\n\t\tif c.Log {\n\t\t\te.Pre(middleware.LogScope())'))
 mutate("用户中间件排在 Recover 之内", "xecho/xecho.go", "./xecho", "TestBuild_UserMiddlewareInsideRecover",
-       swap('\t\te.Use(middleware.Recover(x.recover))\n\t\te.Use(x.extra...)\n', '\t\te.Use(x.extra...)\n\t\te.Use(middleware.Recover(x.recover))\n'))
+       swap('\t\te.Pre(middleware.Recover(x.recover))\n', '\t\te.Pre(x.extra...)\n\t\te.Pre(middleware.Recover(x.recover))\n'),
+       swap('\t\te.Use(x.extra...)\n', ''))
 mutate("WithRecoverFunc 接到 Recover 上", "xecho/xecho.go", "./xecho", "TestWithRecoverFunc",
-       swap('e.Use(middleware.Recover(x.recover))', 'e.Use(middleware.Recover(nil))'))
+       swap('e.Pre(middleware.Recover(x.recover))', 'e.Pre(middleware.Recover(nil))'))
 mutate("默认的 recover 回 echo 的 500", "xecho/middleware/middleware.go", "./xecho", "TestRecover_CatchesPanicAndReturns500|TestBuild_PanicRecovered",
        swap('return echo.ErrInternalServerError }', 'return nil }'))
 # ErrAbortHandler 是「断掉这个连接」的约定写法。兜住它的话本该中止的响应被写成 500 发出去
 mutate("XEcho ErrAbortHandler 原样抛给 net/http", "xecho/middleware/middleware.go", "./xecho", "TestRecover",
-       cut('\t\t\t\tif r == http.ErrAbortHandler {\n', '\t\t\t\t\tpanic(r)\n\t\t\t\t}\n'))
+       swap('\t\t\t\tif r == http.ErrAbortHandler {\n', '\t\t\t\tif r == http.ErrAbortHandler && false {\n'))
 mutate("XEcho ErrAbortHandler 中止的请求登记下来", "xecho/middleware/middleware.go", "./xecho",
        "TestLog_ErrAbortHandlerAbortLoggedAs499|TestMetric_ErrAbortHandlerAbortRecordedAs499|TestTrace_ErrAbortHandlerAbortRecordedAsError",
-       swap('\t\t\t\t\tc.Set(errKey, http.ErrAbortHandler)\n', ''))
+       swap('\t\t\t\t\tc.Set(abortedKey, true)\n', ''))
 mutate("XEcho 访问日志把中止的请求记成 499", "xecho/middleware/log.go", "./xecho", "TestLog_ErrAbortHandler",
        swap('Status:     status(c),', 'Status:     c.Response().Status,'))
 mutate("XEcho 指标把中止的请求记成 499", "xecho/middleware/metric.go", "./xecho", "TestMetric_ErrAbortHandler",
        swap('strconv.Itoa(status(c))', 'strconv.Itoa(c.Response().Status)'))
 mutate("XEcho 链路把中止的请求记成错误", "xecho/middleware/trace.go", "./xecho", "TestTrace_ErrAbortHandler",
-       swap('st := status(c)', 'st := c.Response().Status'))
+       swap('route, st := rs.of(c), status(c)', 'route, st := rs.of(c), c.Response().Status'))
 mutate("XEcho 断连不打栈", "xecho/middleware/middleware.go", "./xecho", "TestRecover_BrokenPipe",
        swap('if web.IsBrokenPipe(r) {', 'if false {'))
 # 响应已经开始往外写了，再调 recover 函数只会把它写的东西接在半截响应后面
@@ -138,16 +152,14 @@ mutate("可信判断看直连对端而不是 c.RealIP()", "xecho/xecho.go", "./x
        swap('if x.trusted.Trusts(web.RemoteIP(c.Request())) {', 'if x.trusted.Trusts(c.RealIP()) {'))
 mutate("XEcho 可信网段来自装配时的配置", "xecho/xecho.go", "./xecho", "TestBuild_PassthroughHeadersOnlyFromTrustedProxies",
        swap('x.trusted = web.ParseProxies(c.TrustedProxies)', 'x.trusted = web.ParseProxies(nil)'))
-mutate("XEcho 装配时先判对端再开链路", "xecho/xecho.go", "./xecho", "TestBuild_PassthroughHeadersOnlyFromTrustedProxies",
-       swap('e.Use(x.markTrustedPeer, middleware.Trace())', 'e.Use(middleware.Trace())'))
+mutate("XEcho 在 Pre 链最外面判对端可不可信", "xecho/xecho.go", "./xecho", "TestBuild_PassthroughHeadersOnlyFromTrustedProxies|TestBuild_TraceDisabledOnlySkipsSpan_StillPropagates",
+       swap('\t\tx.markTrustedPeer(c)\n', ''))
 # XEcho.Trace 只管 Span：关掉它不该连上游的链路标识和透传头一起摘掉
 mutate("XEcho.Trace 关掉照样接上游的链路和透传", "xecho/xecho.go", "./xecho", "TestBuild_TraceDisabledOnlySkipsSpan_StillPropagates",
-       swap('e.Use(x.markTrustedPeer, middleware.Propagate())', 'e.Use(x.markTrustedPeer)'))
-mutate("XEcho.Trace 关掉时可信规则不变", "xecho/xecho.go", "./xecho", "TestBuild_TraceDisabledOnlySkipsSpan_StillPropagates",
-       swap('e.Use(x.markTrustedPeer, middleware.Propagate())', 'e.Use(middleware.Propagate())'))
+       swap('\t\t\te.Pre(middleware.Propagate())\n', ''))
 mutate("XEcho Propagate 也把可信记号交给 xtrace", "xecho/middleware/trace.go", "./xecho", "TestTrace_PeerTrustFollowsXechoMarker",
-       swap('c.SetRequest(r.WithContext(otel.GetTextMapPropagator().Extract(r.Context(), inbound(c))))',
-            'c.SetRequest(r.WithContext(otel.GetTextMapPropagator().Extract(r.Context(), propagation.HeaderCarrier(r.Header))))'))
+       swap('withContext(c, otel.GetTextMapPropagator().Extract(contextOf(c), inbound(c)))',
+            'withContext(c, otel.GetTextMapPropagator().Extract(contextOf(c), propagation.HeaderCarrier(c.Request().Header)))'))
 mutate("XEcho 链路中间件把可信记号交给 xtrace", "xecho/middleware/trace.go", "./xecho", "TestTrace_PeerTrustFollowsXechoMarker",
        swap('\tif trusted, _ := c.Get(peer.TrustedKey).(bool); trusted {\n\t\treturn trustedCarrier{h}\n\t}\n', '\t_ = peer.TrustedKey\n'))
 
@@ -155,7 +167,7 @@ section("中间件与开关")
 mutate("XEcho 访问日志的开关读的是配置", "xecho/xecho.go", "./xecho", "TestLog_", swap('\t\tif c.Log {\n', '\t\tif true {\n', 2))
 mutate("XEcho 链路的开关读的是配置", "xecho/xecho.go", "./xecho", "TestTrace_", swap('\t\tif c.Trace {\n', '\t\tif true {\n'))
 mutate("XEcho 关掉指标就不挂指标中间件", "xecho/xecho.go", "./xecho", "TestMetric_",
-       swap('\t\tif c.Metric {\n\t\t\te.Use(middleware.Metric())', '\t\tif true {\n\t\t\te.Use(middleware.Metric())'))
+       swap('\t\tif c.Metric {\n\t\t\te.Pre(middleware.Metric())', '\t\tif true {\n\t\t\te.Pre(middleware.Metric())'))
 mutate("XEcho 关掉指标就不注册端点", "xecho/xecho.go", "./xecho", "TestBuild_NoMetricsEndpointWhenDisabled",
        swap('\t\tif c.Metric {\n\t\t\te.GET(c.MetricPath, serveMetrics)', '\t\tif true {\n\t\t\te.GET(c.MetricPath, serveMetrics)'))
 mutate("XEcho 指标端点挂在配置的路径上", "xecho/xecho.go", "./xecho", "TestBuild_MetricsPathConfigurable",
@@ -178,7 +190,7 @@ mutate("XEcho 查询串的开关读的是配置", "xecho/xecho.go", "./xecho", "
 mutate("XEcho 请求头和响应头的开关各管各的", "xecho/xecho.go", "./xecho", "TestLogQueryAndHeaders",
        swap('middleware.WithHeaders(c.LogRequestHeaders, c.LogResponseHeaders)', 'middleware.WithHeaders(c.LogResponseHeaders, c.LogRequestHeaders)'))
 mutate("XEcho LogScope 开出请求级的字段作用域", "xecho/middleware/middleware.go", "./xecho", "TestLogScope",
-       swap('\t\t\tc.SetRequest(r.WithContext(xlog.CtxWithScope(r.Context())))\n', '\t\t\t_, _ = r, xlog.CtxWithScope\n'))
+       swap('\t\t\twithContext(c, xlog.CtxWithScope(contextOf(c)))\n', '\t\t\t_ = xlog.CtxWithScope\n'))
 # 词表进程里只有一张（internal/web）：公开的这两个名字不转过去的话，使用者补的词谁都不认
 mutate("XEcho AddSensitiveFields 写进共用的词表", "xecho/middleware/redact.go", "./xecho", "TestAddSensitive",
        swap('{ web.AddSensitiveFields(fields...) }', '{}'))
@@ -193,8 +205,8 @@ mutate("XEcho 访问日志的 bytes_out 是写出的字节数", "xecho/middlewar
 # client_ip 取 c.RealIP()：按 e.IPExtractor 算，回调里换掉的也算
 mutate("XEcho 访问日志的 client_ip 按 IPExtractor 算", "xecho/middleware/log.go", "./xecho", "TestLog_ClientIPFollowsIPExtractor|TestBuild_TrustsOnlyPrivateProxiesByDefault",
        swap('ClientIP:   c.RealIP(),', 'ClientIP:   web.RemoteIP(c.Request()),'))
-# echo 的 Flush 走 http.ResponseController：包装层不交出原来的 writer，SSE 一 Flush 就 panic
-mutate("截响应的 writer 不挡 Flush", "xecho/middleware/log.go", "./xecho", "TestLog_ResponseCaptureKeepsFlushWorking",
+# http.ResponseController 靠 Unwrap 找下去：包装层不交出原来的 writer，读写超时、全双工一律 ErrNotSupported
+mutate("截响应的 writer 不挡 ResponseController", "xecho/middleware/log.go", "./xecho", "TestLog_ResponseCaptureKeepsResponseControllerFeatures",
        swap('func (w *captureWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }', ''))
 mutate("截响应的 writer 请求结束前换回去", "xecho/middleware/log.go", "./xecho", "TestLog_ResponseWriterRestoredAfterRequest",
        swap('\t\t\t\t\tresp.Writer = orig\n', ''))
@@ -206,7 +218,7 @@ section("链路")
 mutate("用了 xecho 不另外 import xtrace 也有链路", "xecho/xecho.go", "./xecho", "TestTracingWorksWithoutImportingXtrace",
        swap('\t_ "github.com/xiaoshicae/xone/xtrace"\n', ''))
 mutate("handler 的 ctx 带着服务端 Span", "xecho/middleware/trace.go", "./xecho", "TestTrace_StartsSpanAndReturnsTraceID",
-       swap('\t\t\tc.SetRequest(r.WithContext(ctx))\n', '\t\t\t_ = ctx\n'))
+       swap('\t\t\twithContext(c, ctx)\n', '\t\t\t_ = ctx\n'))
 mutate("XEcho 响应回带 X-Trace-Id", "xecho/middleware/trace.go", "./xecho", "TestTrace_StartsSpanAndReturnsTraceID|TestTrace_ReturnedError",
        swap('\t\t\t\tc.Response().Header().Set(TraceIDHeader, sc.TraceID().String())\n', ''))
 
@@ -236,3 +248,73 @@ mutate("listening 在端口绑上之后才打（xecho）", "internal/web/server.
        swap('\tln, err := listen(c, srv)\n', '\tslog.Info(module + " listening")\n\tln, err := listen(c, srv)\n'))
 mutate("XEcho 拦住 IPv4 映射写法的代理", "internal/web/proxy.go", "./xecho", "TestLoadConfig_IPv4MappedProxyFailsStartup",
        swap('\t\tif plain, ok := unmapped(p); ok {', '\t\tif plain, ok := unmapped(p); ok && false {'))
+
+section("e.Pre")
+# 内置中间件原先挂在 e.Use 上：Pre 里拒掉、重定向的请求不进访问日志、指标、链路，Pre 里的 panic 没人兜
+mutate("访问日志挂在 Pre 上", "xecho/xecho.go", "./xecho", "TestBuild_PreRejectionLoggedMeasuredAndTraced|TestBuild_PreRedirectLogged",
+       swap('\t\t\te.Pre(middleware.Log(', '\t\t\te.Use(middleware.Log('))
+mutate("指标挂在 Pre 上", "xecho/xecho.go", "./xecho", "TestBuild_PreRejectionLoggedMeasuredAndTraced",
+       swap('\t\t\te.Pre(middleware.Metric())', '\t\t\te.Use(middleware.Metric())'))
+mutate("链路挂在 Pre 上", "xecho/xecho.go", "./xecho", "TestBuild_PreRejectionLoggedMeasuredAndTraced",
+       swap('e.Pre(middleware.Trace())', 'e.Use(middleware.Trace())'))
+mutate("Recover 挂在 Pre 上", "xecho/xecho.go", "./xecho", "TestBuild_PrePanicRecovered",
+       swap('\t\te.Pre(middleware.Recover(x.recover))\n', '\t\te.Use(middleware.Recover(x.recover))\n'))
+# 交进来的 *http.Request 不改：echo 按它找路由，使用者的 Pre（MethodOverride、RemoveTrailingSlash、Rewrite）改的也是它。
+# Pre 里只把 ctx 存进 echo.Context，路由之后再换到请求上，见 reqctx
+mutate("Pre 链最外面先存下请求的 ctx", "xecho/xecho.go", "./xecho", "TestBuild_PreRewritingMiddlewaresStillRoute",
+       swap('\t\tc.Set(reqctx.Key, c.Request().Context())\n', ''))
+mutate("Pre 里只存 ctx 不换请求", "xecho/middleware/middleware.go", "./xecho", "TestBuild_PreRewritingMiddlewaresStillRoute",
+       swap('\tif _, deferred := c.Get(reqctx.Key).(context.Context); deferred {', '\tif false {'))
+mutate("路由之后把 ctx 换到请求上", "xecho/xecho.go", "./xecho", "TestBuild_HandlerSeesSpanAndLogScope",
+       swap('\t\te.Use(attachContext)\n', ''))
+mutate("换 ctx 排在用户中间件前面", "xecho/xecho.go", "./xecho", "TestBuild_HandlerSeesSpanAndLogScope",
+       swap('\t\te.Use(attachContext)\n\t\te.Use(x.extra...)\n', '\t\te.Use(x.extra...)\n\t\te.Use(attachContext)\n'))
+# Pre 里就结束了的请求，ctx 还没换到请求上：访问日志得用存下的那个，才带得上 trace_id
+mutate("访问日志用存下的 ctx", "xecho/middleware/log.go", "./xecho", "TestBuild_PreRejectionAccessLogCarriesTraceID",
+       swap('\t\t\t\t\tCtx:        contextOf(c),\n', ''))
+# 单独用中间件时换的是 r.WithContext 的副本：原地改的话调 e.ServeHTTP 的一方拿回的是改过的请求，
+# handler 交给别的协程的请求还会数据竞争
+mutate("单独用中间件时不改交进来的请求", "xecho/middleware/middleware.go", "./xecho", "TestRequestUnchangedAfterServeHTTP",
+       swap('\tc.SetRequest(c.Request().WithContext(ctx))\n}', '\tr := c.Request()\n\t*r = *r.WithContext(ctx)\n}'))
+
+section("499 的规矩")
+# 只有 panic(http.ErrAbortHandler) 会让 net/http 断开连接；返回一个包着它的错误，客户端收到的是 500
+mutate("返回的 ErrAbortHandler 按发出去的记", "xecho/middleware/middleware.go", "./xecho", "TestReturnedErrAbortHandlerRecordsWhatWasSent",
+       swap('\tv, _ := c.Get(abortedKey).(bool)\n\treturn v\n',
+            '\tfor err := errorOf(c); err != nil; {\n\t\tif err == http.ErrAbortHandler {\n\t\t\treturn true\n\t\t}\n'
+            '\t\tu, ok := err.(interface{ Unwrap() error })\n\t\tif !ok {\n\t\t\treturn false\n\t\t}\n\t\terr = u.Unwrap()\n\t}\n\treturn false\n'))
+# 客户端走了、什么都没发：return ctx.Err() 原先记成 500、Span 标错
+mutate("XEcho 客户端走了记 499", "xecho/middleware/middleware.go", "./xecho", "TestClientGoneBeforeAnythingSentRecordedAs499",
+       swap('\tif !c.Response().Committed && web.ClientGone(ctx) {', '\tif false {'))
+mutate("XEcho 响应发出去了就记发出去的", "xecho/middleware/middleware.go", "./xecho", "TestClientGoneAfterResponseCommittedKeepsSentStatus",
+       swap('\tif !c.Response().Committed && web.ClientGone(ctx) {', '\tif web.ClientGone(ctx) {'))
+# c.Error 往断开的连接上写照样置上 Committed：在它之后判，return ctx.Err() 就记成了 500
+mutate("先判客户端走了再交给 c.Error", "xecho/middleware/middleware.go", "./xecho", "TestClientGoneBeforeAnythingSentRecordedAs499",
+       swap('\tif !c.Response().Committed && web.ClientGone(ctx) {\n\t\tc.Set(goneKey, true)\n\t}\n\tif err == nil {\n\t\treturn\n\t}\n\tc.Set(errKey, err)\n\tc.Error(err)\n',
+            '\tif err != nil {\n\t\tc.Set(errKey, err)\n\t\tc.Error(err)\n\t}\n\tif !c.Response().Committed && web.ClientGone(ctx) {\n\t\tc.Set(goneKey, true)\n\t}\n'))
+# 判的是这一层一进来时的 ctx：里面几层换上的、返回时 cancel 掉的 ctx 出了那一层就是 Canceled，客户端却还在等
+mutate("XEcho 指标按一进来时的 ctx 判客户端", "xecho/middleware/metric.go", "./xecho", "TestClientGoneIgnoresContextsSetByInnerLayers|TestBuild_ContextTimeoutRecordedAsSent",
+       swap('\t\t\tfinish(c, ctx, next(c))\n', '\t\t\terr := next(c)\n\t\t\tfinish(c, c.Request().Context(), err)\n\t\t\t_ = ctx\n'))
+mutate("XEcho 访问日志按一进来时的 ctx 判客户端", "xecho/middleware/log.go", "./xecho", "TestClientGoneIgnoresContextsSetByInnerLayers|TestBuild_ContextTimeoutRecordedAsSent",
+       swap('\t\t\tfinish(c, ctx, next(c))\n', '\t\t\terr := next(c)\n\t\t\tfinish(c, c.Request().Context(), err)\n\t\t\t_ = ctx\n'))
+mutate("XEcho 链路按一进来时的 ctx 判客户端", "xecho/middleware/trace.go", "./xecho", "TestClientGoneIgnoresContextsSetByInnerLayers",
+       swap('\t\t\tfinish(c, ctx, next(c))\n', '\t\t\terr := next(c)\n\t\t\tfinish(c, c.Request().Context(), err)\n'))
+mutate("XEcho 客户端走了的 Span 不标错", "xecho/middleware/trace.go", "./xecho", "TestClientGoneBeforeAnythingSentRecordedAs499",
+       swap('\t\t\t\tcase aborted(c):\n', '\t\t\t\tcase st == web.StatusAborted:\n'))
+
+section("截响应的 writer")
+# 压缩中间件排在访问日志里面：截下来的是压缩过的字节，原先整段乱码进了 response_body
+mutate("压缩过的响应体不记内容（xecho）", "internal/web/accesslog.go", "./xecho", "TestLog_EncodedResponseBodyOmitted",
+       swap('\t\t\tbody := encodedOmitted(a.RespHeader)\n', '\t\t\tbody := ""\n'))
+# 直接做类型断言的代码（老的 SSE、WebSocket 库）：只有 Unwrap 的话断言失败
+mutate("截响应的 writer 满足 http.Flusher", "xecho/middleware/log.go", "./xecho", "TestLog_ResponseCaptureSatisfiesFlusherAndHijacker",
+       swap('func (w *captureWriter) Flush() { _ = http.NewResponseController(w.ResponseWriter).Flush() }\n', ''))
+mutate("截响应的 writer 的 Flush 落到连接上", "xecho/middleware/log.go", "./xecho", "TestLog_ResponseCaptureFlushReachesClient",
+       swap('func (w *captureWriter) Flush() { _ = http.NewResponseController(w.ResponseWriter).Flush() }\n', 'func (w *captureWriter) Flush() {}\n'))
+mutate("截响应的 writer 的 Hijack 拿到原始连接", "xecho/middleware/log.go", "./xecho", "TestLog_ResponseCaptureHijack",
+       swap('\treturn http.NewResponseController(w.ResponseWriter).Hijack()\n', '\treturn nil, nil, http.ErrNotSupported\n'))
+
+section("标准库 log")
+# e.StdLogger 在 echo.New 里就绑定了 os.Stdout，换 e.Logger 的输出改不到它
+mutate("e.StdLogger 接到 slog", "xecho/xecho.go", "./xecho", "TestEchoStdLogger_RoutedToSlog",
+       swap('\te.StdLogger = web.ErrorLog("xecho")\n', ''))

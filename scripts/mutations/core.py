@@ -636,6 +636,15 @@ mutate("方法收敛到固定集合", "internal/web/request.go", ".", "TestNorma
        swap('\treturn MethodOther\n', '\treturn m\n'))
 mutate("认出 connection reset", "internal/web/request.go", ".", "TestIsBrokenPipe",
        swap(' || strings.Contains(msg, "connection reset by peer")', ''))
+# 业务自己设的截止时间到了客户端还在等：只有 net/http 的取消才算客户端走了
+mutate("客户端走了只认 Canceled", "internal/web/request.go", ".", "TestClientGone",
+       swap('errors.Is(ctx.Err(), context.Canceled)', 'ctx.Err() != nil'))
+# identity 就是没压缩，照常记
+mutate("identity 不算压缩过", "internal/web/accesslog.go", ".", "TestAccessLog_EncodedResponseBodyOmitted",
+       swap('if enc == "" || enc == "identity" {', 'if enc == "" {'))
+# net/http 自己报的错（TLS 握手失败……）不设 ErrorLog 就走标准库的 log：进了 slog 是 INFO、消息每行都不一样
+mutate("http.Server 的 ErrorLog 接到 slog", "internal/web/server.go", ".", "TestServer_ErrorLogRoutedToSlog",
+       swap('\t\tErrorLog:          ErrorLog(module),\n', ''))
 
 section("错误文本脱敏")
 # 错误原文最容易夹带凭证（驱动报的整串 DSN、"password=..."），进访问日志之前过一遍词表

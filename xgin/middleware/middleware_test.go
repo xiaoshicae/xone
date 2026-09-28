@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"errors"
@@ -679,5 +680,39 @@ func TestRecover_PanicValueIsRedacted(t *testing.T) {
 		if got != want {
 			t.Errorf("panic(%q) 的 error 字段=%v，want %q", msg, got, want)
 		}
+	}
+}
+
+// gzipWriter 测试用的压缩中间件：和 gin-contrib/gzip 一样换掉 c.Writer，写进来的经 gzip 压缩再往下写
+type gzipWriter struct {
+	gin.ResponseWriter
+	gz *gzip.Writer
+}
+
+func (w *gzipWriter) Write(b []byte) (int, error)       { return w.gz.Write(b) }
+func (w *gzipWriter) WriteString(s string) (int, error) { return w.gz.Write([]byte(s)) }
+
+func gzipped(c *gin.Context) {
+	c.Header("Content-Encoding", "gzip")
+	gz := gzip.NewWriter(c.Writer)
+	c.Writer = &gzipWriter{ResponseWriter: c.Writer, gz: gz}
+	c.Next()
+	_ = gz.Close()
+}
+
+func TestLog_EncodedResponseBodyOmitted(t *testing.T) {
+	// 回归用例：Log 在压缩中间件外面，截下来的是压缩过的字节，原先整段二进制乱码进了 response_body。
+	// 压缩过的不记内容，记一句 omitted
+	lines := capture(t)
+	w := serve(t, get("/hello"), []gin.HandlerFunc{Log(WithBody(false, true)), gzipped}, func(c *gin.Context) {
+		c.String(200, strings.Repeat("hello ", 200))
+	})
+	l := lines()[0]
+	if got := l["response_body"]; got != "[gzip-encoded content omitted]" {
+		t.Errorf("压缩过的响应体该记 omitted，got=%q", got)
+	}
+	// gin 这边 bytes_out 是线上的（压缩后的）字节数：Log 读的是压缩中间件下面那个 writer
+	if l["bytes_out"] != float64(w.Body.Len()) {
+		t.Errorf("bytes_out 该是压缩后的 %d 字节，got=%v", w.Body.Len(), l["bytes_out"])
 	}
 }

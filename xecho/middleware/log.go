@@ -1,7 +1,9 @@
 package middleware
 
 import (
+	"bufio"
 	"bytes"
+	"net"
 	"net/http"
 	"sync"
 	"time"
@@ -70,9 +72,18 @@ func (w *captureWriter) Write(b []byte) (int, error) {
 	return w.ResponseWriter.Write(b)
 }
 
-// Unwrap 交出原来的 writer。echo.Response 的 Flush / Hijack 走的是 http.ResponseController，
-// 它靠这个找到真正的 Flusher / Hijacker：少了它，打开响应体日志之后 SSE 的 Flush 直接 panic
+// Unwrap 交出原来的 writer。http.ResponseController 靠它一层层找下去：读写超时
+// （SetReadDeadline / SetWriteDeadline）、EnableFullDuplex，少了它一律 http.ErrNotSupported
 func (w *captureWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
+// Flush 和 Hijack 给直接做类型断言的代码（c.Response().Writer.(http.Flusher)，老的 SSE、WebSocket 库）：
+// 只有 Unwrap 的话它们断言失败。两个都经 http.ResponseController 转给下面的 writer，
+// 它一层层 Unwrap 下去；下面不支持时 Flush 什么都不做，Hijack 返回 http.ErrNotSupported，和 net/http 一样
+func (w *captureWriter) Flush() { _ = http.NewResponseController(w.ResponseWriter).Flush() }
+
+func (w *captureWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	return http.NewResponseController(w.ResponseWriter).Hijack()
+}
 
 // Log 记访问日志。
 //
@@ -82,6 +93,7 @@ func Log(opts ...LogOption) echo.MiddlewareFunc {
 	for _, opt := range opts {
 		opt(o)
 	}
+	var rs routes
 
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
@@ -90,7 +102,7 @@ func Log(opts ...LogOption) echo.MiddlewareFunc {
 				return next(c)
 			}
 
-			start := time.Now()
+			start, ctx := time.Now(), contextOf(c)
 			var reqBody []byte
 			if o.ReqBody {
 				reqBody = web.SnapshotBody(c.Request())
@@ -110,11 +122,13 @@ func Log(opts ...LogOption) echo.MiddlewareFunc {
 			// Writer 也一定会还原、writer 一定会还回池子
 			defer func() {
 				// 字段怎么拼、怎么脱敏在 web.AccessLog.Log；这里只取 echo 里才取得到的那几个值。
-				// 请求要重新取：里面几层（Trace、LogScope 之外的用户中间件）可能换过它的 ctx
+				// 请求和 ctx 都要重新取：里面几层（Trace、LogScope 之外的用户中间件）可能换过它们。
+				// ctx 取 contextOf：在 e.Pre 里就结束了的请求，日志作用域和 Span 还没换到请求上
 				a := web.Access{
 					Request:    c.Request(),
+					Ctx:        contextOf(c),
 					Elapsed:    time.Since(start),
-					Route:      routeOf(c), // 没匹配上时记 unmatched，真实路径在 path 里
+					Route:      rs.of(c), // 没匹配上时记 unmatched，真实路径在 path 里
 					Status:     status(c),
 					ClientIP:   c.RealIP(), // 按 e.IPExtractor 算，xecho 按 TrustedProxies 装好了它
 					BytesOut:   int(resp.Size),
@@ -137,7 +151,7 @@ func Log(opts ...LogOption) echo.MiddlewareFunc {
 				}
 			}()
 
-			finish(c, next(c))
+			finish(c, ctx, next(c))
 			return nil
 		}
 	}

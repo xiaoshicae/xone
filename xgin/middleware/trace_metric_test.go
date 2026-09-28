@@ -371,3 +371,77 @@ func TestTrace_ErrorTextKeepsSeparationAndMasksDSNOnSpan(t *testing.T) {
 		t.Errorf("gin.errors=%q, want %q", got, want)
 	}
 }
+
+// ---- 499 的规矩：只记真的没发出去的 ----
+
+// recordedAs 跑一次请求，返回访问日志、指标、Span 各自记下的状态码和 Span 是否标错
+func recordedAs(t *testing.T, req *http.Request, h gin.HandlerFunc) (logged any, metric string, span string, spanErr bool) {
+	t.Helper()
+	lines := capture(t)
+	spans := recording(t)
+	m := withMetrics(t)
+	serve(t, req, []gin.HandlerFunc{Trace(), Log(), Metric(), Recover(nil)}, h)
+
+	var access []map[string]any
+	for _, l := range lines() {
+		if l["msg"] == "request completed" {
+			access = append(access, l)
+		}
+	}
+	logged = access[0]["status"]
+	out := testkit.Scrape(m.Handler)
+	const prefix = `http_requests_total{method="GET",route="/hello",status="`
+	if i := strings.Index(out, prefix); i >= 0 {
+		rest := out[i+len(prefix):]
+		metric = rest[:strings.Index(rest, `"`)]
+	}
+	got := spans()
+	if len(got) != 1 {
+		t.Fatalf("应产出一个 Span，got=%d", len(got))
+	}
+	var code string
+	for _, kv := range got[0].Attributes {
+		if kv.Key == "http.response.status_code" {
+			code = kv.Value.Emit()
+		}
+	}
+	return logged, metric, code, got[0].Status.Code == codes.Error
+}
+
+// goneRequest 客户端已经走了的请求：net/http 在连接断开（HTTP/2 是流被重置）、强制断连时取消请求的 ctx
+func goneRequest() *http.Request {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	return get("/hello").WithContext(ctx)
+}
+
+func TestClientGoneBeforeAnythingSentRecordedAs499(t *testing.T) {
+	// 回归用例：客户端断开之后 handler 什么都没写就返回，原先记成 bytes_out 为 0 的 200——
+	// 客户端其实什么都没收到。和 xecho 一个规矩
+	logged, metric, span, spanErr := recordedAs(t, goneRequest(), func(c *gin.Context) {
+		_ = c.Error(c.Request.Context().Err()) //nolint:errcheck // 只是登记
+	})
+	if logged != float64(499) || metric != "499" || span != "499" || spanErr {
+		t.Errorf("该记 499、Span 不标错（不是服务端的错），got log=%v metric=%s span=%s spanErr=%v", logged, metric, span, spanErr)
+	}
+}
+
+func TestClientGoneAfterResponseWrittenKeepsSentStatus(t *testing.T) {
+	// 响应已经开始发了：客户端收到了（至少是一部分），记已经发出去的那个状态码
+	logged, metric, span, _ := recordedAs(t, goneRequest(), func(c *gin.Context) { c.String(201, "partial") })
+	if logged != float64(201) || metric != "201" || span != "201" {
+		t.Errorf("该记已经发出去的 201，got log=%v metric=%s span=%s", logged, metric, span)
+	}
+}
+
+func TestClientGoneIgnoresContextsSetByInnerMiddleware(t *testing.T) {
+	// 里面几层换上的 ctx 是业务自己的：套了超时、返回时 cancel 掉，出了那一层就是 Canceled，客户端却还在等
+	logged, metric, span, _ := recordedAs(t, get("/hello"), func(c *gin.Context) {
+		ctx, cancel := context.WithCancel(c.Request.Context())
+		cancel()
+		c.Request = c.Request.WithContext(ctx)
+	})
+	if logged != float64(200) || metric != "200" || span != "200" {
+		t.Errorf("客户端还在，该记 200，got log=%v metric=%s span=%s", logged, metric, span)
+	}
+}

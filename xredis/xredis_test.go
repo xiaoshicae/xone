@@ -12,6 +12,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -386,7 +387,8 @@ func TestInstallPoolMetrics_RegistersOnceWhenInstalledRepeatedly(t *testing.T) {
 	defer closer.Close()
 	m.Install()
 
-	var buf bytes.Buffer
+	// 别的用例留下的 go-redis 后台协程也会往默认 logger 写，buffer 得并发安全
+	var buf syncBuffer
 	old := slog.Default()
 	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
 	t.Cleanup(func() { slog.SetDefault(old) })
@@ -649,4 +651,22 @@ func TestInitXRedis_CSaysUnconfiguredNotTooEarly(t *testing.T) {
 		}
 	}()
 	C()
+}
+
+// syncBuffer 是加了锁的 bytes.Buffer
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }

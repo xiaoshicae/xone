@@ -124,7 +124,7 @@ func TestTrace_OnlyServerErrorsMarkedAsError(t *testing.T) {
 }
 
 func TestTrace_ReturnedErrorRecordedOnSpanAndResponseKeepsTraceID(t *testing.T) {
-	// handler 返回的错误进 Span 的 echo.errors；echo 渲染的错误响应照样带着 X-Trace-Id
+	// handler 返回的错误进 Span 的 echo.errors（这条带着 password=，整段遮掉）；echo 渲染的错误响应照样带着 X-Trace-Id
 	spans := recording(t)
 	w := httptest.NewRecorder()
 	errorEcho(Trace()).ServeHTTP(w, httptest.NewRequest("GET", "/plain", nil))
@@ -133,7 +133,7 @@ func TestTrace_ReturnedErrorRecordedOnSpanAndResponseKeepsTraceID(t *testing.T) 
 		t.Fatalf("应产出一个 Span，got=%d", len(got))
 	}
 	a := attrsOf(got[0])
-	if a["echo.errors"] != "db down: password=s3cret" || a["http.response.status_code"] != "500" || got[0].Status.Code != codes.Error {
+	if a["echo.errors"] != Redacted || a["http.response.status_code"] != "500" || got[0].Status.Code != codes.Error {
 		t.Errorf("Span 该记下错误、500 并标错，got=%v %v", a, got[0].Status)
 	}
 	if w.Code != 500 || w.Header().Get(TraceIDHeader) == "" {

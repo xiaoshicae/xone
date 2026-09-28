@@ -639,5 +639,5 @@ mutate("认出 connection reset", "internal/web/request.go", ".", "TestIsBrokenP
 
 section("错误文本脱敏")
 # 错误原文最容易夹带凭证（驱动报的整串 DSN、"password=..."），进访问日志之前过一遍词表
-mutate("访问日志的 errors 字段脱过敏", "internal/web/accesslog.go", ".", "TestAccessLog|TestRedactText",
+mutate("访问日志的 errors 字段脱过敏", "internal/web/accesslog.go", ".", "TestAccessLog_ErrorsFieldIsRedacted",
        swap('slog.String("errors", RedactText(a.Errors))', 'slog.String("errors", a.Errors)'))

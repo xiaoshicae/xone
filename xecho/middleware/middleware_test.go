@@ -383,7 +383,7 @@ var errorCases = []struct {
 }{
 	{"没匹配上的路由（404）", "GET", "/nope", 404, "unmatched", "code=404, message=Not Found"},
 	{"方法不对（405）", "POST", "/only-get", 405, "unmatched", "code=405, message=Method Not Allowed"},
-	{"普通 error（500）", "GET", "/plain", 500, "/plain", "db down: password=s3cret"},
+	{"普通 error（500）", "GET", "/plain", 500, "/plain", Redacted}, // 错误原文带着 password=，整段遮掉
 	{"echo.NewHTTPError(418)", "GET", "/teapot", 418, "/teapot", "code=418, message=I'm a teapot"},
 }
 

@@ -12,13 +12,11 @@
 package xgin
 
 import (
-	"crypto/tls"
-	"crypto/x509"
 	"fmt"
-	"net"
-	"os"
 	"strings"
 	"time"
+
+	"github.com/xiaoshicae/xone/internal/web"
 )
 
 // ConfigKey 本模块在配置文件里的顶层 key
@@ -193,31 +191,8 @@ func DefaultConfig() Config {
 		Metric:             true,
 		MetricPath:         "/metrics",
 		MinVersion:         "1.2",
-		TrustedProxies:     []string{trustPrivate},
+		TrustedProxies:     []string{web.TrustPrivate},
 	}
-}
-
-// trustPrivate TrustedProxies 里代表 privateNetworks 的关键字
-const trustPrivate = "private"
-
-// privateNetworks TrustedProxies 里写 private 时展开成的网段：
-// 回环、RFC 1918 私有网段、运营商级 NAT（有的 CNI 和云厂商拿它当 Pod 网段）、IPv6 的回环和 ULA
-var privateNetworks = []string{
-	"127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10",
-	"::1/128", "fc00::/7",
-}
-
-// trustedProxies 把 TrustedProxies 里的 private 展开成网段，其余原样保留
-func (c Config) trustedProxies() []string {
-	out := make([]string, 0, len(c.TrustedProxies))
-	for _, p := range c.TrustedProxies {
-		if p == trustPrivate {
-			out = append(out, privateNetworks...)
-			continue
-		}
-		out = append(out, p)
-	}
-	return out
 }
 
 // Validate 检查配置本身说不通的地方。
@@ -225,59 +200,25 @@ func (c Config) trustedProxies() []string {
 // xconfig.Unmarshal 解完配置文件里的 XGin 块会调它，于是配错的配置在启动阶段
 // 就失败，不必等到服务 Start；WithConfig 给的那份在装配时校验，见 XGin.cfg。
 func (c Config) Validate() error {
-	if c.Port <= 0 || c.Port > 65535 {
-		return fmt.Errorf("Port must be within 1..65535, got=%d", c.Port)
-	}
-	// 只配一半的 TLS 是最危险的一种配错：服务会以明文起来，
-	// 而配置文件看上去是配了证书的
-	if (c.CertFile == "") != (c.KeyFile == "") {
-		return fmt.Errorf("CertFile and KeyFile must both be set or both be empty")
-	}
-	// 同理：以为开了双向认证，实际是谁都能连的明文
-	if c.ClientCAFile != "" && !c.tlsEnabled() {
-		return fmt.Errorf("ClientCAFile requires CertFile and KeyFile, mutual TLS runs on top of TLS")
-	}
-	if _, ok := tlsVersions[c.MinVersion]; !ok {
-		return fmt.Errorf("unknown MinVersion=%q, supported: 1.2 / 1.3", c.MinVersion)
+	// 端口、TLS、超时和代理网段的规矩是各 Web 集成共用的，写在 internal/web，
+	// 本模块自己的几项夹在它们中间：配错了好几项时报的是按这个先后的第一个
+	s := c.server()
+	if err := s.ValidateListen(); err != nil {
+		return err
 	}
 	if c.MaxMultipartMemory <= 0 {
 		return fmt.Errorf("MaxMultipartMemory must be > 0, got=%d", c.MaxMultipartMemory)
 	}
-	// net/http 对这几项的规矩（Go 1.25 的文档如此，ReadHeaderTimeout 那条有测试钉着）：
-	//   ReadHeaderTimeout 为 0 退到 ReadTimeout，负数不限时；
-	//   IdleTimeout 为 0 退到 ReadTimeout，负数不限时；
-	//   ReadTimeout / WriteTimeout 为 0 或负数都是不限时。
-	// ReadTimeout 默认就是 0，所以前两项写 0 等于「不设防」：慢客户端发半个头
-	// 就能一直占着连接，空闲的 keep-alive 连接永不回收——都是连接数被打满。
-	// 配置文件看上去只是写了个 0，所以这里拦住。
-	for _, d := range []struct {
-		name string
-		val  time.Duration
-	}{
-		{"ReadHeaderTimeout", c.ReadHeaderTimeout},
-		{"IdleTimeout", c.IdleTimeout},
-	} {
-		if d.val <= 0 {
-			return fmt.Errorf("%s must be > 0 (0 or negative disables it), got=%v", d.name, d.val)
-		}
-	}
-	// 这两项的 0 是有意的「不限制」（默认值就是它）；负数跟 0 效果一样，
-	// 却不像是想要「不限制」的写法，多半是写错了
-	if c.ReadTimeout < 0 || c.WriteTimeout < 0 {
-		return fmt.Errorf("ReadTimeout and WriteTimeout must not be negative (use 0 for unlimited), got ReadTimeout=%v WriteTimeout=%v", c.ReadTimeout, c.WriteTimeout)
+	if err := s.ValidateTimeouts(); err != nil {
+		return err
 	}
 	switch c.Mode {
 	case "release", "debug", "test":
 	default:
 		return fmt.Errorf("unknown Mode=%q, supported: release / debug / test", c.Mode)
 	}
-	// 网段写错了就直接起不来。gin 那边的行为是解析到出错为止、把已经解出来的
-	// 留下，于是前半段代理被信任、后半段被悄悄丢掉——日志里的 client_ip
-	// 一半真一半假，是比起不来难查得多的状态
-	for _, p := range c.TrustedProxies {
-		if p != trustPrivate && !isIPOrCIDR(p) {
-			return fmt.Errorf("TrustedProxies contains an invalid address, want an IP, a CIDR or %q, got=%q", trustPrivate, p)
-		}
+	if err := web.ValidateProxies(c.TrustedProxies); err != nil {
+		return err
 	}
 	// 理由见 MetricPath：gin 不拒绝，而是悄悄改写成另一个路径。
 	// 关掉指标时这一项不用，写成什么都不影响
@@ -287,41 +228,19 @@ func (c Config) Validate() error {
 	return nil
 }
 
-// isIPOrCIDR 判断一段是不是合法的 IP 或者网段，与 gin 接受的写法一致
-func isIPOrCIDR(s string) bool {
-	if strings.Contains(s, "/") {
-		_, _, err := net.ParseCIDR(s)
-		return err == nil
+// server 监听和优雅关闭要的那几项，交给 web.Server
+func (c Config) server() web.ServerConfig {
+	return web.ServerConfig{
+		Host:              c.Host,
+		Port:              c.Port,
+		UseH2C:            c.UseH2C,
+		CertFile:          c.CertFile,
+		KeyFile:           c.KeyFile,
+		ClientCAFile:      c.ClientCAFile,
+		MinVersion:        c.MinVersion,
+		ReadHeaderTimeout: c.ReadHeaderTimeout,
+		ReadTimeout:       c.ReadTimeout,
+		WriteTimeout:      c.WriteTimeout,
+		IdleTimeout:       c.IdleTimeout,
 	}
-	return net.ParseIP(s) != nil
-}
-
-// tlsEnabled 是否配了 TLS
-func (c Config) tlsEnabled() bool { return c.CertFile != "" && c.KeyFile != "" }
-
-// tlsVersions MinVersion 收的写法
-var tlsVersions = map[string]uint16{"1.2": tls.VersionTLS12, "1.3": tls.VersionTLS13}
-
-// serverTLS 服务端的 TLS 设置，没配证书时是 nil。证书本身由 ListenAndServeTLS 读。
-//
-// Go 1.25 的服务端默认最低也是 TLS 1.2，这里照样显式写上：默认值会随 Go 版本变，
-// 配置文件里写着的 1.2 不该跟着变。
-func (c Config) serverTLS() (*tls.Config, error) {
-	if !c.tlsEnabled() {
-		return nil, nil
-	}
-	cfg := &tls.Config{MinVersion: tlsVersions[c.MinVersion]}
-	if c.ClientCAFile != "" {
-		pem, err := os.ReadFile(c.ClientCAFile)
-		if err != nil {
-			return nil, fmt.Errorf("read ClientCAFile: %w", err)
-		}
-		pool := x509.NewCertPool()
-		if !pool.AppendCertsFromPEM(pem) {
-			return nil, fmt.Errorf("ClientCAFile %s contains no PEM certificate", c.ClientCAFile)
-		}
-		cfg.ClientCAs = pool
-		cfg.ClientAuth = tls.RequireAndVerifyClientCert
-	}
-	return cfg, nil
 }

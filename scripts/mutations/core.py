@@ -575,3 +575,48 @@ mutate("只剩 Profiles / Import 的 XApp 连块一起摘掉", "internal/config/
        swap('if val != nil && len(app.Content) == 0 {', 'if false {'))
 mutate("XApp 里的 Import 被加载器取走", "internal/config/source.go", ".", "TestLoad_XAppNameLeftToXapp_ProfilesAndImportTakenByLoader",
        swap('\tnode := takeFromApp(doc, ImportKey)\n', '\tnode := takeFromApp(doc.Content[0], ImportKey)\n'))
+
+section("Web 集成共用：脱敏与请求体预读")
+# internal/web 里由它自己的测试盯着的承诺。服务启停、代理网段、访问日志字段这几块的承诺
+# 由 xgin 的测试盯着，那些变异在 xgin.py 里（在 ./xgin 下跑，经 overlay 换进这里的文件）
+mutate("请求头里的凭证被遮掉", "internal/web/redact.go", ".", "TestRedact",
+       swap('set[name] || ', ''), swap('\tset := headers()\n', '\tset := headers()\n\t_ = set\n'))
+# 开了 LogQuery 也得逐字段遮：?access_token= 原样进日志就是凭证落盘
+mutate("遮掉的表单值写成标记而不是转义串", "internal/web/redact.go", ".", "TestRedactBody_Form",
+       swap('return strings.ReplaceAll(values.Encode(), url.QueryEscape(Redacted), Redacted)', 'return values.Encode()'))
+mutate("请求体只缓存前缀", "internal/web/accesslog.go", ".", "TestSnapshotBody",
+       swap('io.ReadAll(io.LimitReader(req.Body, maxRequestBody))','io.ReadAll(req.Body)',1))
+mutate("预读时的错误接回下游", "internal/web/accesslog.go", ".", "TestSnapshotBody",
+       swap('\tif b.preErr != nil {\n\t\treturn 0, b.preErr\n\t}\n',''))
+# Content-Type 大小写不敏感：照字面比的话 Multipart/Form-Data 的文件内容整个进日志
+mutate("上传和二进制流不读，不论大小写", "internal/web/accesslog.go", ".", "TestSnapshotBody",
+       swap('ct := strings.ToLower(req.Header.Get("Content-Type"))', 'ct := req.Header.Get("Content-Type")'))
+# encoding/json 按 Unicode 折叠匹配字段名：{"ſecret":…} 绑得上 Secret。
+# 只转小写的话字段名比对和预检都认不出它
+mutate("字段名按 Unicode 折叠比对", "internal/web/redact.go", ".", "TestRedactBody_Unicode",
+       swap('b.WriteRune(foldRune(r))', 'b.WriteRune(unicode.ToLower(r))'))
+# 预检和字段名比对共用 sensitive，折叠本身由上一条盯着；这一条打在调用点上：
+# 预检换成只转小写的朴素写法，{"ſecret":…} 就走快路径原样进日志
+mutate("敏感词预检按 Unicode 折叠", "internal/web/redact.go", ".", "TestRedactBody_Unicode",
+       swap('sensitive(s, words())', 'func(ws []string) bool { return slices.ContainsFunc(ws, func(w string) bool { return strings.Contains(strings.ToLower(s), w) }) }(words())'),
+       swap('|| sensitive(body, ws)', '|| slices.ContainsFunc(ws, func(w string) bool { return strings.Contains(strings.ToLower(body), w) })'))
+# path 特意不带查询串，Referer 却带着上一个页面的完整 URL
+mutate("URL 类请求头去掉查询串", "internal/web/redact.go", ".", "TestRedactHeaders_URL",
+       swap('\t\t\tv = stripQuery(v)\n', ''))
+# 原先是精确匹配：new_password、client_secret、sessionToken 原样进日志
+mutate("JSON 字段名里带敏感词也遮", "internal/web/redact.go", ".", "TestRedactBody",
+       swap('\t\t\tif sensitive(k, ws) {\n\t\t\t\tt[k] = Redacted', '\t\t\tif slices.Contains(ws, normalize(k)) {\n\t\t\t\tt[k] = Redacted'))
+mutate("表单字段名里带敏感词也遮", "internal/web/redact.go", ".", "TestRedactBody",
+       swap('\t\tif sensitive(k, ws) {\n\t\t\tvalues[k]', '\t\tif slices.Contains(ws, normalize(k)) {\n\t\t\tvalues[k]'))
+# 名单永远列不全（Proxy-Authorization 就曾漏在外面），词表是兜底的那一层
+mutate("请求头名字里带敏感词也遮", "internal/web/redact.go", ".", "TestRedactHeaders",
+       swap(' || sensitive(k, ws)', ''), swap('\tset := headers()\n\tws := words()\n', '\tset := headers()\n\tws := words()\n\t_ = ws\n'))
+# 预检认不出 api-key 的话，这种 body 走快路径原样进日志，根本到不了逐字段脱敏
+mutate("敏感词预检忽略分隔符", "internal/web/redact.go", ".", "TestRedactBody",
+       swap('sensitive(s, words())', 'func(ws []string) bool { return slices.ContainsFunc(ws, func(w string) bool { return strings.Contains(strings.Map(foldRune, s), w) }) }(words())'),
+       swap('|| sensitive(body, ws)', '|| slices.ContainsFunc(ws, func(w string) bool { return strings.Contains(strings.Map(foldRune, body), w) })'))
+mutate("脱敏后大整数不丢精度", "internal/web/redact.go", ".", "TestRedactBody", swap('\tdec.UseNumber()\n', ''))
+mutate("脱敏后不转义 HTML 字符", "internal/web/redact.go", ".", "TestRedactBody",
+       swap('\tenc.SetEscapeHTML(false)\n', ''))
+mutate("JSON 后面跟着别的东西时整个遮掉", "internal/web/redact.go", ".", "TestRedactBody",
+       swap('dec.Decode(new(any)) != io.EOF', '(dec.Decode(new(any)) != io.EOF && false)'))

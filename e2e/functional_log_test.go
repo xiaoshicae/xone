@@ -21,7 +21,7 @@ import (
 // redacted 脱敏之后的值，xgin/middleware.Redacted
 const redacted = "***REDACTED***"
 
-// 访问日志一条请求一行 JSON，字段以 xgin/middleware/log.go 为准：
+// 访问日志一条请求一行 JSON，字段以 internal/web/accesslog.go（AccessLog.Log）为准：
 // method、route、path、status、elapsed_ms、client_ip，外加 xtrace 注入的 trace_id / span_id。
 // 业务日志（slog.InfoContext）和访问日志在同一条链路上，trace_id 相同、且就是 Span 的 trace_id
 func TestFunctional_AccessLogFieldsComplete_TraceIDSharedWithAppLogAndSpan(t *testing.T) {

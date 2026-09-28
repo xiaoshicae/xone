@@ -567,10 +567,14 @@ mutate("UseHandler 也带身份字段", "xlog/xlog.go", ".", "TestUseHandler_Car
        swap('slog.SetDefault(withStatic(slog.New(newCtxHandler(*h)), identity(), c.Fields))', 'slog.SetDefault(slog.New(newCtxHandler(*h)))'))
 mutate("UseHandler 时写 Fields 不算冲突", "xlog/xlog.go", ".", "TestUseHandler_CarriesIdentity",
        swap('\t\toutput.Fields = nil\n', ''))
-# XLog、XApp 跟着框架一起来：只 import 根包的程序写了这两块也能启动（xapp 由 xlog 带进来）。
-# internal/coreonly 只 import 根包；那里的测试要是自己 import 了 xlog，这条变异就抓不住了
-mutate("根包带着 xlog 和 xapp", "xone.go", ".", "TestRun_X(Log|App)WorksWithCoreOnly",
-       swap('\t_ "github.com/xiaoshicae/xone/xlog"\n', ''))
+# XApp 跟着框架一起来，xlog 不跟：只 import 根包的程序写了 XApp 能启动，slog.Default 不被换掉。
+# internal/coreonly 只 import 根包；那里的测试要是自己 import 了 xlog / xapp，这两条变异就抓不住了
+mutate("根包带着 xapp", "xone.go", ".", "TestRun_XAppWorksWithCoreOnly",
+       swap('\t_ "github.com/xiaoshicae/xone/xapp"\n', ''))
+mutate("根包不带 xlog", "xone.go", ".", "TestRun_CoreOnlyLeavesSlogDefaultAlone",
+       swap('\t_ "github.com/xiaoshicae/xone/xapp"\n', '\t_ "github.com/xiaoshicae/xone/xlog"\n'))
+mutate("XLog 没人读时报错给出 import", "xone.go", ".", "TestRun_XLogWithoutImportNamesTheImport",
+       swap('slices.Contains(orphan, "XLog")', 'slices.Contains(orphan, "")'))
 mutate("只剩 Profiles / Import 的 XApp 连块一起摘掉", "internal/config/source.go", ".", "TestLoad_XAppWithOnlyProfilesAndImportIsNotUnclaimed",
        swap('if val != nil && len(app.Content) == 0 {', 'if false {'))
 mutate("XApp 里的 Import 被加载器取走", "internal/config/source.go", ".", "TestLoad_XAppNameLeftToXapp_ProfilesAndImportTakenByLoader",

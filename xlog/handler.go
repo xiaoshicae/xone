@@ -3,8 +3,8 @@ package xlog
 import (
 	"context"
 	"log/slog"
-	"slices"
-	"sync/atomic"
+
+	"github.com/xiaoshicae/xone/internal/logext"
 )
 
 // TraceExtractor 从 context 里取出链路标识。
@@ -14,19 +14,12 @@ import (
 //   - 后注入的覆盖先注入的（链路系统本来就只该有一个）
 //   - 未注入时日志不含 trace 字段，不报错
 //
-// 这样 xlog 不必依赖 OpenTelemetry，而依赖它的模块也不必反过来依赖 xlog。
-type TraceExtractor func(ctx context.Context) (traceID, spanID string)
-
-var traceExtractor atomic.Pointer[TraceExtractor]
+// 这样 xlog 不必依赖 OpenTelemetry。注入点本身放在核心的 internal/logext 里，
+// xtrace 往那里写、不 import xlog：只用 xgorm 这类集成的程序不会因此被装上 xlog。
+type TraceExtractor = logext.TraceExtractor
 
 // SetTraceExtractor 注入链路标识提取器
-func SetTraceExtractor(f TraceExtractor) {
-	if f == nil {
-		traceExtractor.Store(nil)
-		return
-	}
-	traceExtractor.Store(&f)
-}
+func SetTraceExtractor(f TraceExtractor) { logext.SetTraceExtractor(f) }
 
 // Observer 观察每一条实际写出的日志。由 xmetric 之类的包注入。
 //
@@ -34,9 +27,7 @@ func SetTraceExtractor(f TraceExtractor) {
 // 观察者里 panic 会被隔离：观测出问题不该把日志本身打断。
 //
 // 这是个只增不减的列表——观察者随进程存活，没有注销一说。
-type Observer func(ctx context.Context, r slog.Record)
-
-var observers atomic.Pointer[[]Observer]
+type Observer = logext.Observer
 
 // AddObserver 注入一个日志观察者。
 //
@@ -46,31 +37,11 @@ var observers atomic.Pointer[[]Observer]
 // 也接到新 handler 上，于是「包一层再设回去」可能绕成环——
 // 记录经 log.Output 又流回同一个 handler，卡死在 log 包那把不可重入的锁上。
 // 让 xlog 自己持有扩展点就没有这个问题。
-func AddObserver(o Observer) {
-	if o == nil {
-		return
-	}
-	for {
-		old := observers.Load()
-		var cur []Observer
-		if old != nil {
-			cur = *old
-		}
-		// Clip 之后 append 一定另起一个底层数组：别的协程可能正在 notify 里读 *old
-		next := append(slices.Clip(cur), o)
-		if observers.CompareAndSwap(old, &next) {
-			return
-		}
-	}
-}
+func AddObserver(o Observer) { logext.AddObserver(o) }
 
 // notify 把记录交给所有观察者，逐个隔离 panic
 func notify(ctx context.Context, r slog.Record) {
-	p := observers.Load()
-	if p == nil {
-		return
-	}
-	for _, o := range *p {
+	for _, o := range logext.Observers() {
 		callObserver(o, ctx, r)
 	}
 }
@@ -86,16 +57,9 @@ func callObserver(o Observer, ctx context.Context, r slog.Record) {
 
 // TraceIDs 返回当前 ctx 对应的链路标识，即本包会往日志里写的那两个值。
 //
-// 给需要链路标识、但不想依赖 OpenTelemetry 的包用——比如 xmetric
-// 要拿它做 exemplar，好让指标能跳转到对应的链路。
+// 给需要链路标识、但不想依赖 OpenTelemetry 的包用。
 // 没有注入提取器、或 ctx 里没有有效 Span 时返回两个空串。
-func TraceIDs(ctx context.Context) (traceID, spanID string) {
-	f := traceExtractor.Load()
-	if f == nil || ctx == nil {
-		return "", ""
-	}
-	return (*f)(ctx)
-}
+func TraceIDs(ctx context.Context) (traceID, spanID string) { return logext.TraceIDs(ctx) }
 
 // groupOrAttrs 记录一次 WithGroup 或 WithAttrs 调用，用于在开过分组时重放调用链
 type groupOrAttrs struct {

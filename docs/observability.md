@@ -22,11 +22,13 @@
 ## 日志
 
 xlog 把 `slog.Default()` 换成按 `XLog` 配好的 handler，业务和框架都写它。
+它跟着 xgin / xecho 来；没有 Web 框架的程序（消费者、一次性任务、只用 xgorm / xredis 的）要用它，
+匿名 import `github.com/xiaoshicae/xone/xlog`，不 import 则 `slog.Default()` 保持原样，下面这些都没有。
 要写到自己的日志后端（zap、公司的日志 SDK），在 `xone.Run` 之前 `xlog.UseHandler(h)`，下面这些照样生效，
 见 [xlog「用自己的日志后端」](../xlog/README.md#用自己的日志后端)。
 
 - **`trace_id` / `span_id`**：有链路时（见[链路](#链路)），用带 ctx 的方法（`slog.InfoContext(ctx, …)`）写的每一条都自动带上；
-  xlog 本身不依赖 OpenTelemetry，这一步由 xtrace 经 `xlog.SetTraceExtractor` 接上。
+  xlog 本身不依赖 OpenTelemetry，这一步由 xtrace 接上（注入点在核心的 `internal/logext`，xtrace 因此不必 import xlog）。
 - **请求级字段**：`xlog.AddKV(ctx, "user_id", id)` 在任意调用层级补一个字段，之后同一请求里的每条日志
   （包括访问日志）都带着它。作用域由 xgin / xecho 的 `LogScope` 中间件在每个请求开头开好；自己的非 Web 入口用
   `xlog.CtxWithScope(ctx)` 开。

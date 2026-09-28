@@ -29,6 +29,7 @@ import (
 	"os"
 	"os/signal"
 	"reflect"
+	"slices"
 	"syscall"
 	"time"
 
@@ -36,11 +37,10 @@ import (
 	"github.com/xiaoshicae/xone/internal/hook"
 	"github.com/xiaoshicae/xone/xerror"
 
-	// XLog、XApp 两块跟着框架一起来：只 import 了 xone 的程序（消费者、一次性任务）也能用它们配日志、
-	// 写应用名。少了这一行，写了这两块会被当成没人读的 key 启动失败。xapp 由 xlog 带进来
-	// （日志的 service / version 字段取自它），这里不必再单独 import 一次。
-	// 两个包都在核心 module 里、零依赖，带上它们不多任何东西。要用自己的日志后端，调 xlog.UseHandler
-	_ "github.com/xiaoshicae/xone/xlog"
+	// XApp 块跟着框架一起来：只 import 了 xone 的程序也能写应用名。它只读配置，不改任何全局状态。
+	// xlog 不在这里：它会换掉 slog.Default，只用 xhook、xgorm 的程序不该被它接管日志。
+	// 用 xgin / xecho（或 xtrace、xmetric）时它跟着来，别的程序要用就匿名 import 它
+	_ "github.com/xiaoshicae/xone/xapp"
 )
 
 // Runnable 需要持续运行的东西，通常就是你的服务器。
@@ -190,9 +190,14 @@ func Run(r Runnable, opts ...Option) error {
 	// 才发现不生效，而配置文件是使用者唯一的操作界面。还有一种是读得太晚：
 	// 只在 Start 里才读的 key 此时同样没人读过，报错里要说清该挪到哪里
 	if orphan := config.Unclaimed(); len(orphan) > 0 {
+		hint := ""
+		if slices.Contains(orphan, "XLog") {
+			// XLog 不跟着根包来（见 import 处），只用核心和数据类集成的程序最容易踩到
+			hint = `; XLog needs import _ "github.com/xiaoshicae/xone/xlog" (xgin and xecho bring it along)`
+		}
 		return errors.Join(xerror.Newf("xone", "config",
 			"config keys %v are not read by anyone: check the spelling, or whether the matching package is imported; "+
-				"a key first read after startup (inside Start) is too late to count, read it in main or a BeforeStart hook", orphan),
+				"a key first read after startup (inside Start) is too late to count, read it in main or a BeforeStart hook%s", orphan, hint),
 			stopWithin(o, started))
 	}
 

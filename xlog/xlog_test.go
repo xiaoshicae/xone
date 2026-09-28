@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/xiaoshicae/xone/internal/hook"
+	"github.com/xiaoshicae/xone/internal/logext"
 	"github.com/xiaoshicae/xone/xerror"
 	"github.com/xiaoshicae/xone/xonetest"
 )
@@ -563,9 +564,7 @@ func TestTraceIDs(t *testing.T) {
 
 func TestAddObserver(t *testing.T) {
 	// xmetric 靠它统计错误日志，而不必反过来让 xlog 认识 Prometheus
-	old := observers.Load()
-	t.Cleanup(func() { observers.Store(old) })
-	observers.Store(nil)
+	t.Cleanup(logext.ResetObservers())
 
 	var seen []string
 	AddObserver(func(_ context.Context, r slog.Record) { seen = append(seen, r.Level.String()+":"+r.Message) })
@@ -589,9 +588,7 @@ func TestAddObserver(t *testing.T) {
 }
 
 func TestAddObserver_PanicDoesNotInterruptLogging(t *testing.T) {
-	old := observers.Load()
-	t.Cleanup(func() { observers.Store(old) })
-	observers.Store(nil)
+	t.Cleanup(logext.ResetObservers())
 
 	AddObserver(func(context.Context, slog.Record) { panic("炸了") })
 	var reached bool

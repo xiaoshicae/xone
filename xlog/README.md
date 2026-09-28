@@ -2,7 +2,9 @@
 
 日志：装好之后 `slog.Default()` 就是按 `XLog` 配好的原生 `*slog.Logger`，业务代码直接用标准库 `log/slog`。
 
-- 核心模块，零依赖，跟着框架一起来：import 了 `xone` 就装好了，不用另外 import；不写配置就是 info 级别的 JSON 打到标准输出
+- 核心模块，零依赖，跟着 xgin / xecho 一起来：用了它们就装好了，不用另外 import；不写配置就是 info 级别的 JSON 打到标准输出
+- 只用 xhook、xgorm、xredis、xhttp、xcache 的程序不会被装上 xlog，`slog.Default()` 保持原样；
+  想用就匿名 import `github.com/xiaoshicae/xone/xlog`。没 import 却写了 `XLog` 块，启动报错并给出这一行
 - 有链路时每条日志自动带 `trace_id` / `span_id`
 - `xlog.AddKV` 给整个请求加字段（访问日志也带上），`xlog.CtxWithKV` 只给一段调用加
 - 文件输出按时间轮转、按保留时长清理，只删自己命名的文件

@@ -19,9 +19,13 @@ import (
 
 	// 匿名 import 就是全部「装配」。想用数据库就加上 xgorm，
 	// 想用 Redis 就加上 xredis——Runnable 那边一个字都不用改。
-	// 日志和指标跟着 xcache 一起来。链路要单独 import xtrace：这里没有 xgin、xgorm、xredis、xhttp
+	// 指标跟着 xcache 一起来。链路要单独 import xtrace：这里没有 xgin、xgorm、xredis、xhttp
 	// 这些自带链路的集成，少了它日志就带不上 trace_id
 	_ "github.com/xiaoshicae/xone/xtrace"
+
+	// xlog 只跟着 xgin / xecho 来。没有 Web 框架的程序要按 XLog 配日志，自己匿名 import 它；
+	// 不 import 的话 slog.Default() 保持标准库默认，写了 XLog 块会启动失败
+	_ "github.com/xiaoshicae/xone/xlog"
 )
 
 func main() {

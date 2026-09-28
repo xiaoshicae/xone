@@ -1,10 +1,11 @@
 // Package coreonly 只 import 根包的程序：单独一个测试二进制，登记表里只有框架自己带来的钩子。
 //
-// 这里的测试不能再 import 别的 xone 包（哪怕是 xlog）：那样即使根包漏了它，
-// 它也照样被测试文件带进来，「根包带着 xlog」这条承诺就验不出来了。要用的放到 withhandler
+// 这里的测试不能再 import 别的 xone 包（哪怕是 xlog、xapp）：那样根包带没带它们、
+// 有没有多带 xlog，这里就验不出来了。要用 xlog 的放到 withhandler
 package coreonly
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"log/slog"
@@ -29,21 +30,35 @@ func TestRun_XAppWorksWithCoreOnly(t *testing.T) {
 	}
 }
 
-func TestRun_XLogWorksWithCoreOnly(t *testing.T) {
-	// XLog 块也跟着框架一起来：只 import 根包的程序照样按 XLog 配好日志，不必再匿名 import xlog
-	dir := t.TempDir()
-	cfg := filepath.Join(dir, "application.yml")
-	yml := "XLog:\n  Format: json\n  Console: false\n  File:\n    Enable: true\n    Path: " + dir + "\n    Name: app.log\n"
-	if err := os.WriteFile(cfg, []byte(yml), 0o600); err != nil {
+func TestRun_CoreOnlyLeavesSlogDefaultAlone(t *testing.T) {
+	// xlog 不跟着根包来：只用核心（和 xgorm 这类数据集成）的程序，slog.Default 还是它自己设的那个
+	var buf bytes.Buffer
+	mine := slog.New(slog.NewTextHandler(&buf, nil))
+	old := slog.Default()
+	slog.SetDefault(mine)
+	t.Cleanup(func() { slog.SetDefault(old) })
+	cfg := filepath.Join(t.TempDir(), "application.yml")
+	if err := os.WriteFile(cfg, []byte("XApp:\n  Name: core.only\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	err := xone.Run(xone.Func(func(context.Context) error { slog.Info("core only"); return nil }),
-		xone.WithConfigPath(cfg), xone.WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))))
+	err := xone.Run(xone.Func(func(context.Context) error { slog.Info("core only"); return nil }), xone.WithConfigPath(cfg))
 	if err != nil {
-		t.Fatalf("只 import 根包、写了 XLog 也该正常启动：%v", err)
+		t.Fatal(err)
 	}
-	out, err := os.ReadFile(filepath.Join(dir, "app.log"))
-	if err != nil || !strings.Contains(string(out), `"msg":"core only"`) {
-		t.Errorf("日志该按 XLog 写进文件（JSON），got=%q err=%v", out, err)
+	if slog.Default() != mine || !strings.Contains(buf.String(), "msg=\"core only\"") {
+		t.Errorf("只 import 根包，slog.Default 不该被换掉，got=%q", buf.String())
+	}
+}
+
+func TestRun_XLogWithoutImportNamesTheImport(t *testing.T) {
+	// 写了 XLog 却没 import xlog：报错直接给出要加的那一行，不让人猜是哪个包
+	cfg := filepath.Join(t.TempDir(), "application.yml")
+	if err := os.WriteFile(cfg, []byte("XLog:\n  Level: debug\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err := xone.Run(xone.Func(func(context.Context) error { return nil }),
+		xone.WithConfigPath(cfg), xone.WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))))
+	if err == nil || !strings.Contains(err.Error(), `import _ "github.com/xiaoshicae/xone/xlog"`) {
+		t.Errorf("该报错并给出 xlog 的 import，got=%v", err)
 	}
 }

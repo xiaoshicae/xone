@@ -170,10 +170,14 @@ func New(ctx context.Context, cfg Config) (*T, io.Closer, error)  // 会建连�
 
 | 扩展点 | 注入方 | 作用 |
 |---|---|---|
-| `xlog.SetTraceExtractor` | xtrace | 日志自动带上 `trace_id`，而 xlog 不依赖 OpenTelemetry |
-| `xlog.AddObserver` | xmetric | 统计错误日志条数，而 xlog 不依赖 Prometheus |
+| `internal/logext.SetTraceExtractor` | xtrace | 日志自动带上 `trace_id`，而 xlog 不依赖 OpenTelemetry |
+| `internal/logext.AddObserver` | xmetric | 统计错误日志条数，而 xlog 不依赖 Prometheus |
 | `xgorm.RegisterDialect` | xgorm/clickhouse 等驱动 module | 加驱动，而 xgorm 不带它的依赖 |
 | carrier 的 `TrustedPeer() bool` | xgin、xecho | 告诉 xtrace 这个对端可信，而 xtrace 不认识它们 |
+
+xlog 的两个扩展点放在核心的 `internal/logext` 里（`xlog.SetTraceExtractor` / `xlog.AddObserver` 转发过去），
+而不是 xlog 自己：注入方 xtrace、xmetric 于是不 import xlog。xlog 会换掉 `slog.Default()`，
+只用 xgorm、xredis 这类集成的程序（它们都带着 xtrace、xmetric）不该因此被接管日志；xlog 只跟着 xgin / xecho 来。
 
 不用「在 `slog.Default()` 外面包一层」的办法：`slog.SetDefault` 会把标准库 `log` 包的输出也接到新 handler 上，
 链条一旦绕回 slog 自带的 handler 就成环，卡死在 `log` 包那把不可重入的锁上。让下层自己持有扩展点就没有这个问题。

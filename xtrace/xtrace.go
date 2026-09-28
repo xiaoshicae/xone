@@ -19,11 +19,11 @@ import (
 	oteltrace "go.opentelemetry.io/otel/trace"
 	"go.opentelemetry.io/otel/trace/noop"
 
+	"github.com/xiaoshicae/xone/internal/logext"
 	"github.com/xiaoshicae/xone/xapp"
 	"github.com/xiaoshicae/xone/xconfig"
 	"github.com/xiaoshicae/xone/xerror"
 	"github.com/xiaoshicae/xone/xhook"
-	"github.com/xiaoshicae/xone/xlog"
 )
 
 // Tracing 一份配置装配出来的链路设施。
@@ -44,8 +44,9 @@ type Tracing struct {
 func (t *Tracing) Install() {
 	otel.SetTracerProvider(t.TracerProvider)
 	otel.SetTextMapPropagator(t.Propagator)
-	// 让日志带上 TraceID。xlog 不依赖 OpenTelemetry，这个能力由本包注入
-	xlog.SetTraceExtractor(traceIDsFromContext)
+	// 让日志带上 TraceID。xlog 不依赖 OpenTelemetry，这个能力由本包注入；
+	// 注入点在 internal/logext，本包不 import xlog，只用 xgorm 的程序不会因此被装上 xlog
+	logext.SetTraceExtractor(traceIDsFromContext)
 }
 
 // New 按配置构造链路设施，不触碰任何全局变量。

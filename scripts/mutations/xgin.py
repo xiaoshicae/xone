@@ -236,3 +236,8 @@ mutate("指标里没匹配上的路由记 unmatched", "xgin/middleware/metric.go
 mutate("Span 里没匹配上的路由记 unmatched", "xgin/middleware/trace.go", "./xgin", "TestTrace_UnmatchedRouteUsesFixedValue",
        swap('\t\troute := routeOf(c)\n', '\t\troute := c.Request.URL.Path\n'))
 
+section("错误文本脱敏")
+mutate("访问日志的 errors 字段脱过敏（xgin）", "internal/web/accesslog.go", "./xgin", "TestLog_ErrorTextIsRedacted",
+       swap('slog.String("errors", RedactText(a.Errors))', 'slog.String("errors", a.Errors)'))
+mutate("Span 上的 gin.errors 脱过敏", "xgin/middleware/trace.go", "./xgin", "TestTrace_ErrorTextIsRedactedOnSpan",
+       swap('web.RedactText(c.Errors.String())', 'c.Errors.String()'))

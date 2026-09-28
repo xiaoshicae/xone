@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -144,6 +145,23 @@ func TestSnapshotBody_MediaTypeCaseInsensitive(t *testing.T) {
 		req.Header.Set("Content-Type", ct)
 		if got := string(SnapshotBody(req)); !strings.Contains(got, "omitted") {
 			t.Errorf("Content-Type=%q 的 body 不该被读进日志，got=%q", ct, got)
+		}
+	}
+}
+
+func TestAccessLog_ErrorsFieldIsRedacted(t *testing.T) {
+	// 两个 Web 集成都经这里写 errors：驱动、下游报的错里常夹着凭证
+	var buf bytes.Buffer
+	old := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(old) })
+
+	var l AccessLog
+	for msg, want := range map[string]string{"db down": `"errors":"db down"`, "login failed password=hunter2": `"errors":"` + Redacted + `"`} {
+		buf.Reset()
+		l.Log(&Access{Request: httptest.NewRequest("GET", "/x", nil), Route: "/x", Status: 500, Errors: msg})
+		if !strings.Contains(buf.String(), want) || strings.Contains(buf.String(), "hunter2") {
+			t.Errorf("errors 该记成 %s，got=%s", want, buf.String())
 		}
 	}
 }

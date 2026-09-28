@@ -118,7 +118,7 @@ admin := xecho.New().WithConfig(c).WithRoutes(adminRoutes)
   echo 自己的 `e.Server` 四个超时全是 0。
 - **handler 返回错误就行**：`return echo.NewHTTPError(http.StatusNotFound, "no such user")` 或者普通的 `error`，
   响应由 `e.HTTPErrorHandler` 写（默认是 echo 的 JSON `{"message":...}`，普通 error 一律 500、不带原文），
-  要换格式就在 `WithRoutes` 里设 `e.HTTPErrorHandler`。错误原文进访问日志的 `errors` 和 Span 的 `echo.errors`。
+  要换格式就在 `WithRoutes` 里设 `e.HTTPErrorHandler`。错误原文进访问日志的 `errors` 和 Span 的 `echo.errors`，出现敏感词（password、token……）就整段遮掉。
   自定义的错误处理只会被调一次；响应已经写出去了（`c.Response().Committed`）再返回错误时，echo 默认的错误处理什么都不做。
 - **请求体没有上限**：框架不替业务定，要限就用 echo 自带的中间件，比如 `e.Use(echomw.BodyLimit("10M"))`
   （`echomw` 即 `github.com/labstack/echo/v4/middleware`）。multipart 的落盘阈值写死 32MB，见[「行为与实测」](#行为与实测)。
@@ -157,7 +157,7 @@ echo 自带的 `ExtractIPFromXFFHeader` 默认信任回环、链路本地和私�
 | `bytes_in` | 请求头里的 `Content-Length`；分块上传记 `-1` |
 | `bytes_out` | 写出的响应体字节数（`c.Response().Size`），不含响应头；错误响应也算 |
 | `query` / `request_headers` / `request_body` / `response_headers` / `response_body` | 各自的开关打开时，脱敏规则同 xgin |
-| `errors` | handler 返回的错误（`err.Error()`，如 `code=404, message=Not Found`）、中止或断连的原因；没有就不写 |
+| `errors` | handler 返回的错误（`err.Error()`，如 `code=404, message=Not Found`）、中止或断连的原因；没有就不写；出现敏感词就整段记成 `***REDACTED***`（Span 的 `echo.errors` 同理） |
 | `trace_id` / `span_id` | 有链路时 |
 
 `middleware.AddSensitiveFields(...)` / `AddSensitiveHeaders(...)` 和 xgin 的同名函数写的是同一张表，用哪个都行。

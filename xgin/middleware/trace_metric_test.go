@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -333,5 +334,22 @@ func TestMetric_ErrAbortHandlerAbortRecordedAs499(t *testing.T) {
 
 	if out := testkit.Scrape(m.Handler); !strings.Contains(out, `status="499"`) {
 		t.Errorf("中止的请求该记成 499\n实际=\n%s", out)
+	}
+}
+
+func TestTrace_ErrorTextIsRedactedOnSpan(t *testing.T) {
+	spans := recording(t)
+	serve(t, get("/hello"), []gin.HandlerFunc{Trace()}, func(c *gin.Context) {
+		_ = c.Error(errors.New("login failed password=hunter2"))
+		c.Status(500)
+	})
+	got := "（没写）"
+	for _, a := range spans()[0].Attributes {
+		if a.Key == "gin.errors" {
+			got = a.Value.AsString()
+		}
+	}
+	if got != Redacted {
+		t.Errorf("Span 上的 gin.errors 该被遮掉，got=%q", got)
 	}
 }

@@ -12,6 +12,11 @@
 
 - 新模块 xecho（`github.com/xiaoshicae/xone/xecho`）：基于 Echo v4 的 Web 服务，配置块 `XEcho`，用法和 xgin 一样（`xecho.New().WithRoutes(...)` 交给 `xone.Run`）；访问日志字段、指标名、Span 名、client_ip 规则、优雅退出与 xgin 相同，handler 返回的错误按客户端实际收到的状态码记录。
 
+### 修复
+
+- xgin / xecho 的访问日志 `errors` 字段和 Span 的 `gin.errors` / `echo.errors`：错误文本里出现敏感词（password、token、secret……，同 body 脱敏的词表）就整段记成 `***REDACTED***`。
+  原来原样记录，驱动或下游报的错里夹带的凭证会进日志和链路后端。要看完整原因，在业务代码里自己记一条（并自行脱敏）。
+
 ## [v1.14.0] - 2026-09-27
 
 ### 不兼容变更

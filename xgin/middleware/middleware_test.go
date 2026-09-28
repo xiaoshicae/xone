@@ -620,3 +620,18 @@ func TestLog_ErrAbortHandlerAbortLoggedAs499(t *testing.T) {
 		t.Errorf("errors 里该带着中止的原因，got=%v", got[0]["errors"])
 	}
 }
+
+func TestLog_ErrorTextIsRedacted(t *testing.T) {
+	// c.Error 登记的错误原样进 errors 字段；驱动、下游报的错里常夹着凭证
+	for msg, want := range map[string]string{"db down": "db down", "login failed password=hunter2": Redacted} {
+		lines := capture(t)
+		serve(t, get("/hello"), []gin.HandlerFunc{Log()}, func(c *gin.Context) {
+			_ = c.Error(errors.New(msg))
+			c.Status(500)
+		})
+		got, _ := lines()[0]["errors"].(string)
+		if want == Redacted && got != Redacted || want != Redacted && !strings.Contains(got, msg) {
+			t.Errorf("errors=%q，%q 该记成 %q", got, msg, want)
+		}
+	}
+}

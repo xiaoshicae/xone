@@ -493,3 +493,16 @@ func TestRedactHeaders_URLHeadersStripQueryString(t *testing.T) {
 		t.Errorf("该只留下查询串之前的部分，got=%s", got)
 	}
 }
+
+func TestRedactText_SensitiveWordRedactsWholeText(t *testing.T) {
+	for in, want := range map[string]string{
+		"":                              "",
+		"db down":                       "db down",
+		"login failed password=hunter2": Redacted,
+		"invalid Access_Token abc":      Redacted, // 比较前去掉分隔符、转小写，同 body
+	} {
+		if got := RedactText(in); got != want {
+			t.Errorf("RedactText(%q)=%q，want %q", in, got, want)
+		}
+	}
+}

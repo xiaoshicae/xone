@@ -383,7 +383,7 @@ var errorCases = []struct {
 }{
 	{"没匹配上的路由（404）", "GET", "/nope", 404, "unmatched", "code=404, message=Not Found"},
 	{"方法不对（405）", "POST", "/only-get", 405, "unmatched", "code=405, message=Method Not Allowed"},
-	{"普通 error（500）", "GET", "/plain", 500, "/plain", "db down: password=s3cret"},
+	{"普通 error（500）", "GET", "/plain", 500, "/plain", Redacted}, // 错误原文带着 password=，整段遮掉
 	{"echo.NewHTTPError(418)", "GET", "/teapot", 418, "/teapot", "code=418, message=I'm a teapot"},
 }
 
@@ -841,5 +841,16 @@ func TestLog_ErrAbortHandlerAbortLoggedAs499(t *testing.T) {
 	}
 	if e, _ := got[0]["errors"].(string); !strings.Contains(e, "net/http: abort Handler") {
 		t.Errorf("errors 里该带着中止的原因，got=%v", got[0]["errors"])
+	}
+}
+
+func TestLog_ErrorTextIsRedacted(t *testing.T) {
+	// echo 里返回 error 是常规写法，错误原文进 errors 字段：驱动、下游报的错里常夹着凭证
+	for msg, want := range map[string]string{"db down": "db down", "login failed password=hunter2": Redacted} {
+		lines := capture(t)
+		serve(t, get("/hello"), []echo.MiddlewareFunc{Log()}, func(c echo.Context) error { return errors.New(msg) })
+		if got := accessLogs(lines())[0]["errors"]; got != want {
+			t.Errorf("errors=%v，%q 该记成 %q", got, msg, want)
+		}
 	}
 }

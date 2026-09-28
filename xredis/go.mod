@@ -6,9 +6,9 @@ require (
 	github.com/prometheus/client_golang v1.24.1
 	github.com/redis/go-redis/extra/redisotel/v9 v9.22.0
 	github.com/redis/go-redis/v9 v9.22.0
-	github.com/xiaoshicae/xone v1.14.0
-	github.com/xiaoshicae/xone/xmetric v1.14.0
-	github.com/xiaoshicae/xone/xtrace v1.14.0
+	github.com/xiaoshicae/xone v1.15.0
+	github.com/xiaoshicae/xone/xmetric v1.15.0
+	github.com/xiaoshicae/xone/xtrace v1.15.0
 	go.opentelemetry.io/otel v1.46.0
 	go.opentelemetry.io/otel/trace v1.46.0
 )

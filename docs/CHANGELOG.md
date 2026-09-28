@@ -8,6 +8,8 @@
 
 ## [未发布]
 
+## [v1.15.0] - 2026-09-28
+
 ### 新增
 
 - 新模块 xecho（`github.com/xiaoshicae/xone/xecho`）：基于 Echo v4 的 Web 服务，配置块 `XEcho`，用法和 xgin 一样（`xecho.New().WithRoutes(...)` 交给 `xone.Run`）；访问日志字段、指标名、Span 名、client_ip 规则、优雅退出与 xgin 相同，handler 返回的错误按客户端实际收到的状态码记录。

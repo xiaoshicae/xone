@@ -32,7 +32,7 @@
 | [`XEcho` 服务器超时](../xecho/README.md#行为与实测) | `e.Server` 四个超时全是 0 | 不用 `e.Start`，同 `XGin` 的四个超时 | 同 `XGin.ReadHeaderTimeout` |
 | [echo 自己的日志](../xecho/README.md#行为与实测) | gommon 写 `os.Stdout`，自己的 JSON 格式 | 接到 slog，级别不变 | 绕开 slog 的输出进不了日志平台 |
 | [`XEcho` 分组的兜底路由](../xecho/README.md#行为与实测) | 带中间件的分组悄悄注册 `RouteNotFound`，`c.Path()` 是 `/api/v1/*` | 落到兜底上的记 `unmatched` | 否则 404 在看板上是 `/api/v1/*`，和 xgin 对不上 |
-| [`XEcho` 的 `e.Pre`](../xecho/README.md#行为与实测) | 挂在 `e.Use` 上的中间件看不到 Pre 里结束的请求，也兜不住 Pre 里的 panic | 内置中间件挂在 `e.Pre` 上，原地换请求的 ctx | Pre 里的鉴权、限流、301 不进日志和指标；换成副本的话 `MethodOverride` 失效 |
+| [`XEcho` 的 `e.Pre`](../xecho/README.md#行为与实测) | 挂在 `e.Use` 上的中间件看不到 Pre 里结束的请求，也兜不住 Pre 里的 panic | 内置中间件挂在 `e.Pre` 上，Pre 里不动请求、ctx 存在 `echo.Context` 上，路由之后才换到请求上 | Pre 里的鉴权、限流、301 不进日志和指标；Pre 里换请求的话 `MethodOverride` 失效 |
 | [`http.Server.ErrorLog`](../xgin/README.md#日志) | nil：写标准库的 log（经 slog 是 INFO、消息每行不同） | 接到 slog，WARN，消息 `<模块> http server error` | TLS 握手失败这类错误没法按消息检索和告警 |
 | [`XGorm.Log: false`](../xgorm/README.md#行为与实测) | 换成 GORM 自己的 stdout logger | 真的不打 | 那个默认实现带 ANSI 颜色直写 `os.Stdout` |
 | [`XGorm.Log: true`](../xgorm/README.md#行为与实测) | 参数值代进 SQL 再记 | 只记带占位符的 SQL | 否则 `WHERE password = ?` 记下来的是真实的密码 |

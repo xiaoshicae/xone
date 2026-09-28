@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -31,6 +32,7 @@ import (
 	"github.com/xiaoshicae/xone/internal/testkit"
 	"github.com/xiaoshicae/xone/xecho/middleware"
 	"github.com/xiaoshicae/xone/xerror"
+	"github.com/xiaoshicae/xone/xlog"
 	"github.com/xiaoshicae/xone/xmetric"
 )
 
@@ -1747,4 +1749,127 @@ func TestBuild_ContextTimeoutRecordedAsSent(t *testing.T) {
 			t.Errorf("Metric=%v：客户端收到 %d，访问日志该记同一个状态码和字节数：\n%s", metric, w.Code, buf.String())
 		}
 	}
+}
+
+// xlogCapture 把默认 logger 换成真的 xlog（trace_id、xlog.AddKV 的字段是它的 handler 加上的），返回取日志行的函数
+func xlogCapture(t *testing.T) func() string {
+	t.Helper()
+	dir := t.TempDir()
+	c := xlog.DefaultConfig()
+	c.Console = false
+	c.File = xlog.FileConfig{Enable: true, Path: dir, Name: "app.log", RotateTime: time.Hour, Perm: "0644"}
+	l, closer, err := xlog.New(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := slog.Default()
+	slog.SetDefault(l)
+	t.Cleanup(func() { slog.SetDefault(old); closer.Close() })
+	return func() string {
+		closer.Close()
+		files, _ := filepath.Glob(filepath.Join(dir, "app.log.*"))
+		if len(files) == 0 {
+			return ""
+		}
+		b, _ := os.ReadFile(files[0])
+		return string(b)
+	}
+}
+
+func TestBuild_PreRejectionAccessLogCarriesTraceID(t *testing.T) {
+	// Pre 里就结束了的请求，日志作用域和 Span 还没换到请求上（路由之后才换）：
+	// 访问日志用的是存在 echo.Context 上的那个 ctx，照样带 trace_id，和 X-Trace-Id 对得上
+	logs := xlogCapture(t)
+	e, _, _ := preEcho(t, func(echo.HandlerFunc) echo.HandlerFunc {
+		return func(echo.Context) error { return echo.ErrUnauthorized }
+	})
+	w := doRequest(t, e, "GET", "/a")
+	id := w.Header().Get(middleware.TraceIDHeader)
+	if out := logs(); id == "" || !strings.Contains(out, `"trace_id":"`+id+`"`) || !strings.Contains(out, `"status":401`) {
+		t.Errorf("401 的访问日志该带 trace_id=%q：\n%s", id, out)
+	}
+}
+
+func TestBuild_HandlerSeesSpanAndLogScope(t *testing.T) {
+	// 路由之后 xecho 把 Pre 里建好的 ctx 换到请求上：handler 和 WithMiddleware 看到的 ctx 带着服务端 Span，
+	// xlog.AddKV 写进去的字段出现在访问日志里
+	logs := xlogCapture(t)
+	exp := tracetest.NewInMemoryExporter()
+	old := otel.GetTracerProvider()
+	otel.SetTracerProvider(sdktrace.NewTracerProvider(sdktrace.WithSyncer(exp)))
+	t.Cleanup(func() { otel.SetTracerProvider(old) })
+	var inMiddleware, inHandler string
+	e := New().WithConfig(configWith(func(c *Config) { c.Metric = false })).
+		WithMiddleware(func(next echo.HandlerFunc) echo.HandlerFunc {
+			return func(c echo.Context) error {
+				inMiddleware = trace.SpanContextFromContext(c.Request().Context()).TraceID().String()
+				return next(c)
+			}
+		}).
+		WithRoutes(func(e *echo.Echo) {
+			e.GET("/a", func(c echo.Context) error {
+				inHandler = trace.SpanContextFromContext(c.Request().Context()).TraceID().String()
+				xlog.AddKV(c.Request().Context(), "user_id", "u9")
+				return c.NoContent(200)
+			})
+		}).Engine()
+	w := doRequest(t, e, "GET", "/a")
+	id := w.Header().Get(middleware.TraceIDHeader)
+	if id == "" || inMiddleware != id || inHandler != id {
+		t.Errorf("WithMiddleware 和 handler 都该看到服务端 Span，X-Trace-Id=%q middleware=%q handler=%q", id, inMiddleware, inHandler)
+	}
+	if out := logs(); !strings.Contains(out, `"user_id":"u9"`) {
+		t.Errorf("xlog.AddKV 的字段该进访问日志：\n%s", out)
+	}
+}
+
+func TestBuild_PreRewritingMiddlewaresStillRoute(t *testing.T) {
+	// 使用者的 e.Pre 改的是 echo 按它找路由的那个请求（Method、URL.Path）：内置中间件不能换掉它
+	for name, c := range map[string]struct {
+		pre    echo.MiddlewareFunc
+		method string
+		path   string
+		header string
+	}{
+		"MethodOverride":      {echomw.MethodOverride(), "POST", "/a", "PUT"},
+		"RemoveTrailingSlash": {echomw.RemoveTrailingSlash(), "PUT", "/a/", ""},
+		"Rewrite":             {echomw.Rewrite(map[string]string{"/old": "/a"}), "PUT", "/old", ""},
+	} {
+		e := New().WithConfig(configWith(quiet)).WithRoutes(func(e *echo.Echo) {
+			e.Pre(c.pre)
+			e.PUT("/a", func(c echo.Context) error { return c.String(200, "put") })
+		}).Engine()
+		req := httptest.NewRequest(c.method, c.path, nil)
+		if c.header != "" {
+			req.Header.Set(echo.HeaderXHTTPMethodOverride, c.header)
+		}
+		w := httptest.NewRecorder()
+		e.ServeHTTP(w, req)
+		if w.Code != 200 || w.Body.String() != "put" {
+			t.Errorf("%s：该路由到 PUT /a，got=%d %q", name, w.Code, w.Body.String())
+		}
+	}
+}
+
+func TestHandler_RequestUsedAfterReturnIsRaceFree(t *testing.T) {
+	// 回归用例（-race）：handler 把请求交给活得比它久的协程（异步记日志、打点）是常见写法。
+	// 内置中间件原地改交进来的 *http.Request 的话，这里就是一次数据竞争
+	var wg sync.WaitGroup
+	e := New().WithConfig(DefaultConfig()).WithRoutes(func(e *echo.Echo) {
+		e.GET("/async", func(c echo.Context) error {
+			r := c.Request()
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				time.Sleep(5 * time.Millisecond)
+				_ = r.Context().Value("k")
+				_ = r.Method
+			}()
+			return c.String(200, "ok")
+		})
+	}).Engine()
+	for range 20 {
+		e.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", "/async", nil))
+	}
+	wg.Wait()
 }

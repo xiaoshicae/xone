@@ -17,7 +17,7 @@
 - xgin / xecho 的 `TrustedProxies` 写 IPv4 映射成 IPv6 的地址或网段（`::ffff:10.0.0.1`、`::ffff:10.0.0.0/104`）现在启动失败，报 `TrustedProxies entry ... is an IPv4-mapped IPv6 address; write it as ...`：原来 gin 把单个地址解歪（信的是 `::1` 这类地址），网段在 client_ip 和透传 Header 两处的判断也对不上。迁移：照报错改成 IPv4 写法，`::ffff:10.0.0.1` → `10.0.0.1`，`::ffff:10.0.0.0/104` → `10.0.0.0/8`（前缀长度减 96）。
 - xgin / xecho 的 `<模块> listening` 日志改在证书读好、端口绑上之后才打：证书文件缺失或端口被占时只有那条 `listen on ... failed` 的错误，原来会先打一条 listening。
 - xecho：带中间件的分组（`e.Group(prefix, mw...)`、`g.Use(...)`）下没匹配上的请求、落到 `e.RouteNotFound` 上的请求，访问日志的 `route`、指标的 `route` 标签、Span 名现在记 `unmatched`，和 xgin 一致；原来记成兜底的模板（`/api/v1/*`）。按 `route="/api/v1/*"` 查 404 的看板和告警改查 `unmatched`。
-- xecho：内置中间件改挂在 `e.Pre` 上，在 `e.Pre` 里拒掉、重定向的请求现在也进访问日志、指标、链路并带 `X-Trace-Id`（`route` 记 `unmatched`），`e.Pre` 里的 panic 也被兜住、回 500；原来这些请求什么都不记，panic 时客户端读到 EOF。`WithMiddleware` 仍在 router 之后，`e.Pre(echomw.MethodOverride())` 照常生效。
+- xecho：内置中间件改挂在 `e.Pre` 上，在 `e.Pre` 里拒掉、重定向的请求现在也进访问日志、指标、链路并带 `X-Trace-Id`（`route` 记 `unmatched`），`e.Pre` 里的 panic 也被兜住、回 500；原来这些请求什么都不记，panic 时客户端读到 EOF。`WithMiddleware` 仍在 router 之后，`e.Pre(echomw.MethodOverride())` 照常生效；你自己的 `e.Pre` 看到的是请求原来的 ctx（那里打的日志不带 `trace_id`）。
 - xecho：handler 返回（不是 panic）一个包着 `http.ErrAbortHandler` 的错误时按客户端实际收到的 500 记录，原来记成 499。
 - xgin / xecho：客户端已经断开（或停止时被强制断连）、响应还一个字节都没发的请求，访问日志、指标、链路记 499，Span 不标错；原来 xecho 里 `return ctx.Err()` 记成 500 并标错，xgin 里什么都没写就返回的记成 `bytes_out` 为 0 的 200。按 5xx 或 200 统计这类请求的看板会看到它们挪到了 499。
 - xgin / xecho 的 `LogResponseBody`：响应带着 `Content-Encoding`（gzip 等压缩中间件压过的）时 `response_body` 只记 `[gzip-encoded content omitted]`，原来记的是压缩后的二进制乱码。

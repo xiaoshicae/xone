@@ -163,6 +163,9 @@ mutate("XGin 客户端走了的 Span 不标错", "xgin/middleware/trace.go", "./
 # 压缩中间件排在访问日志里面：截下来的是压缩过的字节，原先整段乱码进了 response_body
 mutate("压缩过的响应体不记内容", "internal/web/accesslog.go", "./xgin", "TestLog_EncodedResponseBodyOmitted",
        swap('\t\t\tbody := encodedOmitted(a.RespHeader)\n', '\t\t\tbody := ""\n'))
+# xgin 不给 Access.Ctx：访问日志得退回请求自己的 ctx，trace_id、xlog.AddKV 的字段在那里
+mutate("访问日志的 ctx 缺省用请求的", "internal/web/accesslog.go", "./xgin", "TestLogScope",
+       swap('\tctx := a.Ctx\n\tif ctx == nil {', '\tctx := a.Ctx\n\tif false {'))
 mutate("链路的 method 收敛", "xgin/middleware/trace.go", "./xgin", "TestTrace",
        swap('method := web.NormalizeMethod(c.Request.Method)', 'method := c.Request.Method'),
        swap('\t\troute := routeOf(c)\n', '\t\troute := routeOf(c)\n\t\t_ = web.NormalizeMethod\n'))

@@ -133,7 +133,8 @@ admin := xecho.New().WithConfig(c).WithRoutes(adminRoutes)
 - **中间件的顺序**，自外向内：`LogScope → Trace → Log → Metric → Recover →` 你的 `e.Pre` `→ router →` `WithMiddleware` / 你的 `e.Use` `→ handler`。
   内置的挂在 `e.Pre` 上、排在你的 `e.Pre` 外面：Pre 里拒掉（`return echo.ErrUnauthorized`）、重定向（`RemoveTrailingSlashWithConfig` 的 301）的请求
   照样进访问日志、指标、链路、带 `X-Trace-Id`，Pre 里的 panic 兜住回 500。这时 router 还没跑，`route` 记 `unmatched`。
-  要用 `c.Path()`、`c.Param()` 的中间件挂 `e.Use` 或 `WithMiddleware`；`e.Pre(echomw.MethodOverride())` 照常生效，记下的是改过之后的方法。
+  要用 `c.Path()`、`c.Param()`、请求 ctx（`trace_id`、`xlog.AddKV`）的中间件挂 `e.Use` 或 `WithMiddleware`：你的 `e.Pre` 看到的是请求原来的 ctx，见[「行为与实测」](#行为与实测)。
+  `e.Pre(echomw.MethodOverride())`、`RemoveTrailingSlash`、`Rewrite` 照常生效，记下的是改过之后的方法。
 - **超时用 `echomw.ContextTimeout`，别用 `echomw.Timeout`**：后者（echo 已标弃用）在另一个协程里跑 handler、自己往原始的 writer 写 503，
   实测客户端收到 503，访问日志、指标、链路记的却是 200、`bytes_out` 0，`-race` 下还和访问日志中间件读写同一个响应。
   `ContextTimeout` 只给请求套截止时间，handler 看 `c.Request().Context()` 返回，由它换成 503，记的就是 503。
@@ -250,9 +251,12 @@ handler 先写了 200 再返回错误时，echo 默认的错误处理见 `Commit
 **`e.Pre`**：`Echo.ServeHTTP` 有 Pre 中间件时把 router 包在 Pre 链的最里面，所以挂在 Pre 上的内置中间件在 `next(c)` 返回时
 `c.Path()`、`c.Handler()` 已经有了，405 的 `Allow` 也已经留在 c 上。router 找路由用的是请求刚进来时的那个 `*http.Request`
 （闭包里捕获的），不是 `c.Request()`：Pre 里换成 `r.WithContext` 的副本的话，排在后面的 `e.Pre(echomw.MethodOverride())`
-改的是副本上的 `Method`，实测 `POST` + `X-HTTP-Method-Override: PUT` 走进了 POST 的 handler。所以内置中间件原地换请求的 ctx，
-不换 `*http.Request`，出了自己那一层再换回原来的：调 `e.ServeHTTP` 的一方拿回的是原样的请求。原来每个请求要复制两次
-`*http.Request`，这一改基准测试里整条链少 2 次分配、约 600 字节。
+改的是副本上的 `Method`，实测 `POST` + `X-HTTP-Method-Override: PUT` 走进了 POST 的 handler。原地改请求也不行：net/http 约定
+handler 不改交进来的 `Request`，handler 把请求交给活得比它久的协程（异步记日志）时还是数据竞争。所以内置中间件在 Pre 里
+一概不动请求，日志作用域和 Span 只挂在 ctx 上、存进 `echo.Context`：访问日志、指标、Span、panic 日志用的都是它，在 Pre 里就结束了的
+请求照样带 `trace_id`；路由之后、`WithMiddleware` 之前再照常 `c.SetRequest(r.WithContext(ctx))` 换到请求上（一个请求复制一次）。
+代价是**你的 `e.Pre` 看到的是请求原来的 ctx**：那里打的日志不带 `trace_id`、`xlog.AddKV` 写不进访问日志；在 `e.Pre` 里往请求 ctx
+放的值到了 handler 里也看不到（两棵 ctx 没法合并，这里保的是 Span 和日志作用域）。要用 ctx 的中间件挂 `e.Use` / `WithMiddleware`。
 
 **超时中间件**：`echomw.Timeout`（已弃用）配 50ms、handler 睡 200ms：客户端收到 503 和一页 HTML，包在外面的中间件读到的是
 `Status 200`、`Size 0`，`-race` 报数据竞争。`echomw.ContextTimeout` 返回 `echo.ErrServiceUnavailable`，由 `HTTPErrorHandler` 渲染成

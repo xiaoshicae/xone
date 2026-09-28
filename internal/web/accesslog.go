@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"io"
 	"log/slog"
 	"net/http"
@@ -71,7 +72,8 @@ func (l *AccessLog) skipPath(path string) bool {
 // echo 的错误在中间件返回之后才渲染成响应）。其余的从 Request 上取。
 type Access struct {
 	Request  *http.Request
-	Route    string // 路由模板，没匹配上时是 unmatched
+	Ctx      context.Context // 记这条日志用的 ctx（trace_id、xlog.AddKV 的字段从这里取）；nil 时用 Request 的
+	Route    string          // 路由模板，没匹配上时是 unmatched
 	Status   int
 	Elapsed  time.Duration
 	ClientIP string
@@ -140,7 +142,11 @@ func (l *AccessLog) Log(a *Access) {
 		attrs = append(attrs, slog.String("errors", RedactText(a.Errors)))
 	}
 
-	slog.LogAttrs(r.Context(), slog.LevelInfo, "request completed", attrs...)
+	ctx := a.Ctx
+	if ctx == nil {
+		ctx = r.Context()
+	}
+	slog.LogAttrs(ctx, slog.LevelInfo, "request completed", attrs...)
 }
 
 // encodedOmitted 响应体按 Content-Encoding 压缩过（gzip、br……）时记进日志的那一句，没压缩过返回空串。

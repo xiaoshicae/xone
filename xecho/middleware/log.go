@@ -102,7 +102,7 @@ func Log(opts ...LogOption) echo.MiddlewareFunc {
 				return next(c)
 			}
 
-			start, ctx := time.Now(), c.Request().Context()
+			start, ctx := time.Now(), contextOf(c)
 			var reqBody []byte
 			if o.ReqBody {
 				reqBody = web.SnapshotBody(c.Request())
@@ -122,9 +122,11 @@ func Log(opts ...LogOption) echo.MiddlewareFunc {
 			// Writer 也一定会还原、writer 一定会还回池子
 			defer func() {
 				// 字段怎么拼、怎么脱敏在 web.AccessLog.Log；这里只取 echo 里才取得到的那几个值。
-				// 请求要重新取：里面几层（Trace、LogScope 之外的用户中间件）可能换过它的 ctx
+				// 请求和 ctx 都要重新取：里面几层（Trace、LogScope 之外的用户中间件）可能换过它们。
+				// ctx 取 contextOf：在 e.Pre 里就结束了的请求，日志作用域和 Span 还没换到请求上
 				a := web.Access{
 					Request:    c.Request(),
+					Ctx:        contextOf(c),
 					Elapsed:    time.Since(start),
 					Route:      rs.of(c), // 没匹配上时记 unmatched，真实路径在 path 里
 					Status:     status(c),

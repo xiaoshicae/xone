@@ -152,16 +152,14 @@ mutate("可信判断看直连对端而不是 c.RealIP()", "xecho/xecho.go", "./x
        swap('if x.trusted.Trusts(web.RemoteIP(c.Request())) {', 'if x.trusted.Trusts(c.RealIP()) {'))
 mutate("XEcho 可信网段来自装配时的配置", "xecho/xecho.go", "./xecho", "TestBuild_PassthroughHeadersOnlyFromTrustedProxies",
        swap('x.trusted = web.ParseProxies(c.TrustedProxies)', 'x.trusted = web.ParseProxies(nil)'))
-mutate("XEcho 装配时先判对端再开链路", "xecho/xecho.go", "./xecho", "TestBuild_PassthroughHeadersOnlyFromTrustedProxies",
-       swap('e.Pre(x.markTrustedPeer, middleware.Trace())', 'e.Pre(middleware.Trace())'))
+mutate("XEcho 在 Pre 链最外面判对端可不可信", "xecho/xecho.go", "./xecho", "TestBuild_PassthroughHeadersOnlyFromTrustedProxies|TestBuild_TraceDisabledOnlySkipsSpan_StillPropagates",
+       swap('\t\tx.markTrustedPeer(c)\n', ''))
 # XEcho.Trace 只管 Span：关掉它不该连上游的链路标识和透传头一起摘掉
 mutate("XEcho.Trace 关掉照样接上游的链路和透传", "xecho/xecho.go", "./xecho", "TestBuild_TraceDisabledOnlySkipsSpan_StillPropagates",
-       swap('e.Pre(x.markTrustedPeer, middleware.Propagate())', 'e.Pre(x.markTrustedPeer)'))
-mutate("XEcho.Trace 关掉时可信规则不变", "xecho/xecho.go", "./xecho", "TestBuild_TraceDisabledOnlySkipsSpan_StillPropagates",
-       swap('e.Pre(x.markTrustedPeer, middleware.Propagate())', 'e.Pre(middleware.Propagate())'))
+       swap('\t\t\te.Pre(middleware.Propagate())\n', ''))
 mutate("XEcho Propagate 也把可信记号交给 xtrace", "xecho/middleware/trace.go", "./xecho", "TestTrace_PeerTrustFollowsXechoMarker",
-       swap('setContext(r, otel.GetTextMapPropagator().Extract(r.Context(), inbound(c)))',
-            'setContext(r, otel.GetTextMapPropagator().Extract(r.Context(), propagation.HeaderCarrier(r.Header)))'))
+       swap('withContext(c, otel.GetTextMapPropagator().Extract(contextOf(c), inbound(c)))',
+            'withContext(c, otel.GetTextMapPropagator().Extract(contextOf(c), propagation.HeaderCarrier(c.Request().Header)))'))
 mutate("XEcho 链路中间件把可信记号交给 xtrace", "xecho/middleware/trace.go", "./xecho", "TestTrace_PeerTrustFollowsXechoMarker",
        swap('\tif trusted, _ := c.Get(peer.TrustedKey).(bool); trusted {\n\t\treturn trustedCarrier{h}\n\t}\n', '\t_ = peer.TrustedKey\n'))
 
@@ -192,7 +190,7 @@ mutate("XEcho 查询串的开关读的是配置", "xecho/xecho.go", "./xecho", "
 mutate("XEcho 请求头和响应头的开关各管各的", "xecho/xecho.go", "./xecho", "TestLogQueryAndHeaders",
        swap('middleware.WithHeaders(c.LogRequestHeaders, c.LogResponseHeaders)', 'middleware.WithHeaders(c.LogResponseHeaders, c.LogRequestHeaders)'))
 mutate("XEcho LogScope 开出请求级的字段作用域", "xecho/middleware/middleware.go", "./xecho", "TestLogScope",
-       swap('\t\t\tsetContext(r, xlog.CtxWithScope(r.Context()))\n', '\t\t\t_ = xlog.CtxWithScope\n'))
+       swap('\t\t\twithContext(c, xlog.CtxWithScope(contextOf(c)))\n', '\t\t\t_ = xlog.CtxWithScope\n'))
 # 词表进程里只有一张（internal/web）：公开的这两个名字不转过去的话，使用者补的词谁都不认
 mutate("XEcho AddSensitiveFields 写进共用的词表", "xecho/middleware/redact.go", "./xecho", "TestAddSensitive",
        swap('{ web.AddSensitiveFields(fields...) }', '{}'))
@@ -220,7 +218,7 @@ section("链路")
 mutate("用了 xecho 不另外 import xtrace 也有链路", "xecho/xecho.go", "./xecho", "TestTracingWorksWithoutImportingXtrace",
        swap('\t_ "github.com/xiaoshicae/xone/xtrace"\n', ''))
 mutate("handler 的 ctx 带着服务端 Span", "xecho/middleware/trace.go", "./xecho", "TestTrace_StartsSpanAndReturnsTraceID",
-       swap('\t\t\tsetContext(r, ctx)\n', '\t\t\t_ = ctx\n'))
+       swap('\t\t\twithContext(c, ctx)\n', '\t\t\t_ = ctx\n'))
 mutate("XEcho 响应回带 X-Trace-Id", "xecho/middleware/trace.go", "./xecho", "TestTrace_StartsSpanAndReturnsTraceID|TestTrace_ReturnedError",
        swap('\t\t\t\tc.Response().Header().Set(TraceIDHeader, sc.TraceID().String())\n', ''))
 
@@ -258,25 +256,26 @@ mutate("访问日志挂在 Pre 上", "xecho/xecho.go", "./xecho", "TestBuild_Pre
 mutate("指标挂在 Pre 上", "xecho/xecho.go", "./xecho", "TestBuild_PreRejectionLoggedMeasuredAndTraced",
        swap('\t\t\te.Pre(middleware.Metric())', '\t\t\te.Use(middleware.Metric())'))
 mutate("链路挂在 Pre 上", "xecho/xecho.go", "./xecho", "TestBuild_PreRejectionLoggedMeasuredAndTraced",
-       swap('e.Pre(x.markTrustedPeer, middleware.Trace())', 'e.Use(x.markTrustedPeer, middleware.Trace())'))
+       swap('e.Pre(middleware.Trace())', 'e.Use(middleware.Trace())'))
 mutate("Recover 挂在 Pre 上", "xecho/xecho.go", "./xecho", "TestBuild_PrePanicRecovered",
        swap('\t\te.Pre(middleware.Recover(x.recover))\n', '\t\te.Use(middleware.Recover(x.recover))\n'))
-# echo 的 router 按请求刚进来时的那个 *http.Request 找路由：换成副本的话 Pre 里的 MethodOverride 改不到它。
-# 三个换 ctx 的调用点各一条
-mutate("LogScope 原地换 ctx", "xecho/middleware/middleware.go", "./xecho", "TestBuild_PreMethodOverrideStillRoutes",
-       swap('\t\t\tsetContext(r, xlog.CtxWithScope(r.Context()))\n', '\t\t\tc.SetRequest(r.WithContext(xlog.CtxWithScope(r.Context())))\n'))
-mutate("Trace 原地换 ctx", "xecho/middleware/trace.go", "./xecho", "TestBuild_PreMethodOverrideStillRoutes",
-       swap('\t\t\tsetContext(r, ctx)\n', '\t\t\tc.SetRequest(r.WithContext(ctx))\n'))
-mutate("Propagate 原地换 ctx", "xecho/middleware/trace.go", "./xecho", "TestBuild_PreMethodOverrideStillRoutes",
-       swap('\t\t\tsetContext(r, otel.GetTextMapPropagator().Extract(r.Context(), inbound(c)))\n',
-            '\t\t\tc.SetRequest(r.WithContext(otel.GetTextMapPropagator().Extract(r.Context(), inbound(c))))\n'))
-# 原地换过的 ctx 出了那一层要换回去：调 e.ServeHTTP 的一方拿回的是改过的请求，同一个请求再进来 ctx 越套越深
-mutate("LogScope 出去时换回原来的 ctx", "xecho/middleware/middleware.go", "./xecho", "TestContextSwapUndoneWhenRequestLeaves",
-       swap('\t\t\tdefer setContext(r, r.Context())\n', ''))
-mutate("Trace 出去时换回原来的 ctx", "xecho/middleware/trace.go", "./xecho", "TestContextSwapUndoneWhenRequestLeaves",
-       swap('\t\t\tdefer setContext(r, r.Context())\n\t\t\tsetContext(r, ctx)\n', '\t\t\tsetContext(r, ctx)\n'))
-mutate("Propagate 出去时换回原来的 ctx", "xecho/middleware/trace.go", "./xecho", "TestContextSwapUndoneWhenRequestLeaves",
-       swap('\t\t\tdefer setContext(r, r.Context())\n\t\t\tsetContext(r, otel.', '\t\t\tsetContext(r, otel.'))
+# 交进来的 *http.Request 不改：echo 按它找路由，使用者的 Pre（MethodOverride、RemoveTrailingSlash、Rewrite）改的也是它。
+# Pre 里只把 ctx 存进 echo.Context，路由之后再换到请求上，见 reqctx
+mutate("Pre 链最外面先存下请求的 ctx", "xecho/xecho.go", "./xecho", "TestBuild_PreRewritingMiddlewaresStillRoute",
+       swap('\t\tc.Set(reqctx.Key, c.Request().Context())\n', ''))
+mutate("Pre 里只存 ctx 不换请求", "xecho/middleware/middleware.go", "./xecho", "TestBuild_PreRewritingMiddlewaresStillRoute",
+       swap('\tif _, deferred := c.Get(reqctx.Key).(context.Context); deferred {', '\tif false {'))
+mutate("路由之后把 ctx 换到请求上", "xecho/xecho.go", "./xecho", "TestBuild_HandlerSeesSpanAndLogScope",
+       swap('\t\te.Use(attachContext)\n', ''))
+mutate("换 ctx 排在用户中间件前面", "xecho/xecho.go", "./xecho", "TestBuild_HandlerSeesSpanAndLogScope",
+       swap('\t\te.Use(attachContext)\n\t\te.Use(x.extra...)\n', '\t\te.Use(x.extra...)\n\t\te.Use(attachContext)\n'))
+# Pre 里就结束了的请求，ctx 还没换到请求上：访问日志得用存下的那个，才带得上 trace_id
+mutate("访问日志用存下的 ctx", "xecho/middleware/log.go", "./xecho", "TestBuild_PreRejectionAccessLogCarriesTraceID",
+       swap('\t\t\t\t\tCtx:        contextOf(c),\n', ''))
+# 单独用中间件时换的是 r.WithContext 的副本：原地改的话调 e.ServeHTTP 的一方拿回的是改过的请求，
+# handler 交给别的协程的请求还会数据竞争
+mutate("单独用中间件时不改交进来的请求", "xecho/middleware/middleware.go", "./xecho", "TestRequestUnchangedAfterServeHTTP",
+       swap('\tc.SetRequest(c.Request().WithContext(ctx))\n}', '\tr := c.Request()\n\t*r = *r.WithContext(ctx)\n}'))
 
 section("499 的规矩")
 # 只有 panic(http.ErrAbortHandler) 会让 net/http 断开连接；返回一个包着它的错误，客户端收到的是 500

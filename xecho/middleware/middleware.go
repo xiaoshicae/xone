@@ -25,6 +25,7 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/xiaoshicae/xone/internal/web"
+	"github.com/xiaoshicae/xone/xecho/internal/reqctx"
 	"github.com/xiaoshicae/xone/xlog"
 )
 
@@ -38,26 +39,32 @@ import (
 func LogScope() echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
-			r := c.Request()
-			defer setContext(r, r.Context())
-			setContext(r, xlog.CtxWithScope(r.Context()))
+			withContext(c, xlog.CtxWithScope(contextOf(c)))
 			return next(c)
 		}
 	}
 }
 
-// setContext 把请求 r 的 ctx 换成 ctx。原地换，不换 *http.Request：
+// contextOf 这个请求到目前为止该用的 ctx：xecho 装配时是存在 echo.Context 上的那个（见 reqctx），
+// 单独用中间件时就是请求自己的
+func contextOf(c echo.Context) context.Context {
+	if ctx, ok := c.Get(reqctx.Key).(context.Context); ok {
+		return ctx
+	}
+	return c.Request().Context()
+}
+
+// withContext 把 ctx 交给这个请求之后的各层。
 //
-// echo 的 router 按请求刚进来时的那个 *http.Request 找路由（Echo.ServeHTTP 在进 Pre 链之前就把它捕获在闭包里），
-// 不看 c.Request()。xecho 把内置中间件挂在 e.Pre 上，这里换成 r.WithContext 的副本、再 c.SetRequest 的话，
-// 排在后面的 e.Pre(echomw.MethodOverride()) 改的是副本上的 Method，router 照旧按原来的方法找路由
-// （实测 echo v4.16.0：POST + X-HTTP-Method-Override: PUT 走进了 POST 的 handler）。
-// 原地换之后 c.Request() 和 router 看的始终是同一个请求。
-//
-// 调用方在返回时把原来的 ctx 换回去（defer setContext(r, r.Context())）：请求出了这一层就和进来时一样，
-// 调 e.ServeHTTP 的一方（测试、把 echo 嵌在别的 handler 里的）拿回的是原样的请求，
-// 同一个请求再交进来一次，ctx 也不会一层层越套越深
-func setContext(r *http.Request, ctx context.Context) { *r = *r.WithContext(ctx) }
+// xecho 装配时内置中间件在 e.Pre 上，不动请求，只存进 echo.Context：路由之后 xecho 再把它换到请求上，
+// 理由见 reqctx。单独用中间件（挂在 e.Use 上，已经路由过了）时照常换请求的 ctx
+func withContext(c echo.Context, ctx context.Context) {
+	if _, deferred := c.Get(reqctx.Key).(context.Context); deferred {
+		c.Set(reqctx.Key, ctx)
+		return
+	}
+	c.SetRequest(c.Request().WithContext(ctx))
+}
 
 // routes 取请求的路由模板，访问日志、指标、Span 各持有一份。
 //
@@ -203,7 +210,7 @@ func Recover(handle func(c echo.Context, recovered any) error) echo.MiddlewareFu
 				}
 
 				// 连接断了不算故障，不值得打一份完整栈
-				ctx := c.Request().Context()
+				ctx := contextOf(c)
 				if web.IsBrokenPipe(r) {
 					slog.ErrorContext(ctx, "connection broken", "error", r)
 					c.Set(errKey, r.(error)) // web.IsBrokenPipe 保证它是 *net.OpError

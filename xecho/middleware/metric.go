@@ -37,7 +37,7 @@ func Metric() echo.MiddlewareFunc {
 		return func(c echo.Context) error {
 			once.Do(func() { total, latency = newCollectors() })
 
-			start, ctx := time.Now(), c.Request().Context()
+			start, ctx := time.Now(), contextOf(c)
 
 			// 用 defer 记：即使 panic 穿过本层（比如自定义的 recover 函数自己炸了），
 			// 这个请求也仍然会被计入，不会在错误率里凭空消失

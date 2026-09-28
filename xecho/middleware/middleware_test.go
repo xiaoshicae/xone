@@ -1050,9 +1050,9 @@ func TestLog_ResponseCaptureKeepsResponseControllerFeatures(t *testing.T) {
 	}
 }
 
-func TestContextSwapUndoneWhenRequestLeaves(t *testing.T) {
-	// LogScope、Trace、Propagate 原地换请求的 ctx（理由见 setContext），出了自己那一层要换回去：
-	// 调 e.ServeHTTP 的一方拿回的该是原样的请求；同一个请求交进来两次，ctx 也不该越套越深
+func TestRequestUnchangedAfterServeHTTP(t *testing.T) {
+	// 交进来的 *http.Request 一律不改（net/http 的约定）：换 ctx 用的是 r.WithContext 的副本，
+	// 调 e.ServeHTTP 的一方拿回的是原样的请求，同一个请求交进来两次 ctx 也不会越套越深
 	recording(t) // 装上 TraceContext：Propagate 接上游的 traceparent，ctx 才真的变了
 	for name, mw := range map[string]echo.MiddlewareFunc{"LogScope": LogScope(), "Trace": Trace(), "Propagate": Propagate()} {
 		req := get("/hello")
@@ -1064,7 +1064,7 @@ func TestContextSwapUndoneWhenRequestLeaves(t *testing.T) {
 			return nil
 		})
 		if req.Context() != before {
-			t.Errorf("%s：请求出来之后 ctx 该换回原来的", name)
+			t.Errorf("%s：交进来的请求不该被改", name)
 		}
 		if inside == before {
 			t.Errorf("%s：handler 看到的该是换过的 ctx", name)

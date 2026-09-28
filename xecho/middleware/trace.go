@@ -35,7 +35,7 @@ func Trace() echo.MiddlewareFunc {
 			r := c.Request()
 
 			// 每次都取当前的全局 Propagator：构造中间件时链路可能还没初始化
-			ctx := otel.GetTextMapPropagator().Extract(r.Context(), inbound(c))
+			ctx := otel.GetTextMapPropagator().Extract(contextOf(c), inbound(c))
 
 			// 方法和指标一样收敛到固定集合：它是个自由 token，照抄进 Span 名的话
 			// 谁都能发 CUSTOM1、CUSTOM2 把链路后端的 Span 名撑爆。
@@ -75,8 +75,7 @@ func Trace() echo.MiddlewareFunc {
 				span.End()
 			}()
 
-			defer setContext(r, r.Context())
-			setContext(r, ctx)
+			withContext(c, ctx)
 
 			// 必须在 next(c) 之前写：响应一旦开始发送，header 就改不动了。
 			// 错误响应也带着它：e.HTTPErrorHandler 写错误响应时不清响应头
@@ -98,9 +97,7 @@ func Trace() echo.MiddlewareFunc {
 func Propagate() echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
-			r := c.Request()
-			defer setContext(r, r.Context())
-			setContext(r, otel.GetTextMapPropagator().Extract(r.Context(), inbound(c)))
+			withContext(c, otel.GetTextMapPropagator().Extract(contextOf(c), inbound(c)))
 			return next(c)
 		}
 	}

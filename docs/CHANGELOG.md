@@ -8,6 +8,8 @@
 
 ## [未发布]
 
+## [v1.15.1] - 2026-09-28
+
 ### 修复
 
 - xgin / xecho 访问日志的 `errors` 字段、Span 的 `gin.errors` / `echo.errors`：没有敏感词的错误文本里，`postgres://app:pw@db`、`app:pw@tcp(db:3306)` 这类 URL / MySQL DSN 的密码现在换成 `***REDACTED***`（用户名和主机留着）；原来原样记录。

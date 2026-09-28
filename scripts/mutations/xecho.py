@@ -59,7 +59,7 @@ mutate("渲染时把错误记在请求上", "xecho/middleware/middleware.go", ".
 mutate("访问日志带上 handler 返回的错误", "xecho/middleware/log.go", "./xecho", "TestLog_ErrorStatus",
        swap('\t\t\t\t\ta.Errors = err.Error()\n', ''))
 mutate("Span 带上 handler 返回的错误", "xecho/middleware/trace.go", "./xecho", "TestTrace_ReturnedError",
-       swap('span.SetAttributes(attribute.String("echo.errors", err.Error()))', '_ = err'))
+       swap('span.SetAttributes(attribute.String("echo.errors", web.RedactText(err.Error())))', '_ = err'))
 
 section("路由标签")
 # 取值写在 routeOf 里，三个中间件共用；前两条改坏它本身，后三条各打一个调用点
@@ -216,3 +216,9 @@ mutate("echo 自己的日志接到 slog", "xecho/xecho.go", "./xecho", "TestEcho
        swap('\te.Logger.SetOutput(echoLog{})\n', ''))
 mutate("echo 日志的级别从行首取", "xecho/xecho.go", "./xecho", "TestEchoLogger_RoutedToSlog",
        swap('\te.Logger.SetHeader("${level}")\n', ''))
+
+section("错误文本脱敏")
+mutate("访问日志的 errors 字段脱过敏（xecho）", "internal/web/accesslog.go", "./xecho", "TestLog_ErrorTextIsRedacted",
+       swap('slog.String("errors", RedactText(a.Errors))', 'slog.String("errors", a.Errors)'))
+mutate("Span 上的 echo.errors 脱过敏", "xecho/middleware/trace.go", "./xecho", "TestTrace_ErrorTextIsRedactedOnSpan",
+       swap('web.RedactText(err.Error())', 'err.Error()'))

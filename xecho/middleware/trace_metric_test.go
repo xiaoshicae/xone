@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"context"
+	"errors"
 	"net/http/httptest"
 	"strconv"
 	"strings"
@@ -389,5 +390,15 @@ func TestMetric_TwoInstancesShareTheSameCollectors(t *testing.T) {
 	serve(t, get("/hello"), []echo.MiddlewareFunc{Metric()}, statusOnly(200))
 	if out := testkit.Scrape(m.Handler); !strings.Contains(out, `http_requests_total{method="GET",route="/hello",status="200"} 2`) {
 		t.Errorf("两个中间件实例该记在同一组指标上\n实际=\n%s", out)
+	}
+}
+
+func TestTrace_ErrorTextIsRedactedOnSpan(t *testing.T) {
+	spans := recording(t)
+	serve(t, get("/hello"), []echo.MiddlewareFunc{Trace()}, func(c echo.Context) error {
+		return errors.New("login failed password=hunter2")
+	})
+	if got := attrsOf(spans()[0])["echo.errors"]; got != Redacted {
+		t.Errorf("Span 上的 echo.errors 该被遮掉，got=%q", got)
 	}
 }

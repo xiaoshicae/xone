@@ -168,7 +168,7 @@ admin := xgin.New().WithConfig(c).WithRoutes(adminRoutes)
 | `request_body` | `LogRequestBody: true` 时，最多前 256KB，逐字段脱敏；multipart 和 `application/octet-stream` 只记一句 `omitted` |
 | `response_headers` | `LogResponseHeaders: true` 时，脱敏规则同请求头（`Set-Cookie` 等遮掉） |
 | `response_body` | `LogResponseBody: true` 且是文本类响应时，最多前 4KB，逐字段脱敏 |
-| `errors` | handler 里 `c.Error(...)` 登记的错误，没有就不写 |
+| `errors` | handler 里 `c.Error(...)` 登记的错误，没有就不写；出现敏感词就整段记成 `***REDACTED***`（Span 的 `gin.errors` 同理） |
 | `trace_id` / `span_id` | 有链路时 |
 
 **脱敏**按敏感词匹配，不是按字段名精确匹配：比较前双方都转小写、去掉 `_ - .` 和空格，字段名里**含**任一敏感词就遮。

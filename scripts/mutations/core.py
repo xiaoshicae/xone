@@ -636,3 +636,8 @@ mutate("方法收敛到固定集合", "internal/web/request.go", ".", "TestNorma
        swap('\treturn MethodOther\n', '\treturn m\n'))
 mutate("认出 connection reset", "internal/web/request.go", ".", "TestIsBrokenPipe",
        swap(' || strings.Contains(msg, "connection reset by peer")', ''))
+
+section("错误文本脱敏")
+# 错误原文最容易夹带凭证（驱动报的整串 DSN、"password=..."），进访问日志之前过一遍词表
+mutate("访问日志的 errors 字段脱过敏", "internal/web/accesslog.go", ".", "TestAccessLog|TestRedactText",
+       swap('slog.String("errors", RedactText(a.Errors))', 'slog.String("errors", a.Errors)'))

@@ -64,7 +64,7 @@ func Trace() gin.HandlerFunc {
 				span.SetStatus(codes.Error, http.StatusText(st))
 			}
 			if len(c.Errors) > 0 {
-				span.SetAttributes(attribute.String("gin.errors", c.Errors.String()))
+				span.SetAttributes(attribute.String("gin.errors", web.RedactText(c.Errors.String())))
 			}
 			span.End()
 		}()

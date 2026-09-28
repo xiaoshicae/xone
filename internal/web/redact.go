@@ -205,6 +205,18 @@ func RedactBody(body []byte, contentType string) string {
 	}
 }
 
+// RedactText 脱敏一段没有结构的文本，比如 handler 返回的错误：规矩同纯文本 body，
+// 出现敏感词就整段遮掉，否则原样返回（换行转义掉）。
+//
+// 错误文本最容易夹带凭证——"login failed for user=x password=y"、驱动报的整串 DSN——
+// 而它会原样进访问日志和 Span。定位不了是哪一段，就整段遮掉
+func RedactText(s string) string {
+	if s == "" {
+		return ""
+	}
+	return redactOpaque([]byte(s))
+}
+
 // redactOpaque 处理认不出结构的 body（text/plain、xml、没带 Content-Type 的……）
 //
 // 定位不了具体字段，但「里面有没有敏感字段名」是看得出来的。有就整个遮掉。

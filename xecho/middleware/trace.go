@@ -68,7 +68,7 @@ func Trace() echo.MiddlewareFunc {
 					span.SetStatus(codes.Error, http.StatusText(st))
 				}
 				if err := errorOf(c); err != nil {
-					span.SetAttributes(attribute.String("echo.errors", err.Error()))
+					span.SetAttributes(attribute.String("echo.errors", web.RedactText(err.Error())))
 				}
 				span.End()
 			}()

@@ -26,12 +26,13 @@ echo "✓ 核心不依赖任何集成模块"
 
 # ---- 3. xhook 与基础包必须零第三方依赖 ----
 # xhook 是每个集成都要认识的包（另一个是 xconfig），一旦它有依赖，所有集成都被迫背上。
-# xtls 同理：它是 xgorm / xredis / xhttp 配置结构体里的一个字段类型
-for pkg in ./xhook ./xerror ./xutil ./xtls; do
+# xtls 同理：它是 xgorm / xredis / xhttp 配置结构体里的一个字段类型。
+# internal/web 是各 Web 集成共用的那一半：混进一个三方包，每个 Web 集成都得背上
+for pkg in ./xhook ./xerror ./xutil ./xtls ./internal/web; do
   d=$(GOWORK=off go list -deps "$pkg" | grep -E '^[^/]*\.' | grep -vc xiaoshicae || true)
   [ "$d" -eq 0 ] || fail "$pkg 混进了 $d 个第三方包"
 done
-echo "✓ xhook / xerror / xutil / xtls 零第三方依赖"
+echo "✓ xhook / xerror / xutil / xtls / internal/web 零第三方依赖"
 
 # ---- 4. 只有集成包可以有 init() ----
 # 集成包的 init 只登记不初始化；核心自己则连登记都不该有。
@@ -71,7 +72,7 @@ tt=$(api ./xonetest)
 [ "$tt" -le 3 ] || fail "xonetest 公开 API $tt 个，超过上限 3"
 # xtls 是各客户端集成共用的 TLS 块：一个配置类型，外加校验和装出 *tls.Config 两个方法。
 # 它出现在使用者的配置结构体里（xredis.ClientConfig.TLS），同样是永久 API。
-# 服务端那一侧（xgin 的 ClientCAFile / MinVersion）形状不同，留在 xgin 里，不往这里加
+# 服务端那一侧（xgin 的 ClientCAFile / MinVersion）形状不同，在 internal/web 里，不往这里加
 tl=$(api ./xtls)
 [ "$tl" -le 3 ] || fail "xtls 公开 API $tl 个，超过上限 3"
 echo "✓ 公开 API：根包 $a（上限 15）、xhook $r（上限 6）、xconfig $x（上限 6）、xonetest $tt（上限 3）、xtls $tl（上限 3）"

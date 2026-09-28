@@ -152,13 +152,16 @@ func New(ctx context.Context, cfg Config) (*T, io.Closer, error)  // 会建连�
 | 单实例 / 多实例两种写法的解码 | `xconfig.UnmarshalClients` |
 | 客户端 TLS 块：字段、校验、装出 `*tls.Config` | `xtls.Config`（xgorm、xredis、xhttp 共用；零依赖） |
 | 注册指标并断回具体类型 | `xmetric.RegisterAs` |
+| Web 服务与框架无关的那一半：监听、h2c、服务端 TLS、优雅关闭；信任的代理；脱敏与敏感词表；访问日志的字段 | `internal/web`（不对外；xgin 用它，之后的 Web 集成也用它） |
 
 `C()` 取不到实例时直接 panic 并说清是哪一种，因为调早了、调晚了、整块没配、名字写错要查的地方各不相同。
 调早了最容易被说错：它和「整块没配」很容易写成同一句话，于是在 `main` 里取实例的人会去翻一份明明写对了的配置文件。
 为此即使整块没配，启动钩子也走一遍 `Build`，注册表由此知道启动钩子跑过了。
 
 `xclient` 是 internal 的：那是三个模块的共用代码，不是使用者要学的东西。自己写的集成要多实例，一个加锁的 map 就够了。
-服务端 TLS（xgin 的 `ClientCAFile` / `MinVersion`）形状不同，留在 xgin 里，不往 `xtls` 加。
+服务端 TLS（xgin 的 `ClientCAFile` / `MinVersion`）形状不同，在 `internal/web` 里，不往 `xtls` 加。
+`internal/web` 同理：使用者看到的仍是 `xgin.Config` 和 `xgin/middleware` 的函数，词表进程里只有一张，
+换一个 Web 框架的服务，client_ip 信谁、日志里遮什么、退出时等不等 handler 都是同一个答案。
 
 ## 模块之间怎么互相扩展
 

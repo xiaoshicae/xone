@@ -2,51 +2,28 @@ package middleware
 
 import (
 	"bytes"
-	"io"
-	"log/slog"
-	"net/http"
-	"slices"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
+
+	"github.com/xiaoshicae/xone/internal/web"
 )
 
-const (
-	// maxRequestBody 请求体记录上限
-	maxRequestBody = 256 * 1024
-	// maxResponseBody 响应体记录上限，比请求体小得多：
-	// 响应通常大得多，而排查时看开头几 KB 基本够了
-	maxResponseBody = 4 * 1024
-)
+// maxResponseBody 响应体记录上限，见 web.MaxResponseBody
+const maxResponseBody = web.MaxResponseBody
 
 // LogOption 日志中间件的配置项
 type LogOption func(*logOptions)
 
-type logOptions struct {
-	skipExact  map[string]bool
-	skipPrefix []string
-	reqBody    bool
-	respBody   bool
-	query      bool
-	reqHeader  bool
-	respHeader bool
-}
+// logOptions 记什么、跳过什么。字段的取舍和日志的拼法与框架无关，在 internal/web
+type logOptions = web.AccessLog
 
 // WithSkipPaths 指定不记访问日志的路径。
 //
 // 以 / 结尾的按前缀匹配（/health/ 命中 /health/live），其余精确匹配。
 func WithSkipPaths(paths ...string) LogOption {
-	return func(o *logOptions) {
-		for _, p := range paths {
-			if strings.HasSuffix(p, "/") {
-				o.skipPrefix = append(o.skipPrefix, p)
-			} else {
-				o.skipExact[p] = true
-			}
-		}
-	}
+	return func(o *logOptions) { o.SkipPaths(paths...) }
 }
 
 // WithBody 是否记录请求体和响应体。默认都不记。
@@ -55,13 +32,13 @@ func WithSkipPaths(paths ...string) LogOption {
 // 要包一层 ResponseWriter 截响应，还要对每个字段做脱敏。
 // 需要排查时再打开，并确认脱敏字段配全了。
 func WithBody(request, response bool) LogOption {
-	return func(o *logOptions) { o.reqBody, o.respBody = request, response }
+	return func(o *logOptions) { o.ReqBody, o.RespBody = request, response }
 }
 
 // WithQuery 是否记录查询串。默认不记：查询串里常有凭证（?token=、签名、OAuth 的 code）。
 // 打开后按字段脱敏，规则同表单 body。
 func WithQuery(on bool) LogOption {
-	return func(o *logOptions) { o.query = on }
+	return func(o *logOptions) { o.Query = on }
 }
 
 // WithHeaders 是否记录请求头和响应头。默认都不记。
@@ -69,7 +46,7 @@ func WithQuery(on bool) LogOption {
 // 打开后凭证类的值遮掉：Authorization、Cookie、Set-Cookie 等名单里的，
 // 名字带敏感词的（X-Csrf-Token），值是 URL 的去掉查询串（Referer）。
 func WithHeaders(request, response bool) LogOption {
-	return func(o *logOptions) { o.reqHeader, o.respHeader = request, response }
+	return func(o *logOptions) { o.ReqHeader, o.RespHeader = request, response }
 }
 
 // writerPool 复用截响应用的 writer
@@ -98,36 +75,27 @@ func (w *captureWriter) WriteString(s string) (int, error) {
 
 // Log 记访问日志。
 func Log(opts ...LogOption) gin.HandlerFunc {
-	o := &logOptions{skipExact: map[string]bool{}}
+	o := &logOptions{}
 	for _, opt := range opts {
 		opt(o)
 	}
 
 	return func(c *gin.Context) {
-		if o.shouldSkip(c.Request.URL.Path) {
-			c.Next()
-			return
-		}
-
-		// 级别关掉时直接放行。下面这一整套——缓存请求体、包装 ResponseWriter
-		// 截响应、结束后的脱敏和序列化——存在的唯一目的就是拼出这一行日志。
-		// 等 slog 自己去判级别时，代价已经付完了，只是结果被丢弃。
-		//
-		// 每请求判一次而不是构造时判一次：级别可能在运行时变。
-		if !slog.Default().Enabled(c.Request.Context(), slog.LevelInfo) {
+		// 跳过的路径、级别关着时直接放行，见 web.AccessLog.Skip
+		if o.Skip(c.Request) {
 			c.Next()
 			return
 		}
 
 		start := time.Now()
 		var reqBody []byte
-		if o.reqBody {
-			reqBody = snapshotBody(c.Request)
+		if o.ReqBody {
+			reqBody = web.SnapshotBody(c.Request)
 		}
 
 		orig := c.Writer
 		var cw *captureWriter
-		if o.respBody {
+		if o.RespBody {
 			cw = writerPool.Get().(*captureWriter)
 			cw.ResponseWriter, cw.capture = orig, true
 			cw.buf.Reset()
@@ -137,157 +105,34 @@ func Log(opts ...LogOption) gin.HandlerFunc {
 		// 用 defer 收尾：即使 panic 穿过本层，访问日志仍然写得出去，
 		// c.Writer 也一定会还原、writer 一定会还回池子
 		defer func() {
-			elapsed := time.Since(start)
-
-			// 直接给 slog.Attr，不给交替的 key、value：后者每个值都要先装进 any
-			// 再由 slog 拆出来，实测每条访问日志多 6 次分配（记 body 时 8 次）
-			attrs := []slog.Attr{
-				slog.String("method", c.Request.Method),
-				slog.String("route", routeOf(c)), // 没匹配上时记 unmatched，真实路径在 path 里
-				// 只记 Path，不含查询串：GET /login?token=... 这种请求里
-				// 凭证就在 URL 上。换成 RequestURI() 或 URL.String() 看着
-				// 都像是「把日志记全一点」，实际是把凭证明文写进日志
-				slog.String("path", c.Request.URL.Path),
-				slog.Int("status", status(c)),
-				// 字段名带单位：slog 的 JSON 把 Duration 写成纳秒整数，51130 看不出是 51µs。
-				// 浮点在 slog 的 JSON 里走 json.Marshal，实测每条多 2 次分配、约 0.5µs——
-				// 换成整数微秒能省掉，但日志是给人读的，毫秒更顺手
-				slog.Float64("elapsed_ms", millis(elapsed)),
-				slog.String("client_ip", c.ClientIP()),
-				slog.String("host", c.Request.Host),
-				slog.String("proto", c.Request.Proto),
-				slog.String("user_agent", c.Request.UserAgent()),
-				// 请求头里的 Content-Length；分块上传时没有，记 -1，和 net/http 的约定一致
-				slog.Int64("bytes_in", c.Request.ContentLength),
-				// 写出的响应体字节数，不含响应头；一个字节都没写时 gin 给的是 -1，记成 0
-				slog.Int("bytes_out", max(c.Writer.Size(), 0)),
-			}
-			if o.reqHeader {
-				// 已是 slog.Value，slog.Any 会再装一次箱
-				attrs = append(attrs, slog.Attr{Key: "request_headers", Value: RedactHeaders(c.Request.Header)})
-			}
-			if o.query && c.Request.URL.RawQuery != "" {
-				attrs = append(attrs, slog.String("query", redactForm(c.Request.URL.RawQuery)))
-			}
-			if o.respHeader {
-				attrs = append(attrs, slog.Attr{Key: "response_headers", Value: RedactHeaders(c.Writer.Header())})
-			}
-			if o.reqBody {
-				attrs = append(attrs, slog.String("request_body", RedactBody(reqBody, c.Request.Header.Get("Content-Type"))))
+			// 字段怎么拼、怎么脱敏在 web.AccessLog.Log；这里只取 gin 里才取得到的那几个值
+			a := web.Access{
+				Request:  c.Request,
+				Elapsed:  time.Since(start),
+				Route:    routeOf(c), // 没匹配上时记 unmatched，真实路径在 path 里
+				Status:   status(c),
+				ClientIP: c.ClientIP(),
+				// 一个字节都没写时 gin 给的是 -1，记成 0
+				BytesOut:   max(c.Writer.Size(), 0),
+				RespHeader: c.Writer.Header(),
+				ReqBody:    reqBody,
 			}
 			if cw != nil {
-				ct := c.Writer.Header().Get("Content-Type")
-				if isText(ct) && cw.buf.Len() > 0 {
-					attrs = append(attrs, slog.String("response_body", RedactBody(cw.buf.Bytes(), ct)))
-				}
+				a.RespBody = cw.buf.Bytes()
+			}
+			if len(c.Errors) > 0 {
+				a.Errors = c.Errors.String()
+			}
+			o.Log(&a)
+
+			if cw != nil {
 				// 先还原 writer，再还回池子：外层中间件可能还要用它
 				c.Writer = orig
 				cw.ResponseWriter, cw.capture = nil, false
 				writerPool.Put(cw)
 			}
-			if len(c.Errors) > 0 {
-				attrs = append(attrs, slog.String("errors", c.Errors.String()))
-			}
-
-			slog.LogAttrs(c.Request.Context(), slog.LevelInfo, "request completed", attrs...)
 		}()
 
 		c.Next()
 	}
 }
-
-func (o *logOptions) shouldSkip(path string) bool {
-	if o.skipExact[path] {
-		return true
-	}
-	return slices.ContainsFunc(o.skipPrefix, func(p string) bool { return strings.HasPrefix(path, p) })
-}
-
-// isText 判断是不是适合直接记进日志的文本类型
-//
-// json 用子串匹配，与 RedactBody 保持一致：application/vnd.api+json、
-// application/problem+json 都是 JSON，精确匹配会让这些响应体一声不响地不记。
-func isText(contentType string) bool {
-	ct := strings.ToLower(contentType)
-	return strings.Contains(ct, "json") ||
-		strings.Contains(ct, "text/") ||
-		strings.Contains(ct, "xml")
-}
-
-// snapshotBody 取一份请求体副本，不影响后续读取。
-//
-// 优先用 GetBody：它返回的是副本，原始 Body 一点没动。
-// 拿不到才退回「读出来再塞回去」。
-func snapshotBody(req *http.Request) []byte {
-	if req == nil || req.Body == nil || req.Body == http.NoBody {
-		return nil
-	}
-
-	// 先转小写：媒体类型按 RFC 9110 大小写不敏感，照字面比的话
-	// 一个 Multipart/Form-Data 的上传会绕过下面的判断，文件内容整个进日志
-	ct := strings.ToLower(req.Header.Get("Content-Type"))
-	// 文件上传和二进制流不读：内容对排查没用，读一遍却要付全部的内存和时间
-	if strings.Contains(ct, "multipart/form-data") {
-		return []byte("[multipart/form-data omitted]")
-	}
-	if strings.Contains(ct, "application/octet-stream") {
-		return []byte("[binary content omitted]")
-	}
-
-	if req.GetBody != nil {
-		if rc, err := req.GetBody(); err == nil {
-			defer rc.Close()
-			b, _ := io.ReadAll(io.LimitReader(rc, maxRequestBody))
-			return b
-		}
-	}
-
-	// 退路：只读前 maxRequestBody 字节，剩下的原样留在流里。
-	//
-	// 不能整个读进来。maxRequestBody 限的是「记多少日志」，不该顺手变成
-	// 「缓冲多少请求体」：一个 500MB 的 JSON 上传会整个躺进内存，而且
-	// handler 要等它全部落地才能开始处理。记一行日志不配有这种代价。
-	//
-	// 读出错也要把已经读到的接回去：读一半就 return 的话，那半截请求体
-	// 已经消失了，下游 handler 拿到的是个缺头的 body——
-	// 记日志这件事不该有能力改变请求本身。
-	head, err := io.ReadAll(io.LimitReader(req.Body, maxRequestBody))
-	req.Body = &prefixedBody{prefix: head, rest: req.Body, preErr: err}
-	if err != nil {
-		return nil // 读不全就不记，但下游拿到的仍是完整的请求体和那个错误
-	}
-	return head
-}
-
-// prefixedBody 把已经读走的前缀接回请求体前面，连同预读时撞上的错误。
-//
-// 错误必须接回去。一个合法的 Reader 可以先返回「部分数据 + 错误」，
-// 下一次调用再返回 EOF——只把字节接回去的话，下游读到的是
-// 「前缀 + EOF」，一个被截断的请求看上去和一个正常的请求一模一样，
-// 业务层据此判断「收全了」。记日志这件事不该有能力改变这个判断。
-//
-// Close 仍然落到原始 body 上：它才是真正持有连接的那个，
-// 换成 io.NopCloser 就等于把 http.Request 的关闭语义吃掉了。
-type prefixedBody struct {
-	prefix []byte
-	off    int
-	rest   io.ReadCloser
-	preErr error // 预读时撞上的错误，前缀读完之后交给下游
-}
-
-func (b *prefixedBody) Read(p []byte) (int, error) {
-	if b.off < len(b.prefix) {
-		n := copy(p, b.prefix[b.off:])
-		b.off += n
-		return n, nil
-	}
-	if b.preErr != nil {
-		return 0, b.preErr
-	}
-	return b.rest.Read(p)
-}
-
-func (b *prefixedBody) Close() error { return b.rest.Close() }
-
-// millis 耗时换成毫秒，保留到微秒
-func millis(d time.Duration) float64 { return float64(d.Microseconds()) / 1000 }

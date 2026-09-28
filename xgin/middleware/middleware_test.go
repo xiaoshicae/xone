@@ -635,3 +635,49 @@ func TestLog_ErrorTextIsRedacted(t *testing.T) {
 		}
 	}
 }
+
+func TestLog_DSNPasswordInErrorIsMasked(t *testing.T) {
+	// 驱动报的错里常带整串 DSN，里面一个敏感词都没有：只看词表的话密码原样进 errors 字段
+	lines := capture(t)
+	serve(t, get("/hello"), []gin.HandlerFunc{Log()}, func(c *gin.Context) {
+		_ = c.Error(errors.New("dial postgres://app:hunter2@db:5432/prod failed"))
+		c.Status(500)
+	})
+	got, _ := lines()[0]["errors"].(string)
+	if strings.Contains(got, "hunter2") || !strings.Contains(got, "postgres://app:"+Redacted+"@db:5432/prod") {
+		t.Errorf("errors 里 DSN 的密码该被遮掉、其余留着，got=%q", got)
+	}
+}
+
+func TestLog_MultipleErrorsStaySeparated(t *testing.T) {
+	// c.Errors.String() 一条错误一行；换行直接删掉的话两条错误粘成一句
+	lines := capture(t)
+	serve(t, get("/hello"), []gin.HandlerFunc{Log()}, func(c *gin.Context) {
+		_ = c.Error(errors.New("a"))
+		_ = c.Error(errors.New("b"))
+		c.Status(500)
+	})
+	if got := lines()[0]["errors"]; got != "Error #01: a; Error #02: b" {
+		t.Errorf("两条错误该用 ; 隔开，got=%q", got)
+	}
+}
+
+func TestRecover_PanicValueIsRedacted(t *testing.T) {
+	// panic 的值和 handler 返回的错误一样会夹带凭证，原样进 error 字段就是密码落盘
+	for msg, want := range map[string]string{
+		"dial postgres://app:hunter2@db:5432/prod failed": "dial postgres://app:" + Redacted + "@db:5432/prod failed",
+		"login failed password=hunter2":                   Redacted,
+	} {
+		lines := capture(t)
+		serve(t, get("/hello"), []gin.HandlerFunc{Recover(nil)}, func(c *gin.Context) { panic(errors.New(msg)) })
+		var got any = "（没打）"
+		for _, l := range lines() {
+			if l["msg"] == "panic while handling request" {
+				got = l["error"]
+			}
+		}
+		if got != want {
+			t.Errorf("panic(%q) 的 error 字段=%v，want %q", msg, got, want)
+		}
+	}
+}

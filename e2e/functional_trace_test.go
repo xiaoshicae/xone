@@ -265,7 +265,7 @@ func TestFunctional_DownstreamGetsTraceparent_ForwardHeadersOnlyFromTrusted(t *t
 				t.Errorf("TrustedProxies: [] 时 X-Request-Id 不该透传，下游却收到了 %q", got)
 			}
 		}
-		warn := "xtrace ignored forward headers from an untrusted peer, only peers in XGin.TrustedProxies are trusted"
+		warn := "xtrace ignored forward headers from an untrusted peer, only peers in the web server's TrustedProxies (XGin / XEcho) are trusted"
 		p.WaitLog(t, waitFor, func(l harness.Log) bool { return l.Msg() == warn })
 		if n := len(p.FindLogs(func(l harness.Log) bool { return l.Msg() == warn })); n != 1 {
 			t.Errorf("文档说不可信对端带透传头时告警、整个进程只打一次，三次请求之后实际打了 %d 次", n)

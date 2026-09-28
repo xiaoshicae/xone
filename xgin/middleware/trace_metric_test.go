@@ -353,3 +353,21 @@ func TestTrace_ErrorTextIsRedactedOnSpan(t *testing.T) {
 		t.Errorf("Span 上的 gin.errors 该被遮掉，got=%q", got)
 	}
 }
+
+func TestTrace_ErrorTextKeepsSeparationAndMasksDSNOnSpan(t *testing.T) {
+	spans := recording(t)
+	serve(t, get("/hello"), []gin.HandlerFunc{Trace()}, func(c *gin.Context) {
+		_ = c.Error(errors.New("dial postgres://app:hunter2@db:5432/prod failed"))
+		_ = c.Error(errors.New("retry gave up"))
+		c.Status(500)
+	})
+	got := "（没写）"
+	for _, a := range spans()[0].Attributes {
+		if a.Key == "gin.errors" {
+			got = a.Value.AsString()
+		}
+	}
+	if want := "Error #01: dial postgres://app:" + Redacted + "@db:5432/prod failed; Error #02: retry gave up"; got != want {
+		t.Errorf("gin.errors=%q, want %q", got, want)
+	}
+}

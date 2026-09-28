@@ -192,7 +192,7 @@ func checkDomain(d string) error {
 //
 //	TrustedPeer() bool
 //
-// 并返回 true，才算可信。xgin 的链路中间件按 XGin.TrustedProxies 判断直连的
+// 并返回 true，才算可信。xgin / xecho 的链路中间件按各自的 TrustedProxies 判断直连的
 // 对端，可信时交来的 carrier 带着这个方法。没有它的 carrier（otelhttp 的 handler、
 // 业务自己拼的 MapCarrier）一律当作不可信：拿不准就不收。
 // 从消息队列之类确实可信的来源取值时，给 carrier 加上这个方法即可。
@@ -242,7 +242,7 @@ func (p *HeaderPropagator) warnUntrusted(c propagation.TextMapCarrier) {
 	for _, h := range p.allHeaders {
 		if c.Get(h) != "" {
 			if p.warned.CompareAndSwap(false, true) {
-				slog.Warn("xtrace ignored forward headers from an untrusted peer, only peers in XGin.TrustedProxies are trusted",
+				slog.Warn("xtrace ignored forward headers from an untrusted peer, only peers in the web server's TrustedProxies (XGin / XEcho) are trusted",
 					"header", h)
 			}
 			return
@@ -270,7 +270,7 @@ func (b *trustedBaggage) Extract(ctx context.Context, carrier propagation.TextMa
 	if !fromTrustedPeer(carrier) {
 		// 只告警一次，理由同 warnUntrusted
 		if carrier.Get(baggageHeader) != "" && b.warned.CompareAndSwap(false, true) {
-			slog.Warn("xtrace ignored baggage from an untrusted peer, only peers in XGin.TrustedProxies are trusted")
+			slog.Warn("xtrace ignored baggage from an untrusted peer, only peers in the web server's TrustedProxies (XGin / XEcho) are trusted")
 		}
 		return ctx
 	}

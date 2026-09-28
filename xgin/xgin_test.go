@@ -1516,3 +1516,59 @@ func TestClientIP_SharedRuleMatchesGin(t *testing.T) {
 		}
 	}
 }
+
+// ---- 零值 ----
+
+func TestZeroValue_ReportsUnderModuleName(t *testing.T) {
+	// &XGin{} 不经过 New 也要能用：错误和日志照样记在 xgin 名下，
+	// 调用方的 xerror.Is(err, "xgin") 才成立，日志里也不会冒出 " listening" 这种没头的消息
+	buf := captureLog(t)
+	cert := filepath.Join(t.TempDir(), "missing.pem")
+	err := startErr(t, (&XGin{}).WithConfig(configWith(quiet, on(testkit.FreePort(t)), func(c *Config) { c.CertFile, c.KeyFile = cert, cert })))
+	if !xerror.Is(err, "xgin") || xerror.Module(err) != "xgin" {
+		t.Fatalf("零值的 Start 报的错该算 xgin 的，got=%v", err)
+	}
+
+	z := &XGin{}
+	if err := z.Stop(context.Background()); err != nil {
+		t.Fatalf("Start 之前 Stop 该什么都不做，got=%v", err)
+	}
+	if err := z.Start(context.Background()); err != nil {
+		t.Fatalf("Stop 之后的 Start 该直接返回 nil，got=%v", err)
+	}
+	if !strings.Contains(buf.String(), `"msg":"xgin received the shutdown signal before starting`) {
+		t.Errorf("日志消息该以 xgin 开头，got=%s", buf.String())
+	}
+}
+
+func TestStart_NoListeningLogWhenListenFails(t *testing.T) {
+	// 「listening」要在真的监听上之后才打：证书读不出来、端口被占时先说 listening
+	// 再报 listen failed，排查的人会以为服务起来过
+	cert := filepath.Join(t.TempDir(), "missing.pem")
+	busy, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer busy.Close()
+	for name, mutate := range map[string]func(*Config){
+		"missing cert": func(c *Config) { c.Port = testkit.FreePort(t); c.CertFile, c.KeyFile = cert, cert },
+		"port in use":  func(c *Config) { c.Port = busy.Addr().(*net.TCPAddr).Port },
+	} {
+		buf := captureLog(t)
+		err := startErr(t, New().WithConfig(configWith(quiet, on(0), mutate)))
+		if err == nil || !strings.Contains(err.Error(), "listen on") {
+			t.Fatalf("%s: 该报 listen failed，got=%v", name, err)
+		}
+		if strings.Contains(buf.String(), "xgin listening") {
+			t.Errorf("%s: 没监听上就不该打 listening，got=%s", name, buf.String())
+		}
+	}
+}
+
+func TestLoadConfig_IPv4MappedProxyFailsStartup(t *testing.T) {
+	// ::ffff:10.0.0.1 在 gin 和 xtrace 的可信判断里各是一个意思，只能拦住，并告诉使用者该怎么写
+	err := loadErr(t, "XGin:\n  TrustedProxies: [private, \"::ffff:10.0.0.1\"]\n")
+	if err == nil || !strings.Contains(err.Error(), "IPv4-mapped") || !strings.Contains(err.Error(), "write it as 10.0.0.1") {
+		t.Fatalf("IPv4 映射写法该启动失败并给出 IPv4 写法，got=%v", err)
+	}
+}

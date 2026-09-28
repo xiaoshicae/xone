@@ -118,7 +118,7 @@ admin := xecho.New().WithConfig(c).WithRoutes(adminRoutes)
   echo 自己的 `e.Server` 四个超时全是 0。
 - **handler 返回错误就行**：`return echo.NewHTTPError(http.StatusNotFound, "no such user")` 或者普通的 `error`，
   响应由 `e.HTTPErrorHandler` 写（默认是 echo 的 JSON `{"message":...}`，普通 error 一律 500、不带原文），
-  要换格式就在 `WithRoutes` 里设 `e.HTTPErrorHandler`。错误原文进访问日志的 `errors` 和 Span 的 `echo.errors`，出现敏感词（password、token……）就整段遮掉。
+  要换格式就在 `WithRoutes` 里设 `e.HTTPErrorHandler`。错误原文进访问日志的 `errors` 和 Span 的 `echo.errors`，出现敏感词（password、token……）就整段遮掉，URL / MySQL DSN 里的密码换成 `***REDACTED***`。
   自定义的错误处理只会被调一次；响应已经写出去了（`c.Response().Committed`）再返回错误时，echo 默认的错误处理什么都不做。
 - **请求体没有上限**：框架不替业务定，要限就用 echo 自带的中间件，比如 `e.Use(echomw.BodyLimit("10M"))`
   （`echomw` 即 `github.com/labstack/echo/v4/middleware`）。multipart 的落盘阈值写死 32MB，见[「行为与实测」](#行为与实测)。
@@ -157,12 +157,12 @@ echo 自带的 `ExtractIPFromXFFHeader` 默认信任回环、链路本地和私�
 | `bytes_in` | 请求头里的 `Content-Length`；分块上传记 `-1` |
 | `bytes_out` | 写出的响应体字节数（`c.Response().Size`），不含响应头；错误响应也算 |
 | `query` / `request_headers` / `request_body` / `response_headers` / `response_body` | 各自的开关打开时，脱敏规则同 xgin |
-| `errors` | handler 返回的错误（`err.Error()`，如 `code=404, message=Not Found`）、中止或断连的原因；没有就不写；出现敏感词就整段记成 `***REDACTED***`（Span 的 `echo.errors` 同理） |
+| `errors` | handler 返回的错误（`err.Error()`，如 `code=404, message=Not Found`）、中止或断连的原因；没有就不写；出现敏感词就整段记成 `***REDACTED***`，否则只把 `postgres://app:pw@db`、`app:pw@tcp(db:3306)` 里的密码换成 `***REDACTED***`（Span 的 `echo.errors` 同理） |
 | `trace_id` / `span_id` | 有链路时 |
 
 `middleware.AddSensitiveFields(...)` / `AddSensitiveHeaders(...)` 和 xgin 的同名函数写的是同一张表，用哪个都行。
 
-panic 由 Recover 中间件记一条 `panic while handling request`（ERROR，带 `error`、`stack`、`path`、`method`）并回 500；
+panic 由 Recover 中间件记一条 `panic while handling request`（ERROR，带 `error`、`stack`、`path`、`method`；`error` 按 `errors` 字段的规矩脱敏，`stack` 只有函数和行号、原样记）并回 500；
 客户端提前断开导致的写失败记 `connection broken`，不打栈。
 
 ### 日志
@@ -207,6 +207,7 @@ handler 以 `http.ErrAbortHandler` 中止的请求在访问日志、指标、链
 **client_ip（`e.IPExtractor`）**：echo 的默认是 `nil`，`c.RealIP()` 退回老的写法——谁发来的 `X-Forwarded-For`、`X-Real-IP` 都信。
 实测公网对端 `203.0.113.9` 发 `X-Forwarded-For: 1.2.3.4`，`c.RealIP()` 是 `1.2.3.4`；只发 `X-Real-IP: 5.6.7.8` 就是 `5.6.7.8`。
 这里按 `TrustedProxies` 装上 `IPExtractor`（默认只信私有网段），算法照抄 gin v1.12.0 的 `ClientIP`，xgin 的测试逐条比对两边的结果。
+IPv4 映射成 IPv6 的写法（`::ffff:10.0.0.1`、`::ffff:10.0.0.0/104`）启动失败，理由同 [xgin](../xgin/README.md#行为与实测)：写成 `10.0.0.1`、`10.0.0.0/8`。
 
 **handler 返回的错误**在整条中间件链返回之后才由 `e.HTTPErrorHandler` 写成响应（`Echo.ServeHTTP` 的最后一步）。
 包在外面的中间件拿到错误的那一刻，404、405、500 实测都是 `Status 200`、`Committed false`、`Size 0`——照读的话每个出错的请求
@@ -254,6 +255,7 @@ handler 先写了 200 再返回错误时，echo 默认的错误处理见 `Commit
 |---|---|---|
 | `CertFile and KeyFile must both be set or both be empty`（XEcho） | 服务端证书只配了一半 | 两个都填，或者都留空 |
 | `ClientCAFile requires CertFile and KeyFile, mutual TLS runs on top of TLS`（XEcho） | 配了双向认证却没配服务端证书 | 补上 `CertFile` / `KeyFile` |
+| `TrustedProxies entry "::ffff:10.0.0.1" is an IPv4-mapped IPv6 address; write it as 10.0.0.1`（XEcho） | `TrustedProxies` 里写了 IPv4 映射成 IPv6 的地址或网段 | 照报错给的写：`::ffff:10.0.0.1` → `10.0.0.1`，`::ffff:10.0.0.0/104` → `10.0.0.0/8` |
 | `field Mode not found in type xecho.Config`（`MaxMultipartMemory`、`ZHTranslations` 同理） | 照抄了 XGin 块 | 删掉这几项，理由见[「配置」](#配置) |
 
 停止时的 `N handler(s) still running when the shutdown deadline passed` 见 [`docs/troubleshooting.md`「Runnable 与退出」](../docs/troubleshooting.md#runnable-与退出)。

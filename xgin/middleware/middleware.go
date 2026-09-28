@@ -11,6 +11,7 @@ package middleware
 
 import (
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 
@@ -82,8 +83,11 @@ func Recover(handle gin.RecoveryFunc) gin.HandlerFunc {
 				return
 			}
 
+			// panic 的值和 handler 返回的错误一样会夹带凭证（panic(err) 里的整串 DSN），
+			// 过一遍 RedactText 再记。栈不用过：runtime.Stack 只打函数名、文件行号和参数的十六进制原始字
+			// （指针、长度），字符串和结构体的内容不在里面
 			slog.ErrorContext(ctx, "panic while handling request",
-				"error", err,
+				"error", web.RedactText(fmt.Sprint(err)),
 				"stack", web.Stack(),
 				"path", c.Request.URL.Path,
 				"method", c.Request.Method)

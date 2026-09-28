@@ -59,3 +59,10 @@ mutate("XTrace 块在读配置时就校验", "xtrace/xtrace.go", "./xtrace", "Te
 mutate("不可信对端带来透传头时只告警一次", "xtrace/propagator.go", "./xtrace", "TestHeaderPropagator_WarnsOnceForUntrustedPeerHeaders",
        swap('\tif p.warned.Load() {\n\t\treturn\n\t}\n', ''),
        swap('if p.warned.CompareAndSwap(false, true) {', 'if true {'))
+
+section("告警文案")
+# 原先写死 XGin.TrustedProxies：只用 xecho 的进程照着加一个 XGin 块，启动就报「没人读的配置」
+mutate("透传告警不只点 XGin", "xtrace/propagator.go", "./xtrace", "TestHeaderPropagator_WarnsOnceForUntrustedPeerHeaders",
+       swap("forward headers from an untrusted peer, only peers in the web server's TrustedProxies (XGin / XEcho) are trusted", "forward headers from an untrusted peer, only peers in XGin.TrustedProxies are trusted"))
+mutate("baggage 告警不只点 XGin", "xtrace/propagator.go", "./xtrace", "TestTrustedBaggage_WarnsOnceForUntrustedPeerBaggage",
+       swap("baggage from an untrusted peer, only peers in the web server's TrustedProxies (XGin / XEcho) are trusted", "baggage from an untrusted peer, only peers in XGin.TrustedProxies are trusted"))

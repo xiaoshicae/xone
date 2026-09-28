@@ -109,6 +109,10 @@ func TestHeaderPropagator_WarnsOnceForUntrustedPeerHeaders(t *testing.T) {
 	if n := strings.Count(buf.String(), "untrusted peer"); n != 1 {
 		t.Errorf("该只告警一次，got=%d 次：%s", n, buf.String())
 	}
+	// 提示不能只点 XGin：只用 xecho 的进程照着加一个 XGin 块，启动就报「没人读的配置」
+	if want := "xtrace ignored forward headers from an untrusted peer, only peers in the web server's TrustedProxies (XGin / XEcho) are trusted"; !strings.Contains(buf.String(), want) {
+		t.Errorf("告警该写成 %q，got=%s", want, buf.String())
+	}
 }
 
 func TestHeaderPropagator_GlobalForwardingIgnoresDomain(t *testing.T) {

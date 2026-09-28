@@ -85,7 +85,7 @@ func (c ServerConfig) tlsEnabled() bool { return c.CertFile != "" && c.KeyFile !
 // tlsVersions MinVersion 收的写法
 var tlsVersions = map[string]uint16{"1.2": tls.VersionTLS12, "1.3": tls.VersionTLS13}
 
-// serverTLS 服务端的 TLS 设置，没配证书时是 nil。证书本身由 ListenAndServeTLS 读。
+// serverTLS 服务端的 TLS 设置，没配证书时是 nil。证书本身由 Server.Start 在监听前读（见 listen）。
 //
 // Go 1.25 的服务端默认最低也是 TLS 1.2，这里照样显式写上：默认值会随 Go 版本变，
 // 配置文件里写着的 1.2 不该跟着变。

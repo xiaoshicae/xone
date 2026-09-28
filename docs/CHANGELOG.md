@@ -8,6 +8,16 @@
 
 ## [未发布]
 
+### 修复
+
+- xgin / xecho 访问日志的 `errors` 字段、Span 的 `gin.errors` / `echo.errors`：没有敏感词的错误文本里，`postgres://app:pw@db`、`app:pw@tcp(db:3306)` 这类 URL / MySQL DSN 的密码现在换成 `***REDACTED***`（用户名和主机留着）；原来原样记录。
+- xgin / xecho 的 `panic while handling request` 日志：`error` 字段（panic 的值）按 `errors` 字段同样的规矩脱敏，原来原样记录；`stack` 只有函数和行号，照旧原样记。
+- xgin 访问日志的 `errors` 和 Span 的 `gin.errors`：`c.Error` 登记了多条错误时用 `; ` 隔开（`Error #01: a; Error #02: b`），原来换行被直接删掉、几条错误粘成一句。
+- `&xgin.XGin{}`、`&xecho.XEcho{}` 这样不经 `New()` 的零值重新和 `New()` 一样：`Start` / `Stop` 的错误记在 `xgin` / `xecho` 名下（`xerror.Is(err, "xgin")` 成立），日志消息带着模块名（`xgin listening`）。
+- xgin / xecho 的 `TrustedProxies` 写 IPv4 映射成 IPv6 的地址或网段（`::ffff:10.0.0.1`、`::ffff:10.0.0.0/104`）现在启动失败，报 `TrustedProxies entry ... is an IPv4-mapped IPv6 address; write it as ...`：原来 gin 把单个地址解歪（信的是 `::1` 这类地址），网段在 client_ip 和透传 Header 两处的判断也对不上。迁移：照报错改成 IPv4 写法，`::ffff:10.0.0.1` → `10.0.0.1`，`::ffff:10.0.0.0/104` → `10.0.0.0/8`（前缀长度减 96）。
+- xgin / xecho 的 `<模块> listening` 日志改在证书读好、端口绑上之后才打：证书文件缺失或端口被占时只有那条 `listen on ... failed` 的错误，原来会先打一条 listening。
+- xtrace 丢弃不可信对端的透传 Header / baggage 时的告警改成 `only peers in the web server's TrustedProxies (XGin / XEcho) are trusted`，原来只写 `XGin.TrustedProxies`，只用 xecho 的服务照着加一个 XGin 块会启动失败。按原文检索告警的，改按新文本匹配。
+
 ## [v1.15.0] - 2026-09-28
 
 ### 新增

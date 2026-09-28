@@ -54,8 +54,8 @@ type XGin struct {
 // New 创建一个 XGin。
 //
 // 开关、端口、超时都在配置文件的 XGin 块里；同一个进程里的第二个服务用 WithConfig。
-// 这里什么都不读，配置在装配（Engine 或 Start）那一刻才取。
-func New() *XGin { return &XGin{server: web.Server{Module: "xgin"}} }
+// 这里什么都不读，配置在装配（Engine 或 Start）那一刻才取。零值 &XGin{} 与 New() 等价。
+func New() *XGin { return &XGin{} }
 
 // WithConfig 用这份配置起服务，不再读配置文件里的 XGin 块。
 //
@@ -286,7 +286,7 @@ func (g *XGin) Start(ctx context.Context) error {
 		return xerror.New("xgin", "config", g.confErr)
 	}
 	c := g.conf
-	return g.server.Start(c.server(), g.engine.Handler())
+	return g.server.Start("xgin", c.server(), g.engine.Handler())
 }
 
 // Stop 优雅关闭服务：等在途请求做完，最多等到 ctx 的截止时间。由 xone.Run 调用。
@@ -311,7 +311,7 @@ func (g *XGin) Start(ctx context.Context) error {
 // handler 停下来——Go 没有从外面终止一个协程的办法，断开连接、取消
 // 请求的 ctx 已经是能做的全部。handler 里的慢操作（查库、调下游）
 // 要传 c.Request.Context()，断连之后才停得下来。
-func (g *XGin) Stop(ctx context.Context) error { return g.server.Stop(ctx) }
+func (g *XGin) Stop(ctx context.Context) error { return g.server.Stop(ctx, "xgin") }
 
 // ---- 登记 ----
 

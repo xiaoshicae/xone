@@ -8,6 +8,7 @@ package web
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"log/slog"
 	"net"
@@ -23,12 +24,13 @@ import (
 // Server 一个 HTTP 服务的启停：只起一次，可以早于 Start 就 Stop，
 // Stop 返回 nil 时所有 handler 都已经返回。
 //
-// 零值加上 Module 就能用，不可复制。Start / Stop 的语义写在集成公开的方法上
+// 零值就能用，不可复制。Start / Stop 的语义写在集成公开的方法上
 // （xgin.XGin.Start / Stop），使用者读的是那里。
+//
+// 模块名（报错和日志里的 "xgin"）由集成在每次调用时交进来，不存在结构体里：
+// 存成字段的话只有 New 会填它，使用者写 &xgin.XGin{} 时错误就记在空模块名下，
+// xerror.Is(err, "xgin") 不成立，日志消息也少了开头的模块名
 type Server struct {
-	// Module 报错和日志里的模块名（"xgin"）：错误出自谁的 Start / Stop，就算谁报的
-	Module string
-
 	mu       sync.Mutex
 	srv      *http.Server
 	stopping bool
@@ -38,14 +40,15 @@ type Server struct {
 	running atomic.Int64
 }
 
-// Start 按 c 监听、用 h 处理请求，阻塞到服务停止。
+// Start 按 c 监听、用 h 处理请求，阻塞到服务停止。module 是报错和日志里的模块名。
 //
 // TLS 的设置不对（读不出 ClientCAFile）时返回 config 错误、不监听；
 // Stop 早于它到达时不监听、直接返回 nil。
-func (s *Server) Start(c ServerConfig, h http.Handler) error {
+// "<module> listening" 在证书读好、端口绑上之后才打：两样有一样失败，只有那条 listen failed 的错误
+func (s *Server) Start(module string, c ServerConfig, h http.Handler) error {
 	tlsCfg, err := c.serverTLS()
 	if err != nil {
-		return xerror.New(s.Module, "config", err)
+		return xerror.New(module, "config", err)
 	}
 	addr := net.JoinHostPort(c.Host, strconv.Itoa(c.Port))
 	srv := s.newServer(c, addr, h)
@@ -56,33 +59,55 @@ func (s *Server) Start(c ServerConfig, h http.Handler) error {
 		s.mu.Unlock()
 		// 退出信号早于启动到达。照常监听的话，服务会在「已经收到停止信号」
 		// 之后才起来，然后一直跑到框架等超时为止
-		slog.Warn(s.Module + " received the shutdown signal before starting, the server will not start")
+		slog.Warn(module + " received the shutdown signal before starting, the server will not start")
 		return nil
 	}
 	if s.srv != nil {
 		s.mu.Unlock()
-		return xerror.Newf(s.Module, "start", "server is already running on %s", s.srv.Addr)
+		return xerror.Newf(module, "start", "server is already running on %s", s.srv.Addr)
 	}
 	s.srv = srv
 	s.mu.Unlock()
 
-	slog.Info(s.Module+" listening", "addr", addr, "tls", c.tlsEnabled(), "mtls", c.tlsEnabled() && c.ClientCAFile != "",
+	ln, err := listen(c, srv)
+	if err != nil {
+		return xerror.Newf(module, "start", "listen on %s failed: %w", addr, err)
+	}
+	slog.Info(module+" listening", "addr", addr, "tls", c.tlsEnabled(), "mtls", c.tlsEnabled() && c.ClientCAFile != "",
 		"h2c", c.UseH2C && !c.tlsEnabled())
 
+	// Stop 在 listen 之后、Serve 之前到达也没关系：Serve 见到 Shutdown 过就关掉 ln、返回 ErrServerClosed
+	// （实测 Go 1.25.0：先 Shutdown 再 Serve，Serve 当场返回 http: Server closed，端口随即拒绝连接）
 	if c.tlsEnabled() {
-		err = srv.ListenAndServeTLS(c.CertFile, c.KeyFile)
+		err = srv.ServeTLS(ln, "", "") // 证书已经在 TLSConfig 里；h2 的协商照样由 ServeTLS 补上
 	} else {
-		err = srv.ListenAndServe()
+		err = srv.Serve(ln)
 	}
 	if err == nil || errors.Is(err, http.ErrServerClosed) {
 		return nil
 	}
-	return xerror.Newf(s.Module, "start", "listen on %s failed: %w", addr, err)
+	return xerror.Newf(module, "start", "listen on %s failed: %w", addr, err)
+}
+
+// listen 读证书、绑端口，两样都成了才算监听上了。
+//
+// 不用 ListenAndServe(TLS)：它们把这两步和 Serve 捆在一起，调用方分不出
+// 「监听上了」的那一刻，listening 只能在它们之前打——证书读不出来、端口被占时，
+// 日志里先是一条 listening、紧跟着 listen failed
+func listen(c ServerConfig, srv *http.Server) (net.Listener, error) {
+	if c.tlsEnabled() {
+		cert, err := tls.LoadX509KeyPair(c.CertFile, c.KeyFile)
+		if err != nil {
+			return nil, err
+		}
+		srv.TLSConfig.Certificates = append(srv.TLSConfig.Certificates, cert)
+	}
+	return net.Listen("tcp", srv.Addr)
 }
 
 // Stop 优雅关闭：等在途请求做完，最多等到 ctx 的截止时间；
-// 到点还有请求没做完时强制断开所有连接，再等 handler 返回，并返回错误。
-func (s *Server) Stop(ctx context.Context) error {
+// 到点还有请求没做完时强制断开所有连接，再等 handler 返回，并返回错误。module 同 Start
+func (s *Server) Stop(ctx context.Context, module string) error {
 	s.mu.Lock()
 	s.stopping = true // 先置位：Start 若还没开始监听，到达时会直接返回
 	srv := s.srv
@@ -100,7 +125,7 @@ func (s *Server) Stop(ctx context.Context) error {
 		// 所以补一刀 Close()：断掉所有连接，在途请求的 ctx 随之取消。
 		// 在途请求会失败，但那本来就是超时的含义
 		if cerr := srv.Close(); cerr != nil {
-			slog.Warn(s.Module+" force close failed", "error", cerr)
+			slog.Warn(module+" force close failed", "error", cerr)
 		}
 	}
 
@@ -109,10 +134,10 @@ func (s *Server) Stop(ctx context.Context) error {
 	// 还没返回的 handler 会摸到已经关掉的连接池。
 	// Shutdown 成功时也要等：被劫持走的连接（WebSocket）Shutdown 不等，Close 也断不掉
 	if n := s.waitHandlers(ctx); n > 0 {
-		return xerror.Newf(s.Module, "stop", "%d handler(s) still running when the shutdown deadline passed: %w", n, ctx.Err())
+		return xerror.Newf(module, "stop", "%d handler(s) still running when the shutdown deadline passed: %w", n, ctx.Err())
 	}
 	if err != nil {
-		return xerror.Newf(s.Module, "stop", "graceful shutdown timed out, connections were force closed: %w", err)
+		return xerror.Newf(module, "stop", "graceful shutdown timed out, connections were force closed: %w", err)
 	}
 	return nil
 }

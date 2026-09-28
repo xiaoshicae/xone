@@ -214,6 +214,9 @@ func TestTrustedBaggage_WarnsOnceForUntrustedPeerBaggage(t *testing.T) {
 	if n := strings.Count(buf.String(), "xtrace ignored baggage from an untrusted peer"); n != 1 {
 		t.Errorf("该只告警一次，got=%d 次：%s", n, buf.String())
 	}
+	if want := "xtrace ignored baggage from an untrusted peer, only peers in the web server's TrustedProxies (XGin / XEcho) are trusted"; !strings.Contains(buf.String(), want) {
+		t.Errorf("告警该写成 %q，got=%s", want, buf.String())
+	}
 }
 
 func TestNew_InstallsW3CAndB3WhenEnabled(t *testing.T) {

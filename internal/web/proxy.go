@@ -38,14 +38,41 @@ func ExpandProxies(list []string) []string {
 //
 // 网段写错了就直接起不来。gin 那边的行为是解析到出错为止、把已经解出来的
 // 留下，于是前半段代理被信任、后半段被悄悄丢掉——日志里的 client_ip
-// 一半真一半假，是比起不来难查得多的状态
+// 一半真一半假，是比起不来难查得多的状态。
+//
+// IPv4 映射成 IPv6 的写法（::ffff:10.0.0.1、::ffff:10.0.0.0/104）也拦住，报错里给出该怎么写：
+// 同一行配置各处的理解不一样。实测 gin v1.12.0 把单个的 ::ffff:10.0.0.1 解歪了——
+// 信任的是 ::1、::5 这类地址，10.0.0.1 本身反而不信；网段写法 gin 解对了，
+// ParseProxies 却只 Unmap 单个 IP、不 Unmap 网段，于是 client_ip 和透传 Header 的可信判断对不上
 func ValidateProxies(list []string) error {
 	for _, p := range list {
 		if p != TrustPrivate && !isIPOrCIDR(p) {
 			return fmt.Errorf("TrustedProxies contains an invalid address, want an IP, a CIDR or %q, got=%q", TrustPrivate, p)
 		}
+		if plain, ok := unmapped(p); ok {
+			return fmt.Errorf("TrustedProxies entry %q is an IPv4-mapped IPv6 address; write it as %s", p, plain)
+		}
 	}
 	return nil
+}
+
+// unmapped p 是 IPv4 映射成 IPv6 的写法时，返回它的 IPv4 写法（网段的前缀长度减掉 96）。
+//
+// 前缀短于 96 位的网段已经不只是映射地址那一段了，给的是它规范化之后的 IPv6 写法
+func unmapped(p string) (string, bool) {
+	if pfx, err := netip.ParsePrefix(p); err == nil {
+		if !pfx.Addr().Is4In6() {
+			return "", false
+		}
+		if pfx.Bits() < 96 {
+			return pfx.Masked().String(), true
+		}
+		return netip.PrefixFrom(pfx.Addr().Unmap(), pfx.Bits()-96).Masked().String(), true
+	}
+	if a, err := netip.ParseAddr(p); err == nil && a.Is4In6() {
+		return a.Unmap().String(), true
+	}
+	return "", false
 }
 
 // isIPOrCIDR 判断一段是不是合法的 IP 或者网段，与 gin 接受的写法一致

@@ -92,3 +92,29 @@ func TestProxies_ClientIP(t *testing.T) {
 		t.Errorf("an empty list trusts nobody, got=%q", got)
 	}
 }
+
+func TestValidateProxies_RejectsIPv4MappedEntries(t *testing.T) {
+	// gin v1.12.0 把单个的 ::ffff:10.0.0.1 解成了信任 ::1、::5 这类地址、偏偏不信 10.0.0.1；
+	// 网段写法 gin 认对了，本包的 ParseProxies 却不 Unmap 网段。同一行配置两处判断不一样，所以直接拒掉
+	for entry, suggest := range map[string]string{
+		"::ffff:10.0.0.1":     "10.0.0.1",
+		"::ffff:a00:1":        "10.0.0.1",
+		"::ffff:10.0.0.0/104": "10.0.0.0/8",
+		"::ffff:10.1.2.3/128": "10.1.2.3/32",
+		"::ffff:0:0/96":       "0.0.0.0/0",
+	} {
+		err := ValidateProxies([]string{TrustPrivate, entry})
+		if err == nil {
+			t.Errorf("%q should be rejected", entry)
+			continue
+		}
+		if !strings.Contains(err.Error(), "IPv4-mapped") || !strings.Contains(err.Error(), "write it as "+suggest) {
+			t.Errorf("%q: error should suggest %q, got %v", entry, suggest, err)
+		}
+	}
+	for _, ok := range []string{"10.0.0.1", "10.0.0.0/8", "::1", "fd00::/8", "2001:db8::/32", "::/0", TrustPrivate} {
+		if err := ValidateProxies([]string{ok}); err != nil {
+			t.Errorf("%q should be accepted, got %v", ok, err)
+		}
+	}
+}

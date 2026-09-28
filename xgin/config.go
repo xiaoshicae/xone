@@ -109,6 +109,7 @@ type Config struct {
 	//	TrustedProxies: []
 	//
 	// 内网里也有不可信的客户端（办公网、VPN 用户能直连服务）时，别用 private，写确切的那几段。
+	// IPv4 写成 10.0.0.1、10.0.0.0/8；::ffff:10.0.0.1 这种 IPv4 映射成 IPv6 的写法启动失败。
 	TrustedProxies []string `yaml:"TrustedProxies"`
 
 	// Mode Gin 的运行模式：release / debug / test。默认 release。

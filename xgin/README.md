@@ -168,7 +168,7 @@ admin := xgin.New().WithConfig(c).WithRoutes(adminRoutes)
 | `request_body` | `LogRequestBody: true` 时，最多前 256KB，逐字段脱敏；multipart 和 `application/octet-stream` 只记一句 `omitted` |
 | `response_headers` | `LogResponseHeaders: true` 时，脱敏规则同请求头（`Set-Cookie` 等遮掉） |
 | `response_body` | `LogResponseBody: true` 且是文本类响应时，最多前 4KB，逐字段脱敏 |
-| `errors` | handler 里 `c.Error(...)` 登记的错误，没有就不写；出现敏感词就整段记成 `***REDACTED***`（Span 的 `gin.errors` 同理） |
+| `errors` | handler 里 `c.Error(...)` 登记的错误，没有就不写；多条用 `; ` 隔开（`Error #01: a; Error #02: b`）；出现敏感词就整段记成 `***REDACTED***`，否则只把 `postgres://app:pw@db`、`app:pw@tcp(db:3306)` 里的密码换成 `***REDACTED***`（Span 的 `gin.errors` 同理） |
 | `trace_id` / `span_id` | 有链路时 |
 
 **脱敏**按敏感词匹配，不是按字段名精确匹配：比较前双方都转小写、去掉 `_ - .` 和空格，字段名里**含**任一敏感词就遮。
@@ -185,7 +185,7 @@ admin := xgin.New().WithConfig(c).WithRoutes(adminRoutes)
 追加精确的头名。大小写按 Unicode 折叠比较，与 `encoding/json` 匹配字段名一致。词表故意不收 `auth`、`key`、`pwd`：
 会误中 `author`、`Idempotency-Key`、随机串。
 
-panic 由 Recover 中间件记一条 `panic while handling request`（ERROR，带 `error`、`stack`、`path`、`method`）并回 500；
+panic 由 Recover 中间件记一条 `panic while handling request`（ERROR，带 `error`、`stack`、`path`、`method`；`error` 按 `errors` 字段的规矩脱敏，`stack` 只有函数和行号、原样记）并回 500；
 客户端提前断开导致的写失败记 `connection broken`，不打栈。
 
 ### 日志
@@ -235,6 +235,8 @@ gin v1.12.0、Go 1.25 net/http。
 **`TrustedProxies`**：gin 默认 `0.0.0.0/0`，任何人发 `X-Forwarded-For: 1.2.3.4` 就能决定 `client_ip`。
 这里默认只信私有网段：直接暴露在公网的服务，对端是公网地址，`X-Forwarded-For` 照样改不了 `client_ip`。
 在代理后面怎么配见[「在负载均衡 / Cloudflare 后面」](#在负载均衡--cloudflare-后面)。
+IPv4 映射成 IPv6 的写法启动失败：实测 gin v1.12.0 把 `::ffff:10.0.0.1` 解歪了，信的是 `::1`、`::5` 这类地址，`10.0.0.1` 本身反而不信；
+`::ffff:10.0.0.0/104` gin 解对了，透传 Header 的可信判断却对不上。所以只收 `10.0.0.1`、`10.0.0.0/8` 这样的 IPv4 写法。
 
 **`MaxMultipartMemory`** 不是请求体上限，是「超过多少才落盘」，超出的部分写进临时文件、不会被拒绝。
 实际代价约是这个数的三倍：一次 60MB 的上传，配 32MB（gin 默认）时解析这一步让堆多占 96MB，8MB 是 24MB，1MB 是 3MB。
@@ -277,5 +279,6 @@ gin v1.12.0、Go 1.25 net/http。
 |---|---|---|
 | `CertFile and KeyFile must both be set or both be empty`（XGin） | 服务端证书只配了一半 | 两个都填，或者都留空 |
 | `ClientCAFile requires CertFile and KeyFile, mutual TLS runs on top of TLS`（XGin） | 配了双向认证却没配服务端证书 | 补上 `CertFile` / `KeyFile` |
+| `TrustedProxies entry "::ffff:10.0.0.1" is an IPv4-mapped IPv6 address; write it as 10.0.0.1`（XGin） | `TrustedProxies` 里写了 IPv4 映射成 IPv6 的地址或网段 | 照报错给的写：`::ffff:10.0.0.1` → `10.0.0.1`，`::ffff:10.0.0.0/104` → `10.0.0.0/8` |
 
 停止时的 `N handler(s) still running when the shutdown deadline passed` 见 [`docs/troubleshooting.md`「Runnable 与退出」](../docs/troubleshooting.md#runnable-与退出)；客户端 TLS 的报错见 [xtls「排错」](../xtls/README.md#排错)。

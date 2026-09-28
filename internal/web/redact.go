@@ -13,6 +13,7 @@ import (
 	"maps"
 	"net/http"
 	"net/url"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -205,17 +206,44 @@ func RedactBody(body []byte, contentType string) string {
 	}
 }
 
-// RedactText 脱敏一段没有结构的文本，比如 handler 返回的错误：规矩同纯文本 body，
-// 出现敏感词就整段遮掉，否则原样返回（换行转义掉）。
+// RedactText 脱敏一段没有结构的文本，比如 handler 返回的错误、panic 的值。三条规矩：
 //
-// 错误文本最容易夹带凭证——"login failed for user=x password=y"、驱动报的整串 DSN——
-// 而它会原样进访问日志和 Span。定位不了是哪一段，就整段遮掉
+//   - 出现敏感词就整段遮掉，同纯文本 body："login failed for user=x password=y"
+//     定位不了是哪一段，只能整段不要；
+//   - 没有敏感词时，遮掉 URL 和 MySQL DSN 里 userinfo 的密码，其余原样留着：
+//     驱动报错最爱带整串 DSN——dial postgres://app:pw@db:5432/prod、
+//     app:pw@tcp(db:3306)/prod——里面一个敏感词都没有，只看词表的话原样进日志；
+//   - 换行换成 "; "、末尾的换行去掉：gin 的 c.Errors.String() 一条错误一行，
+//     像 body 那样直接删掉换行，两条错误就粘成了一句。
+//
+// 密码的写法和 XONE_DEBUG 打印配置时一样（internal/config 的 redactString）：
+// 留着用户名和主机，只把密码换掉，一眼看得出连的是哪个库、用的哪个账号。
+// 换成的是本包的 Redacted，好让一行访问日志里遮掉的东西都是同一个标记
 func RedactText(s string) string {
 	if s == "" {
 		return ""
 	}
-	return redactOpaque([]byte(s))
+	if sensitive(s, words()) {
+		return Redacted
+	}
+	s = urlUserinfo.ReplaceAllString(s, "$1:"+Redacted+"@")
+	s = mysqlUserinfo.ReplaceAllString(s, "$1:"+Redacted+"@$2")
+	return textNewlines.Replace(strings.TrimRight(s, "\r\n"))
 }
+
+// 文本里夹着的凭证。规则同 internal/config 的 urlUserinfo / mysqlDSN，只是不锚在开头：
+// 那边是一个配置值就是一整串 DSN，这里是一句话里的某一段。
+//
+// 密码按最后一个 @ 算（贪婪匹配再回退），与 net/url、go-sql-driver/mysql 解析 DSN 时一致：
+// 密码里没转义的 @ 不会在日志里留下半截。代价是偶尔多遮一点，拿不准就当作敏感
+var (
+	urlUserinfo   = regexp.MustCompile(`(://[^:/?#@\s]*):[^/\s]+@`)        // postgres://u:p@h、redis://:p@h
+	mysqlUserinfo = regexp.MustCompile(`([^\s:@/]+):\S+@((?:tcp|unix)\()`) // u:p@tcp(h:3306)/db、u:p@unix(/sock)/db
+)
+
+// textNewlines RedactText 用的换行处理：\n 换成 "; "，\r 删掉（\r\n 因此也是一个 "; "）。
+// 与 newlines 一样只写单字节的键，走的是逐字节的实现
+var textNewlines = strings.NewReplacer("\r", "", "\n", "; ")
 
 // redactOpaque 处理认不出结构的 body（text/plain、xml、没带 Content-Type 的……）
 //

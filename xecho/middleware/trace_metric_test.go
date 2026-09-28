@@ -402,3 +402,13 @@ func TestTrace_ErrorTextIsRedactedOnSpan(t *testing.T) {
 		t.Errorf("Span 上的 echo.errors 该被遮掉，got=%q", got)
 	}
 }
+
+func TestTrace_DSNPasswordInErrorIsMaskedOnSpan(t *testing.T) {
+	spans := recording(t)
+	serve(t, get("/hello"), []echo.MiddlewareFunc{Trace()}, func(c echo.Context) error {
+		return errors.New("dial postgres://app:hunter2@db:5432/prod failed")
+	})
+	if got, want := attrsOf(spans()[0])["echo.errors"], "dial postgres://app:"+Redacted+"@db:5432/prod failed"; got != want {
+		t.Errorf("echo.errors=%q, want %q", got, want)
+	}
+}

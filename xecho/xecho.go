@@ -54,8 +54,8 @@ type XEcho struct {
 // New 创建一个 XEcho。
 //
 // 开关、端口、超时都在配置文件的 XEcho 块里；同一个进程里的第二个服务用 WithConfig。
-// 这里什么都不读，配置在装配（Engine 或 Start）那一刻才取。
-func New() *XEcho { return &XEcho{server: web.Server{Module: "xecho"}} }
+// 这里什么都不读，配置在装配（Engine 或 Start）那一刻才取。零值 &XEcho{} 与 New() 等价。
+func New() *XEcho { return &XEcho{} }
 
 // WithConfig 用这份配置起服务，不再读配置文件里的 XEcho 块。
 //
@@ -304,7 +304,7 @@ func (x *XEcho) Start(ctx context.Context) error {
 	if x.confErr != nil {
 		return xerror.New("xecho", "config", x.confErr)
 	}
-	return x.server.Start(x.conf.server(), x.engine)
+	return x.server.Start("xecho", x.conf.server(), x.engine)
 }
 
 // Stop 优雅关闭服务：等在途请求做完，最多等到 ctx 的截止时间。由 xone.Run 调用。
@@ -328,7 +328,7 @@ func (x *XEcho) Start(ctx context.Context) error {
 // handler 停下来——Go 没有从外面终止一个协程的办法，断开连接、取消
 // 请求的 ctx 已经是能做的全部。handler 里的慢操作（查库、调下游）
 // 要传 c.Request().Context()，断连之后才停得下来。
-func (x *XEcho) Stop(ctx context.Context) error { return x.server.Stop(ctx) }
+func (x *XEcho) Stop(ctx context.Context) error { return x.server.Stop(ctx, "xecho") }
 
 // ---- 登记 ----
 

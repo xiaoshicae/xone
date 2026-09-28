@@ -7,7 +7,7 @@ section("HTTP 服务")
 mutate("服务不超过调用方给的截止时间", "internal/web/server.go", "./xgin", "TestStop",
        swap('shutCtx, cancel := shutdownCtx(ctx)', 'shutCtx, cancel := shutdownCtx(context.WithoutCancel(ctx))'))
 mutate("超时后强制断掉在途连接", "internal/web/server.go", "./xgin", "TestStop",
-       swap('\t\tif cerr := srv.Close(); cerr != nil {\n\t\t\tslog.Warn(s.Module+" force close failed", "error", cerr)\n\t\t}\n',''))
+       swap('\t\tif cerr := srv.Close(); cerr != nil {\n\t\t\tslog.Warn(module+" force close failed", "error", cerr)\n\t\t}\n',''))
 # Close 只关连接、取消请求的 ctx，handler 的协程照跑。Close 完就返回的话，
 # 正在收尾的 handler 还没返回，框架就去关数据库了
 mutate("断连之后等 handler 真正返回", "internal/web/server.go", "./xgin", "TestStop_WaitsForHandlersAfterForceClose|TestStop_HandlerIgnoringCtxReportsRemainingCount",
@@ -16,7 +16,7 @@ mutate("每个请求都记进在途计数", "internal/web/server.go", "./xgin", 
        swap('Handler:           s.track(h),', 'Handler:           h,'))
 # 调用点：XGin 的 Start / Stop 只是转给 web.Server。Stop 不转的话，退出信号到了服务照跑
 mutate("XGin.Stop 转给 web.Server", "xgin/xgin.go", "./xgin", "TestStop",
-       swap('{ return g.server.Stop(ctx) }', '{ return nil }'))
+       swap('{ return g.server.Stop(ctx, "xgin") }', '{ return nil }'))
 # Shutdown 用满全部时间的话，Close 落下时预算已经花完，收尾的 handler 没人等
 mutate("Shutdown 给等 handler 留出一截", "internal/web/server.go", "./xgin", "TestStop_WaitsForHandlersAfterForceClose",
        swap('shutCtx, cancel := shutdownCtx(ctx)', 'shutCtx, cancel := context.WithCancel(ctx)'))
@@ -241,3 +241,28 @@ mutate("访问日志的 errors 字段脱过敏（xgin）", "internal/web/accessl
        swap('slog.String("errors", RedactText(a.Errors))', 'slog.String("errors", a.Errors)'))
 mutate("Span 上的 gin.errors 脱过敏", "xgin/middleware/trace.go", "./xgin", "TestTrace_ErrorTextIsRedactedOnSpan",
        swap('web.RedactText(c.Errors.String())', 'c.Errors.String()'))
+
+section("错误文本与 panic 脱敏")
+# panic(err) 里的整串 DSN、"password=..." 原样进 error 字段就是密码落盘
+mutate("panic 的值脱过敏", "xgin/middleware/middleware.go", "./xgin", "TestRecover_PanicValueIsRedacted",
+       swap('"error", web.RedactText(fmt.Sprint(err)),', '"error", fmt.Sprint(err),'))
+# 规则在 internal/web（core.py 有它自己的变异），这里验 xgin 的访问日志和 Span 真的是那个样子
+mutate("多条错误用分号隔开（xgin）", "internal/web/redact.go", "./xgin", "TestLog_MultipleErrorsStaySeparated|TestTrace_ErrorTextKeepsSeparationAndMasksDSNOnSpan",
+       swap('return textNewlines.Replace(strings.TrimRight(s, "\\r\\n"))', 'return newlines.Replace(s)'))
+mutate("errors 里 DSN 的密码被遮掉（xgin）", "internal/web/redact.go", "./xgin", "TestLog_DSNPasswordInErrorIsMasked|TestTrace_ErrorTextKeepsSeparationAndMasksDSNOnSpan",
+       swap('\ts = urlUserinfo.ReplaceAllString(s, "$1:"+Redacted+"@")\n', ''))
+
+section("零值与启动日志")
+# 模块名原先只在 New 里填：&xgin.XGin{} 的错误记在空模块名下，xerror.Is(err, "xgin") 不成立
+mutate("零值 XGin 的错误和日志记在 xgin 名下", "xgin/xgin.go", "./xgin", "TestZeroValue_ReportsUnderModuleName",
+       swap('g.server.Start("xgin", ', 'g.server.Start("", '))
+# listening 原先打在监听之前：证书读不出来、端口被占时先说 listening 再报 listen failed
+mutate("listening 在端口绑上之后才打", "internal/web/server.go", "./xgin", "TestStart_NoListeningLogWhenListenFails",
+       swap('\tln, err := listen(c, srv)\n', '\tslog.Info(module + " listening")\n\tln, err := listen(c, srv)\n'))
+mutate("listening 在证书读好之后才打", "internal/web/server.go", "./xgin", "TestStart_NoListeningLogWhenListenFails",
+       swap('\t\tcert, err := tls.LoadX509KeyPair(c.CertFile, c.KeyFile)\n\t\tif err != nil {\n\t\t\treturn nil, err\n\t\t}\n\t\tsrv.TLSConfig.Certificates = append(srv.TLSConfig.Certificates, cert)\n',
+            '\t\t_ = tls.Certificate{}\n'),
+       swap('srv.ServeTLS(ln, "", "")', 'srv.ServeTLS(ln, c.CertFile, c.KeyFile)'))
+# 调用点：规矩在 internal/web，XGin 块读配置时真的拦住了映射写法
+mutate("XGin 拦住 IPv4 映射写法的代理", "internal/web/proxy.go", "./xgin", "TestLoadConfig_IPv4MappedProxyFailsStartup",
+       swap('\t\tif plain, ok := unmapped(p); ok {', '\t\tif plain, ok := unmapped(p); ok && false {'))

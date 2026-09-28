@@ -80,7 +80,7 @@ type Access struct {
 	RespHeader http.Header // 记响应头、判响应体的 Content-Type 用
 	ReqBody    []byte      // ReqBody 开着时 SnapshotBody 取的那一份
 	RespBody   []byte      // RespBody 开着时截下的响应体，最多 MaxResponseBody 字节
-	Errors     string      // 框架登记的错误，空串就不记；出现敏感词就整段遮掉（RedactText）
+	Errors     string      // 框架登记的错误，空串就不记；脱敏规则见 RedactText
 }
 
 // Log 把 a 记成一条访问日志（Info 级别，message 是 request completed）。

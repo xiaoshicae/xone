@@ -598,7 +598,7 @@ mutate("字段名按 Unicode 折叠比对", "internal/web/redact.go", ".", "Test
 # 预检和字段名比对共用 sensitive，折叠本身由上一条盯着；这一条打在调用点上：
 # 预检换成只转小写的朴素写法，{"ſecret":…} 就走快路径原样进日志
 mutate("敏感词预检按 Unicode 折叠", "internal/web/redact.go", ".", "TestRedactBody_Unicode",
-       swap('sensitive(s, words())', 'func(ws []string) bool { return slices.ContainsFunc(ws, func(w string) bool { return strings.Contains(strings.ToLower(s), w) }) }(words())'),
+       swap('sensitive(s, words()) {\n\t\treturn Redacted\n\t}\n\treturn newlines', 'func(ws []string) bool { return slices.ContainsFunc(ws, func(w string) bool { return strings.Contains(strings.ToLower(s), w) }) }(words()) {\n\t\treturn Redacted\n\t}\n\treturn newlines'),
        swap('|| sensitive(body, ws)', '|| slices.ContainsFunc(ws, func(w string) bool { return strings.Contains(strings.ToLower(body), w) })'))
 # path 特意不带查询串，Referer 却带着上一个页面的完整 URL
 mutate("URL 类请求头去掉查询串", "internal/web/redact.go", ".", "TestRedactHeaders_URL",
@@ -613,7 +613,7 @@ mutate("请求头名字里带敏感词也遮", "internal/web/redact.go", ".", "T
        swap(' || sensitive(k, ws)', ''), swap('\tset := headers()\n\tws := words()\n', '\tset := headers()\n\tws := words()\n\t_ = ws\n'))
 # 预检认不出 api-key 的话，这种 body 走快路径原样进日志，根本到不了逐字段脱敏
 mutate("敏感词预检忽略分隔符", "internal/web/redact.go", ".", "TestRedactBody",
-       swap('sensitive(s, words())', 'func(ws []string) bool { return slices.ContainsFunc(ws, func(w string) bool { return strings.Contains(strings.Map(foldRune, s), w) }) }(words())'),
+       swap('sensitive(s, words()) {\n\t\treturn Redacted\n\t}\n\treturn newlines', 'func(ws []string) bool { return slices.ContainsFunc(ws, func(w string) bool { return strings.Contains(strings.Map(foldRune, s), w) }) }(words()) {\n\t\treturn Redacted\n\t}\n\treturn newlines'),
        swap('|| sensitive(body, ws)', '|| slices.ContainsFunc(ws, func(w string) bool { return strings.Contains(strings.Map(foldRune, body), w) })'))
 mutate("脱敏后大整数不丢精度", "internal/web/redact.go", ".", "TestRedactBody", swap('\tdec.UseNumber()\n', ''))
 mutate("脱敏后不转义 HTML 字符", "internal/web/redact.go", ".", "TestRedactBody",
@@ -641,3 +641,24 @@ section("错误文本脱敏")
 # 错误原文最容易夹带凭证（驱动报的整串 DSN、"password=..."），进访问日志之前过一遍词表
 mutate("访问日志的 errors 字段脱过敏", "internal/web/accesslog.go", ".", "TestAccessLog_ErrorsFieldIsRedacted",
        swap('slog.String("errors", RedactText(a.Errors))', 'slog.String("errors", a.Errors)'))
+
+# 驱动报的错里常带整串 DSN，一个敏感词都没有：只看词表的话密码原样进 errors 字段和 Span
+mutate("错误文本里 URL 的密码被遮掉", "internal/web/redact.go", ".", "TestRedactText_MasksPasswordInURLUserinfo",
+       swap('\ts = urlUserinfo.ReplaceAllString(s, "$1:"+Redacted+"@")\n', ''))
+mutate("错误文本里 MySQL DSN 的密码被遮掉", "internal/web/redact.go", ".", "TestRedactText_MasksPasswordInMySQLDSN",
+       swap('\ts = mysqlUserinfo.ReplaceAllString(s, "$1:"+Redacted+"@$2")\n', ''))
+# 密码里没转义的 @：按第一个 @ 截的话，@ 后面那半截密码留在日志里
+mutate("URL 里的密码按最后一个 @ 算", "internal/web/redact.go", ".", "TestRedactText_MasksPasswordInURLUserinfo",
+       swap('`(://[^:/?#@\\s]*):[^/\\s]+@`', '`(://[^:/?#@\\s]*):[^@/\\s]+@`'))
+mutate("错误文本里有敏感词仍整段遮掉", "internal/web/redact.go", ".", "TestRedactText_SensitiveWordRedactsWholeText",
+       swap('\tif sensitive(s, words()) {\n\t\treturn Redacted\n\t}\n\ts = urlUserinfo', '\ts = urlUserinfo'))
+# gin 的 c.Errors.String() 一条错误一行：换行像 body 那样直接删掉，两条错误粘成一句
+mutate("错误文本的多行用分号隔开", "internal/web/redact.go", ".", "TestRedactText_KeepsLinesSeparated",
+       swap('return textNewlines.Replace(strings.TrimRight(s, "\\r\\n"))', 'return newlines.Replace(s)'))
+
+section("Web 集成共用：代理网段")
+# gin v1.12.0 把单个的 ::ffff:10.0.0.1 解成信任 ::1、::5，ParseProxies 不 Unmap 网段：同一行配置各处理解不一样
+mutate("IPv4 映射写法的代理网段要拦住", "internal/web/proxy.go", ".", "TestValidateProxies_RejectsIPv4MappedEntries",
+       swap('\t\tif plain, ok := unmapped(p); ok {', '\t\tif plain, ok := unmapped(p); ok && false {'))
+mutate("映射网段的建议写法减掉 96 位", "internal/web/proxy.go", ".", "TestValidateProxies_RejectsIPv4MappedEntries",
+       swap('pfx.Bits()-96', 'pfx.Bits()'))

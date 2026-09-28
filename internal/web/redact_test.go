@@ -506,3 +506,68 @@ func TestRedactText_SensitiveWordRedactsWholeText(t *testing.T) {
 		}
 	}
 }
+
+func TestRedactText_MasksPasswordInURLUserinfo(t *testing.T) {
+	// 没有敏感词、却带着凭证：驱动和 echo 的 HTTPError 都会把整串 DSN 写进错误文本
+	for in, want := range map[string]string{
+		"dial postgres://app:hunter2@db:5432/prod failed":                                      "dial postgres://app:" + Redacted + "@db:5432/prod failed",
+		"code=502, message=upstream, internal=dial postgres://app:hunter2@db:5432/prod failed": "code=502, message=upstream, internal=dial postgres://app:" + Redacted + "@db:5432/prod failed",
+		"redis://:hunter2@cache:6379/0 timeout":                                                "redis://:" + Redacted + "@cache:6379/0 timeout",
+		"a amqp://u:hunter2@mq b amqp://v:hunter2@mq2":                                         "a amqp://u:" + Redacted + "@mq b amqp://v:" + Redacted + "@mq2",
+		// 密码里没转义的 @：按最后一个 @ 算，与 net/url 一致，不留半截密码
+		"dial postgres://app:hun@ter2@db:5432/prod failed": "dial postgres://app:" + Redacted + "@db:5432/prod failed",
+	} {
+		got := RedactText(in)
+		if strings.Contains(got, "hunter2") || strings.Contains(got, "ter2") {
+			t.Errorf("RedactText(%q) leaked the password: %q", in, got)
+		}
+		if got != want {
+			t.Errorf("RedactText(%q)=%q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestRedactText_MasksPasswordInMySQLDSN(t *testing.T) {
+	// go-sql-driver/mysql 的写法没有 ://：user:pass@tcp(host)/db、user:pass@unix(/path)/db
+	for in, want := range map[string]string{
+		"dial app:hunter2@tcp(db:3306)/prod failed":           "dial app:" + Redacted + "@tcp(db:3306)/prod failed",
+		"open app:hunter2@unix(/tmp/mysql.sock)/prod: denied": "open app:" + Redacted + "@unix(/tmp/mysql.sock)/prod: denied",
+		"internal=app:hunter2@tcp(db:3306)/prod":              "internal=app:" + Redacted + "@tcp(db:3306)/prod",
+	} {
+		if got := RedactText(in); got != want {
+			t.Errorf("RedactText(%q)=%q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestRedactText_KeepsTextWithoutCredentials(t *testing.T) {
+	// 只遮 userinfo 里的密码：不带密码的 URL、邮箱、时间、端口都原样留着
+	for _, in := range []string{
+		"dial postgres://app@db:5432/prod failed",
+		"GET https://api.example.com:8443/v1/users?id=1 failed",
+		"notify ops@example.com at 12:30:00",
+		"redis://cache:6379/0 i/o timeout",
+		`C:\data\app.db locked`,
+	} {
+		if got := RedactText(in); got != in {
+			t.Errorf("RedactText(%q)=%q, text without credentials should stay intact", in, got)
+		}
+	}
+}
+
+func TestRedactText_KeepsLinesSeparated(t *testing.T) {
+	// gin 的 c.Errors.String() 每条错误一行、末尾带换行；只删掉换行的话两条错误粘成一句
+	for in, want := range map[string]string{
+		"Error #01: a\nError #02: b\n": "Error #01: a; Error #02: b",
+		"first\r\nsecond":              "first; second",
+		"single line\n":                "single line",
+	} {
+		if got := RedactText(in); got != want {
+			t.Errorf("RedactText(%q)=%q, want %q", in, got, want)
+		}
+	}
+	// 请求体不受影响：换行照旧直接删掉
+	if got := RedactBody([]byte("a\nb"), "text/plain"); got != "ab" {
+		t.Errorf("RedactBody should keep dropping newlines, got=%q", got)
+	}
+}

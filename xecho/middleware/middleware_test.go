@@ -854,3 +854,35 @@ func TestLog_ErrorTextIsRedacted(t *testing.T) {
 		}
 	}
 }
+
+func TestLog_DSNPasswordInHTTPErrorIsMasked(t *testing.T) {
+	// echo 的 HTTPError 把 Internal 拼进 Error()：code=502, message=..., internal=<驱动报的错>
+	lines := capture(t)
+	serve(t, get("/hello"), []echo.MiddlewareFunc{Log()}, func(c echo.Context) error {
+		return echo.NewHTTPError(502, "upstream").SetInternal(errors.New("dial postgres://app:hunter2@db:5432/prod failed"))
+	})
+	want := "code=502, message=upstream, internal=dial postgres://app:" + Redacted + "@db:5432/prod failed"
+	if got := accessLogs(lines())[0]["errors"]; got != want {
+		t.Errorf("errors=%v, want %q", got, want)
+	}
+}
+
+func TestRecover_PanicValueIsRedacted(t *testing.T) {
+	// panic 的值和 handler 返回的错误一样会夹带凭证，原样进 error 字段就是密码落盘
+	for msg, want := range map[string]string{
+		"dial app:hunter2@tcp(db:3306)/prod failed": "dial app:" + Redacted + "@tcp(db:3306)/prod failed",
+		"login failed password=hunter2":             Redacted,
+	} {
+		lines := capture(t)
+		serve(t, get("/hello"), []echo.MiddlewareFunc{Recover(nil)}, func(c echo.Context) error { panic(errors.New(msg)) })
+		var got any = "（没打）"
+		for _, l := range lines() {
+			if l["msg"] == "panic while handling request" {
+				got = l["error"]
+			}
+		}
+		if got != want {
+			t.Errorf("panic(%q) 的 error 字段=%v，want %q", msg, got, want)
+		}
+	}
+}

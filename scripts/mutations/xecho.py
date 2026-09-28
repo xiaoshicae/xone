@@ -8,10 +8,10 @@ from . import cut, mutate, section, swap
 section("HTTP 服务")
 # 调用点：XEcho 的 Start / Stop 只是转给 web.Server。Stop 不转的话，退出信号到了服务照跑
 mutate("XEcho.Stop 转给 web.Server", "xecho/xecho.go", "./xecho", "TestStop",
-       swap('{ return x.server.Stop(ctx) }', '{ return nil }'))
+       swap('{ return x.server.Stop(ctx, "xecho") }', '{ return nil }'))
 # 监听地址、TLS 和 echo 上的中间件、信任的代理必须出自同一份配置
 mutate("XEcho.Start 用的是装配时的那份配置", "xecho/xecho.go", "./xecho", "TestStart_UsesConfigFromBuildTime",
-       swap('\treturn x.server.Start(x.conf.server(), x.engine)\n', '\tc, _ := x.cfg()\n\treturn x.server.Start(c.server(), x.engine)\n'))
+       swap('\treturn x.server.Start("xecho", x.conf.server(), x.engine)\n', '\tc, _ := x.cfg()\n\treturn x.server.Start("xecho", c.server(), x.engine)\n'))
 # echo 的 e.Server 四个超时全是 0：超时得从配置抄给 web.Server 建的那个 http.Server
 mutate("ReadHeaderTimeout 交给了 web.Server", "xecho/config.go", "./xecho", "TestStart_ServerTimeoutsFromConfig",
        swap('\t\tReadHeaderTimeout: c.ReadHeaderTimeout,\n', '\t\tReadHeaderTimeout: c.IdleTimeout,\n'))
@@ -130,7 +130,7 @@ mutate("回调里的 echo 设置盖得过配置", "xecho/xecho.go", "./xecho", "
        swap('\t\tapplyConfig(e, c)\n', ''),
        swap('\t\tfor _, f := range x.routes {\n\t\t\tf(e)\n\t\t}\n', '\t\tfor _, f := range x.routes {\n\t\t\tf(e)\n\t\t}\n\t\tapplyConfig(e, c)\n'))
 mutate("Start 不再把配置落一遍", "xecho/xecho.go", "./xecho", "TestBuild_CallbackEngineSettingsOverrideConfig",
-       swap('\treturn x.server.Start(x.conf.server(), x.engine)\n', '\tapplyConfig(x.engine, x.conf)\n\treturn x.server.Start(x.conf.server(), x.engine)\n'))
+       swap('\treturn x.server.Start("xecho", x.conf.server(), x.engine)\n', '\tapplyConfig(x.engine, x.conf)\n\treturn x.server.Start("xecho", x.conf.server(), x.engine)\n'))
 # 「谁是自己人」只看 TrustedProxies、只看直连的那一跳。记号打错一次，要么伪造的头被带进内网，要么透传整个失效
 mutate("XEcho 对端在 TrustedProxies 里才算可信", "xecho/xecho.go", "./xecho", "TestBuild_PassthroughHeadersOnlyFromTrustedProxies|TestBuild_PassthroughHeadersOnlyFromPrivateByDefault",
        swap('if x.trusted.Trusts(web.RemoteIP(c.Request())) {', 'if len(x.trusted) > 0 {'))
@@ -222,3 +222,17 @@ mutate("访问日志的 errors 字段脱过敏（xecho）", "internal/web/access
        swap('slog.String("errors", RedactText(a.Errors))', 'slog.String("errors", a.Errors)'))
 mutate("Span 上的 echo.errors 脱过敏", "xecho/middleware/trace.go", "./xecho", "TestTrace_ErrorTextIsRedactedOnSpan",
        swap('web.RedactText(err.Error())', 'err.Error()'))
+
+mutate("panic 的值脱过敏（xecho）", "xecho/middleware/middleware.go", "./xecho", "TestRecover_PanicValueIsRedacted",
+       swap('"error", web.RedactText(fmt.Sprint(r)),', '"error", fmt.Sprint(r),'))
+# echo 的 HTTPError 把 Internal 拼进 Error()：code=502, message=..., internal=<驱动报的整串 DSN>
+mutate("errors 里 DSN 的密码被遮掉（xecho）", "internal/web/redact.go", "./xecho", "TestLog_DSNPasswordInHTTPErrorIsMasked|TestTrace_DSNPasswordInErrorIsMaskedOnSpan",
+       swap('\ts = urlUserinfo.ReplaceAllString(s, "$1:"+Redacted+"@")\n', ''))
+
+section("零值与启动日志")
+mutate("零值 XEcho 的错误和日志记在 xecho 名下", "xecho/xecho.go", "./xecho", "TestZeroValue_ReportsUnderModuleName",
+       swap('x.server.Start("xecho", ', 'x.server.Start("", '))
+mutate("listening 在端口绑上之后才打（xecho）", "internal/web/server.go", "./xecho", "TestStart_NoListeningLogWhenListenFails",
+       swap('\tln, err := listen(c, srv)\n', '\tslog.Info(module + " listening")\n\tln, err := listen(c, srv)\n'))
+mutate("XEcho 拦住 IPv4 映射写法的代理", "internal/web/proxy.go", "./xecho", "TestLoadConfig_IPv4MappedProxyFailsStartup",
+       swap('\t\tif plain, ok := unmapped(p); ok {', '\t\tif plain, ok := unmapped(p); ok && false {'))

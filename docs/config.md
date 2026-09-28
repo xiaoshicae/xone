@@ -16,7 +16,7 @@ Import、合并、占位符。每个配置块的全部字段、默认值和最�
 | 看最终生效的配置 | `XONE_DEBUG=1 ./app` | [XONE_DEBUG](#看最终生效的配置xone_debug) |
 | 读自己的配置块 | `xconfig.Unmarshal("MyApp", &c)` | [xconfig](../xconfig/README.md) |
 
-**import 了哪个集成，它就生效**，没写的块全用默认值——`XLog`、`XTrace`、`XMetric`、`XHttp`、`XGin`
+**import 了哪个集成，它就生效**，没写的块全用默认值——`XLog`、`XTrace`、`XMetric`、`XHttp`、`XGin`、`XEcho`
 不配也照常工作。例外是 **`XGorm`、`XRedis`、`XCache`**：它们要连的东西只有你知道，
 没配这一块就一个实例都不建，`C()` 会 panic 并说明「没配」。
 
@@ -346,5 +346,6 @@ XGorm（PostgreSQL / MySQL / ClickHouse）、XRedis、XHttp 连出去时的 TLS 
 | `XHttp` | 出站 HTTP | [xhttp/README.md](../xhttp/README.md#配置) |
 | `XGin` | Web 服务 | [xgin/README.md](../xgin/README.md#配置) |
 | `XGinSwagger` | 接口文档 | [xginswagger/README.md](../xginswagger/README.md#配置) |
+| `XEcho` | Web 服务（Echo） | [xecho/README.md](../xecho/README.md#配置) |
 | `XFlow` | 流程编排 | [xflow/README.md](../xflow/README.md#配置) |
 | `TLS`（XGorm / XRedis / XHttp 块里的） | 客户端 TLS | [xtls/README.md](../xtls/README.md#配置) |

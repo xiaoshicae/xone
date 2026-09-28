@@ -15,6 +15,7 @@ use (
 	./xcache
 	./xhttp
 	./xgin
+	./xecho
 	./xginswagger
 	./internal/schemagen
 )

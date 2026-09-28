@@ -77,13 +77,14 @@ curl localhost:8080/hello     # {"msg":"hello"}；访问日志、链路、/metri
 |---|---|---|
 | [xgin](xgin/README.md) | [gin](https://github.com/gin-gonic/gin) | Web 服务，内置访问日志、链路、指标、panic 恢复 |
 | [xginswagger](xginswagger/README.md) | [gin-swagger](https://github.com/swaggo/gin-swagger) | Swagger UI |
+| [xecho](xecho/README.md) | [Echo](https://github.com/labstack/echo) v4 | Web 服务，和 xgin 同一套访问日志、链路、指标、panic 恢复，换成 Echo |
 | [xgorm](xgorm/README.md) | [gorm](https://gorm.io/) | `*gorm.DB`，内置 MySQL / PostgreSQL，多数据源 |
 | [xgorm/clickhouse](xgorm/clickhouse/README.md) | [gorm ClickHouse 驱动](https://github.com/go-gorm/clickhouse) | 给 xgorm 加 ClickHouse |
 | [xredis](xredis/README.md) | [go-redis](https://github.com/redis/go-redis) | `*redis.Client`，多实例 |
 | [xcache](xcache/README.md) | [ristretto](https://github.com/dgraph-io/ristretto) | 本地缓存，按类型取值 |
 | [xhttp](xhttp/README.md) | [resty](https://github.com/go-resty/resty) | 出站 HTTP，重试、链路、指标 |
 | [xtrace](xtrace/README.md) | [OpenTelemetry](https://github.com/open-telemetry/opentelemetry-go) | 链路，设为全局 TracerProvider |
-| [xmetric](xmetric/README.md) | [Prometheus](https://github.com/prometheus/client_golang) | 指标打点，`/metrics` 由 xgin 挂上 |
+| [xmetric](xmetric/README.md) | [Prometheus](https://github.com/prometheus/client_golang) | 指标打点，`/metrics` 由 xgin / xecho 挂上 |
 | [xlog](xlog/README.md) | [log/slog](https://pkg.go.dev/log/slog)（标准库） | 结构化日志，文件轮转，请求级字段 |
 | [xconfig](xconfig/README.md) | — | 读自己的配置块 |
 | [xflow](xflow/README.md) | — | 流程编排，失败自动回滚 |
@@ -92,7 +93,7 @@ curl localhost:8080/hello     # {"msg":"hello"}；访问日志、链路、/metri
 `xconfig`、`xlog`、`xflow`、`xapp`、`xtls`、`xhook`、`xerror`、`xutil`、`xonetest` 都在核心模块里，核心只依赖 yaml。
 其中 `xapp`、`xlog` 跟着框架一起来：只要 import 了 `xone`，`XApp`、`XLog` 两块配置就生效，不用另外 import。
 
-**日志、指标、链路跟着集成来**：xgin、xgorm、xredis、xhttp 带着 xtrace 和 xmetric，xcache 带着 xmetric，
+**日志、指标、链路跟着集成来**：xgin、xecho、xgorm、xredis、xhttp 带着 xtrace 和 xmetric，xcache 带着 xmetric，
 用了就不用另外 import。只有进程里一个这样的集成都没有、又想要它们时，才需要匿名 import，见 [可观测「链路」](docs/observability.md#链路)。
 
 ## 常用写法

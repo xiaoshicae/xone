@@ -61,12 +61,13 @@ Go 的 MVS 会把**整个模块图**里的版本要求强加给使用者——�
 | `xgorm/clickhouse` | 131 | 126 |
 | `xgin`（链路经 xtrace） | 89 | 85 |
 | `xginswagger` | 84 | 82 |
+| `xecho`（链路经 xtrace） | 63 | 59 |
 
 量法：在仓库外建一个空的 consumer module，`main.go` 里只写一行 `import _ "<包>"`，`go.mod` 用 `replace`
 指向本仓库的各个模块，`GOWORK=off go mod tidy` 之后数 `GOWORK=off go list -m all` 除第一行（应用自己）之外的行数；
 「第三方」再去掉 `github.com/xiaoshicae/xone` 开头的。数字随依赖升级会变，改了 `go.mod` 之后重量一次。
 
-- **会产生 Span 的集成（xgin、xgorm、xredis、xhttp）依赖 xtrace**：用了它们就有链路，不用另外记得 import xtrace——
+- **会产生 Span 的集成（xgin、xecho、xgorm、xredis、xhttp）依赖 xtrace**：用了它们就有链路，不用另外记得 import xtrace——
   漏了的话不报错，只是 Span 全是 noop、日志没有 `trace_id`。代价实测很小：它们本来就依赖 OpenTelemetry 的 API
   （xgin、xgorm 连 SDK 也有），xtrace 多带进来的只是它自己、b3 传播器和 stdout 导出器：xgin 85 → 89、xgorm 64 → 68、
   xredis 58 → 60。xcache 不产生 Span，不依赖它。
@@ -152,7 +153,7 @@ func New(ctx context.Context, cfg Config) (*T, io.Closer, error)  // 会建连�
 | 单实例 / 多实例两种写法的解码 | `xconfig.UnmarshalClients` |
 | 客户端 TLS 块：字段、校验、装出 `*tls.Config` | `xtls.Config`（xgorm、xredis、xhttp 共用；零依赖） |
 | 注册指标并断回具体类型 | `xmetric.RegisterAs` |
-| Web 服务与框架无关的那一半：监听、h2c、服务端 TLS、优雅关闭；信任的代理；脱敏与敏感词表；访问日志的字段 | `internal/web`（不对外；xgin 用它，之后的 Web 集成也用它） |
+| Web 服务与框架无关的那一半：监听、h2c、服务端 TLS、优雅关闭；信任的代理；脱敏与敏感词表；访问日志的字段 | `internal/web`（不对外；xgin、xecho 都用它） |
 
 `C()` 取不到实例时直接 panic 并说清是哪一种，因为调早了、调晚了、整块没配、名字写错要查的地方各不相同。
 调早了最容易被说错：它和「整块没配」很容易写成同一句话，于是在 `main` 里取实例的人会去翻一份明明写对了的配置文件。
@@ -172,7 +173,7 @@ func New(ctx context.Context, cfg Config) (*T, io.Closer, error)  // 会建连�
 | `xlog.SetTraceExtractor` | xtrace | 日志自动带上 `trace_id`，而 xlog 不依赖 OpenTelemetry |
 | `xlog.AddObserver` | xmetric | 统计错误日志条数，而 xlog 不依赖 Prometheus |
 | `xgorm.RegisterDialect` | xgorm/clickhouse 等驱动 module | 加驱动，而 xgorm 不带它的依赖 |
-| carrier 的 `TrustedPeer() bool` | xgin | 告诉 xtrace 这个对端可信，而 xtrace 不认识 xgin |
+| carrier 的 `TrustedPeer() bool` | xgin、xecho | 告诉 xtrace 这个对端可信，而 xtrace 不认识它们 |
 
 不用「在 `slog.Default()` 外面包一层」的办法：`slog.SetDefault` 会把标准库 `log` 包的输出也接到新 handler 上，
 链条一旦绕回 slog 自带的 handler 就成环，卡死在 `log` 包那把不可重入的锁上。让下层自己持有扩展点就没有这个问题。

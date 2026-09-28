@@ -46,6 +46,8 @@ xone/
 ├── xgin/                Web 服务，基于 Gin（独立 module）
 │   └── middleware/      访问日志、链路、指标、panic 恢复，外加 LogScope / Propagate
 ├── xginswagger/         Swagger UI（独立 module）
+├── xecho/               Web 服务，基于 Echo v4（独立 module）；和 xgin 共用 internal/web
+│   └── middleware/      同 xgin/middleware，外加「错误在这一层渲染」
 ├── docs/                跨模块的使用者文档（README 里有导航）+ 本文件 + CHANGELOG.md；
 │                        每个模块自己的文档在它目录下的 README.md（见「配置与文档」）
 ├── example/             一个 module：可直接跑的示例，同时是进程内的跨模块集成测试
@@ -158,7 +160,7 @@ Settings → Actions → General → Workflow permissions 要是 Read and write�
 改热点代码前后各跑一次，改动要有数字支撑（见[优雅优先于快](#优雅优先于快)）：
 
 ```bash
-go test -run=NONE -bench=. -benchtime=100000x ./xlog/ ./xflow/ ./xgin/middleware/
+go test -run=NONE -bench=. -benchtime=100000x ./xlog/ ./xflow/ ./xgin/middleware/ ./xecho/middleware/
 ```
 
 ## e2e：真实 Web 服务测试

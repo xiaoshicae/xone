@@ -1,4 +1,4 @@
-package xgin
+package xecho
 
 import (
 	"bytes"
@@ -18,7 +18,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gin-gonic/gin"
+	"github.com/labstack/echo/v4"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
@@ -28,14 +28,10 @@ import (
 	"github.com/xiaoshicae/xone/internal/config"
 	"github.com/xiaoshicae/xone/internal/hook"
 	"github.com/xiaoshicae/xone/internal/testkit"
-	"github.com/xiaoshicae/xone/internal/web"
+	"github.com/xiaoshicae/xone/xecho/middleware"
 	"github.com/xiaoshicae/xone/xerror"
-	"github.com/xiaoshicae/xone/xgin/middleware"
-	"github.com/xiaoshicae/xone/xgin/trans"
 	"github.com/xiaoshicae/xone/xmetric"
 )
-
-func init() { gin.SetMode(gin.TestMode) }
 
 func load(t *testing.T, yml string) Config {
 	t.Helper()
@@ -81,10 +77,10 @@ func on(port int) func(*Config) {
 }
 
 // serving 起服务并等它真的开始监听，测试结束时关掉。返回 http://127.0.0.1:port
-func serving(t *testing.T, g *XGin, port int) string {
+func serving(t *testing.T, x *XEcho, port int) string {
 	t.Helper()
-	go func() { _ = g.Start(context.Background()) }()
-	t.Cleanup(func() { _ = g.Stop(context.Background()) })
+	go func() { _ = x.Start(context.Background()) }()
+	t.Cleanup(func() { _ = x.Stop(context.Background()) })
 	base := fmt.Sprintf("http://127.0.0.1:%d", port)
 	waitServing(t, base+"/nothing")
 	return base
@@ -92,28 +88,31 @@ func serving(t *testing.T, g *XGin, port int) string {
 
 // startErr 调 Start 并取它返回的错误。配置非法时它该当场返回、不开始监听——
 // 2s 还没返回就当它在监听，关掉并判失败
-func startErr(t *testing.T, g *XGin) error {
+func startErr(t *testing.T, x *XEcho) error {
 	t.Helper()
 	done := make(chan error, 1)
-	go func() { done <- g.Start(context.Background()) }()
+	go func() { done <- x.Start(context.Background()) }()
 	select {
 	case err := <-done:
 		return err
 	case <-time.After(2 * time.Second):
-		_ = g.Stop(context.Background())
+		_ = x.Stop(context.Background())
 		t.Fatal("配置非法时 Start 该直接返回错误，它却开始监听了")
 		return nil
 	}
 }
 
-// echoClientIP 注册 GET /client-ip，响应体就是 handler 看到的 ClientIP
-func echoClientIP(e *gin.Engine) {
-	e.GET("/client-ip", func(c *gin.Context) { c.String(200, c.ClientIP()) })
+// ok 只回一个 200
+func ok(c echo.Context) error { return c.NoContent(200) }
+
+// echoClientIP 注册 GET /client-ip，响应体就是 handler 看到的 c.RealIP()
+func echoClientIP(e *echo.Echo) {
+	e.GET("/client-ip", func(c echo.Context) error { return c.String(200, c.RealIP()) })
 }
 
 // clientIPOf 从 remote 带着伪造的 X-Forwarded-For: 1.2.3.4 请求一次 /client-ip（见 echoClientIP），
-// 返回 handler 看到的 ClientIP
-func clientIPOf(t *testing.T, e *gin.Engine, remote string) string {
+// 返回 handler 看到的 c.RealIP()
+func clientIPOf(t *testing.T, e *echo.Echo, remote string) string {
 	t.Helper()
 	req := httptest.NewRequest("GET", "/client-ip", nil)
 	req.RemoteAddr = remote
@@ -141,29 +140,31 @@ func TestConfig_Defaults(t *testing.T) {
 		t.Errorf("监听默认值不对，got=%+v", c)
 	}
 	// 不限制的话，慢客户端可以一直占着连接不放
-	if c.ReadHeaderTimeout != 10*time.Second {
-		t.Errorf("读请求头必须有超时，got=%v", c.ReadHeaderTimeout)
+	if c.ReadHeaderTimeout != 10*time.Second || c.IdleTimeout != 60*time.Second {
+		t.Errorf("读请求头和空闲连接必须有超时，got=%v %v", c.ReadHeaderTimeout, c.IdleTimeout)
 	}
-	// 线上忘了设环境变量的代价，比本地少一行提示大得多
-	if c.Mode != "release" {
-		t.Errorf("默认应为 release，got=%q", c.Mode)
+	if c.ReadTimeout != 0 || c.WriteTimeout != 0 {
+		t.Errorf("读写超时默认不限，got=%v %v", c.ReadTimeout, c.WriteTimeout)
 	}
 	if !c.Log || !c.Trace || !c.Metric {
 		t.Errorf("三个内置中间件默认都该开着，got=%+v", c)
 	}
-	if c.LogRequestBody || c.LogResponseBody || c.LogQuery || c.LogRequestHeaders || c.LogResponseHeaders || c.ZHTranslations {
-		t.Errorf("记 body、查询串、请求头、响应头和中文翻译默认都该关着（代价和风险都不小），got=%+v", c)
+	if c.LogRequestBody || c.LogResponseBody || c.LogQuery || c.LogRequestHeaders || c.LogResponseHeaders || c.UseH2C {
+		t.Errorf("记 body、查询串、请求头、响应头和 h2c 默认都该关着，got=%+v", c)
 	}
-	if c.MetricPath != "/metrics" {
-		t.Errorf("指标路径默认应为 /metrics，got=%q", c.MetricPath)
+	if c.MetricPath != "/metrics" || c.MinVersion != "1.2" {
+		t.Errorf("指标路径默认应为 /metrics、MinVersion 1.2，got=%+v", c)
 	}
 	if len(c.LogSkipPaths) != 0 {
 		t.Errorf("默认不跳过任何路径，got=%v", c.LogSkipPaths)
 	}
+	if !reflect.DeepEqual(c.TrustedProxies, []string{"private"}) {
+		t.Errorf("默认只信私有网段，got=%v", c.TrustedProxies)
+	}
 }
 
 func TestConfig_LoadFromFile(t *testing.T) {
-	c := load(t, "XGin:\n  Port: 9090\n  ReadTimeout: 30s\n  UseH2C: true\n  Log: false\n  LogSkipPaths: [/healthz, /static/]\n")
+	c := load(t, "XEcho:\n  Port: 9090\n  ReadTimeout: 30s\n  UseH2C: true\n  Log: false\n  LogSkipPaths: [/healthz, /static/]\n")
 	if c.Port != 9090 || c.ReadTimeout != 30*time.Second || !c.UseH2C {
 		t.Errorf("配置没生效，got=%+v", c)
 	}
@@ -176,8 +177,14 @@ func TestConfig_LoadFromFile(t *testing.T) {
 }
 
 func TestConfig_FailsOnTypo(t *testing.T) {
-	if err := loadErr(t, "XGin:\n  Prot: 9090\n"); err == nil {
+	if err := loadErr(t, "XEcho:\n  Prot: 9090\n"); err == nil {
 		t.Fatal("字段拼错应当启动失败")
+	}
+	// gin 特有的几项这里没有：照抄 XGin 块的配置要当场报出来，不是静默不生效
+	for _, f := range []string{"Mode: release", "MaxMultipartMemory: 1024", "ZHTranslations: true"} {
+		if err := loadErr(t, "XEcho:\n  "+f+"\n"); err == nil {
+			t.Errorf("%s 不是 XEcho 的字段，应当启动失败", f)
+		}
 	}
 }
 
@@ -191,7 +198,6 @@ func TestValidate(t *testing.T) {
 		"端口越界":               func(c *Config) { c.Port = 70000 },
 		"只配了证书":              func(c *Config) { c.CertFile = "a.pem" },
 		"只配了私钥":              func(c *Config) { c.KeyFile = "a.key" },
-		"Mode 不认识":           func(c *Config) { c.Mode = "prod" },
 		"MetricPath 不以 / 开头": func(c *Config) { c.MetricPath = "metrics" },
 		"MetricPath 为空":      func(c *Config) { c.MetricPath = "" },
 	} {
@@ -211,9 +217,8 @@ func TestValidate(t *testing.T) {
 }
 
 func TestValidate_RejectsZeroOrNegativeTimeouts(t *testing.T) {
-	// net/http 对这几项的零值和负值都是「不设防」而不是「用个默认值」：
-	// ReadHeaderTimeout 为 0 时退到 ReadTimeout，而后者默认也是 0，
-	// 于是慢连接攻击的主要防线整个消失，配置文件看上去只是写了个 0
+	// net/http 对这几项的零值和负值都是「不设防」而不是「用个默认值」，
+	// 前提由 xgin 的 TestNetHTTP_ReadHeaderTimeoutZeroLetsSlowClientHoldConn 钉着
 	for name, mutate := range map[string]func(*Config){
 		"ReadHeaderTimeout 为 0": func(c *Config) { c.ReadHeaderTimeout = 0 },
 		"ReadHeaderTimeout 为负":  func(c *Config) { c.ReadHeaderTimeout = -time.Second },
@@ -237,30 +242,6 @@ func TestValidate_RejectsZeroOrNegativeTimeouts(t *testing.T) {
 	}
 }
 
-func TestNetHTTP_ReadHeaderTimeoutZeroLetsSlowClientHoldConn(t *testing.T) {
-	// 钉住上面那条校验的前提：标准库对 0 的处理是「不限时」。
-	// 哪天升级后它变成了「用个默认值」，这条会先红，校验可以跟着放宽
-	for _, rht := range []time.Duration{0, -time.Second} {
-		srv := httptest.NewUnstartedServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
-		srv.Config.ReadHeaderTimeout = rht
-		srv.Start()
-
-		conn, err := net.Dial("tcp", srv.Listener.Addr().String())
-		if err != nil {
-			t.Fatal(err)
-		}
-		conn.Write([]byte("GET / HTTP/1.1\r\nHost: x\r\n")) // 头只发一半
-		conn.SetReadDeadline(time.Now().Add(300 * time.Millisecond))
-		_, err = conn.Read(make([]byte, 1))
-		var ne net.Error
-		if !errors.As(err, &ne) || !ne.Timeout() {
-			t.Errorf("ReadHeaderTimeout=%v 时服务端该一直等着（我们这边读超时），got=%v", rht, err)
-		}
-		conn.Close()
-		srv.Close()
-	}
-}
-
 func TestValidate_HalfConfiguredTLS(t *testing.T) {
 	// 这是最危险的一种配错：服务会以明文起来，而配置文件看上去是配了证书的
 	c := DefaultConfig()
@@ -275,9 +256,7 @@ func TestValidate_HalfConfiguredTLS(t *testing.T) {
 }
 
 func TestValidate_InvalidProxyCIDRFailsStartup(t *testing.T) {
-	// gin 的 SetTrustedProxies 解析到出错为止、把已经解出来的留下，
-	// 于是前半段代理被信任、后半段被悄悄丢掉——日志里的 client_ip
-	// 一半真一半假，比起不来难查得多
+	// 写错一段就起不来：半对半错的代理表让 client_ip 一半真一半假，比起不来难查得多
 	c := DefaultConfig()
 	c.TrustedProxies = []string{"10.0.0.0/8", "10.0.0.0/33"}
 	if err := c.Validate(); err == nil {
@@ -292,97 +271,121 @@ func TestValidate_InvalidProxyCIDRFailsStartup(t *testing.T) {
 
 // ---- 装配 ----
 
-func TestBuild_BuiltinMiddlewareOrder(t *testing.T) {
+func TestBuild_PanicRecoveredAndStillLogged(t *testing.T) {
 	// Recover 必须是内置里最内层的：panic 在哪一层被兜住，
-	// 比它更内层的中间件里 c.Next() 之后的代码就都不执行了
-	g := New().WithConfig(DefaultConfig()).WithRoutes(func(e *gin.Engine) {
-		e.GET("/boom", func(c *gin.Context) { panic("炸了") })
+	// 比它更内层的中间件里 next(c) 之后的代码就都不执行了。
+	// echo 自己不兜 panic：实测连接直接断掉，栈进 stderr
+	buf := captureLog(t)
+	x := New().WithConfig(DefaultConfig()).WithRoutes(func(e *echo.Echo) {
+		e.GET("/boom", func(echo.Context) error { panic("炸了") })
 	})
 
-	w := doRequest(t, g.Engine(), "GET", "/boom")
-	if w.Code != 500 {
-		t.Errorf("panic 应被兜住并返回 500，got=%d", w.Code)
+	w := doRequest(t, x.Engine(), "GET", "/boom")
+	if w.Code != 500 || strings.TrimSpace(w.Body.String()) != `{"message":"Internal Server Error"}` {
+		t.Errorf("panic 应被兜住并返回 echo 默认的 500，got=%d %q", w.Code, w.Body.String())
+	}
+	out := buf.String()
+	if !strings.Contains(out, `"msg":"panic while handling request"`) ||
+		!strings.Contains(out, `"msg":"request completed"`) || !strings.Contains(out, `"status":500`) {
+		t.Errorf("panic 日志和状态码 500 的访问日志都该有：\n%s", out)
 	}
 }
 
+func TestEcho_PanicNotRecoveredByDefault(t *testing.T) {
+	// 钉住上面那条的前提：echo 自己不兜 panic，一路抛到 net/http（它断开连接、把栈写进 stderr）。
+	// 哪天升级后 echo 开始自己兜了，这条先红，Recover 可以跟着重新评估
+	e := echo.New()
+	e.GET("/boom", func(echo.Context) error { panic("炸了") })
+	defer func() {
+		if recover() == nil {
+			t.Error("echo 默认不兜 panic，该抛到 ServeHTTP 外面")
+		}
+	}()
+	e.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", "/boom", nil))
+}
+
 func TestBuild_MetricsEndpointAutoRegistered(t *testing.T) {
-	g := New().WithConfig(DefaultConfig())
-	if w := doRequest(t, g.Engine(), "GET", "/metrics"); w.Code != 200 {
+	x := New().WithConfig(DefaultConfig())
+	if w := doRequest(t, x.Engine(), "GET", "/metrics"); w.Code != 200 {
 		t.Errorf("启用指标时应自动注册 /metrics，got=%d", w.Code)
 	}
-	if !strings.Contains(doRequest(t, g.Engine(), "GET", "/metrics").Body.String(), "http_requests_total") {
+	if !strings.Contains(doRequest(t, x.Engine(), "GET", "/metrics").Body.String(), "http_requests_total") {
 		t.Error("指标端点应导出请求数指标")
 	}
 }
 
 func TestBuild_MetricsPathConfigurable(t *testing.T) {
-	g := New().WithConfig(configWith(func(c *Config) { c.MetricPath = "/internal/metrics" }))
-	if w := doRequest(t, g.Engine(), "GET", "/internal/metrics"); w.Code != 200 {
+	x := New().WithConfig(configWith(func(c *Config) { c.MetricPath = "/internal/metrics" }))
+	if w := doRequest(t, x.Engine(), "GET", "/internal/metrics"); w.Code != 200 {
 		t.Errorf("应注册在配置的路径上，got=%d", w.Code)
 	}
-	if w := doRequest(t, g.Engine(), "GET", "/metrics"); w.Code == 200 {
+	if w := doRequest(t, x.Engine(), "GET", "/metrics"); w.Code == 200 {
 		t.Error("默认路径上不该再有")
 	}
 }
 
 func TestBuild_NoMetricsEndpointWhenDisabled(t *testing.T) {
-	g := New().WithConfig(configWith(func(c *Config) { c.Metric = false }))
-	if w := doRequest(t, g.Engine(), "GET", "/metrics"); w.Code == 200 {
+	x := New().WithConfig(configWith(func(c *Config) { c.Metric = false }))
+	if w := doRequest(t, x.Engine(), "GET", "/metrics"); w.Code == 200 {
 		t.Error("关掉指标后不该有 /metrics")
 	}
 }
 
-func TestBuild_405InsteadOf404(t *testing.T) {
-	// 不开 HandleMethodNotAllowed 的话，方法用错会得到 404，
-	// 调用方会以为是路径写错了
-	g := New().WithConfig(DefaultConfig()).WithRoutes(func(e *gin.Engine) {
-		e.GET("/only-get", func(c *gin.Context) { c.Status(200) })
-	})
-	if w := doRequest(t, g.Engine(), "POST", "/only-get"); w.Code != 405 {
-		t.Errorf("方法不对应返回 405，got=%d", w.Code)
+func TestEcho_MetricPathWithoutSlashIsRewritten(t *testing.T) {
+	// 钉住 MetricPath 那条校验的前提（echo v4.16.0）：不以 / 开头的路径被悄悄改写，
+	// 空串注册在根路径上、被后注册的首页悄悄盖掉——不报错，也不 panic
+	e := echo.New()
+	e.GET("metrics", func(c echo.Context) error { return c.String(200, "M") })
+	if w := doRequest(t, e, "GET", "/metrics"); w.Body.String() != "M" {
+		t.Errorf("echo 该把 metrics 改写成 /metrics，got=%d %q", w.Code, w.Body.String())
+	}
+	e = echo.New()
+	e.GET("", func(c echo.Context) error { return c.String(200, "M") })
+	e.GET("/", func(c echo.Context) error { return c.String(200, "home") })
+	if w := doRequest(t, e, "GET", "/"); w.Body.String() != "home" {
+		t.Errorf("空路径该落在 / 上、被后注册的首页盖掉，got=%q", w.Body.String())
 	}
 }
 
 func TestBuild_Idempotent(t *testing.T) {
 	// 装配两遍会把中间件注册两遍，表现是每个请求打两条日志、指标翻倍
-	g := New().WithConfig(DefaultConfig())
-	if g.Engine() != g.Engine() {
-		t.Error("重复装配应返回同一个 engine")
+	x := New().WithConfig(DefaultConfig())
+	if x.Engine() != x.Engine() {
+		t.Error("重复装配应返回同一个 echo")
 	}
 }
 
 func TestBuild_UserMiddlewareAfterBuiltin(t *testing.T) {
 	var order []string
-	g := New().WithConfig(configWith(func(c *Config) { c.Log, c.Trace, c.Metric = false, false, false })).
-		WithMiddleware(func(c *gin.Context) { order = append(order, "用户"); c.Next() }).
-		WithRoutes(func(e *gin.Engine) {
-			e.GET("/x", func(c *gin.Context) { order = append(order, "handler"); c.Status(200) })
+	mark := func(name string) echo.MiddlewareFunc {
+		return func(next echo.HandlerFunc) echo.HandlerFunc {
+			return func(c echo.Context) error { order = append(order, name); return next(c) }
+		}
+	}
+	x := New().WithConfig(configWith(func(c *Config) { c.Log, c.Trace, c.Metric = false, false, false })).
+		WithMiddleware(mark("用户1"), mark("用户2")).
+		WithRoutes(func(e *echo.Echo) {
+			e.GET("/x", func(c echo.Context) error { order = append(order, "handler"); return c.NoContent(200) })
 		})
 
-	doRequest(t, g.Engine(), "GET", "/x")
-	if len(order) != 2 || order[0] != "用户" || order[1] != "handler" {
-		t.Errorf("用户中间件应在 handler 之前，got=%v", order)
+	doRequest(t, x.Engine(), "GET", "/x")
+	if strings.Join(order, ",") != "用户1,用户2,handler" {
+		t.Errorf("用户中间件应按顺序排在 handler 之前，got=%v", order)
 	}
 }
 
-func TestBuild_ModeSetFromConfigBeforeEngine(t *testing.T) {
-	var out bytes.Buffer
-	oldW := gin.DefaultWriter
-	gin.DefaultWriter = &out
-	t.Cleanup(func() { gin.DefaultWriter = oldW; gin.SetMode(gin.TestMode) })
-
-	New().WithConfig(configWith(quiet, func(c *Config) { c.Mode = "debug" })).Engine()
-	if gin.Mode() != gin.DebugMode {
-		t.Errorf("装配时应按配置设 Mode，got=%q", gin.Mode())
+func TestBuild_UserMiddlewareInsideRecover(t *testing.T) {
+	// 用户中间件排在所有内置中间件之后：它自己 panic 也由 Recover 兜住，访问日志照样记
+	buf := captureLog(t)
+	x := New().WithConfig(configWith(func(c *Config) { c.Metric, c.Trace = false, false })).
+		WithMiddleware(func(echo.HandlerFunc) echo.HandlerFunc {
+			return func(echo.Context) error { panic("中间件炸了") }
+		})
+	if w := doRequest(t, x.Engine(), "GET", "/x"); w.Code != 500 {
+		t.Errorf("用户中间件的 panic 该被兜住，got=%d", w.Code)
 	}
-
-	// 使用者的二进制里没设 GIN_MODE 时，gin 默认就是 debug。Mode 要在 gin.New 之前设，
-	// 否则配成 release 的服务照样打出 gin 那段「正在以 debug 模式运行」的警告
-	gin.SetMode(gin.DebugMode)
-	out.Reset()
-	New().WithConfig(DefaultConfig()).Engine()
-	if out.Len() > 0 {
-		t.Errorf("配成 release 的服务不该有 gin 的 debug 输出：\n%s", out.String())
+	if !strings.Contains(buf.String(), `"status":500`) {
+		t.Errorf("访问日志该记下 500：\n%s", buf.String())
 	}
 }
 
@@ -390,7 +393,7 @@ func TestBuild_ModeSetFromConfigBeforeEngine(t *testing.T) {
 
 func TestLog_NoAccessLogWhenDisabled(t *testing.T) {
 	buf := captureLog(t)
-	route := func(e *gin.Engine) { e.GET("/work", func(c *gin.Context) { c.String(200, "ok") }) }
+	route := func(e *echo.Echo) { e.GET("/work", func(c echo.Context) error { return c.String(200, "ok") }) }
 
 	e := New().WithConfig(configWith(quiet)).WithRoutes(route).Engine()
 	e.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", "/work", nil))
@@ -405,16 +408,43 @@ func TestLog_NoAccessLogWhenDisabled(t *testing.T) {
 	}
 }
 
+func TestLog_ErrorStatusesLoggedAsSent(t *testing.T) {
+	// 装配出来的整条链：handler 返回的错误、router 的 404 / 405，访问日志记的是客户端收到的那个
+	for _, c := range []struct {
+		method, path string
+		status       int
+		route        string
+	}{
+		{"GET", "/nope", 404, "unmatched"},
+		{"POST", "/only-get", 405, "unmatched"},
+		{"GET", "/fail", 500, "/fail"},
+		{"GET", "/teapot", 418, "/teapot"},
+	} {
+		buf := captureLog(t)
+		e := New().WithConfig(DefaultConfig()).WithRoutes(func(e *echo.Echo) {
+			e.GET("/only-get", ok)
+			e.GET("/fail", func(echo.Context) error { return errors.New("boom") })
+			e.GET("/teapot", func(echo.Context) error { return echo.NewHTTPError(418) })
+		}).Engine()
+		w := doRequest(t, e, c.method, c.path)
+		want := fmt.Sprintf(`"route":%q,"path":%q,"status":%d`, c.route, c.path, c.status)
+		if w.Code != c.status || !strings.Contains(buf.String(), want) ||
+			!strings.Contains(buf.String(), fmt.Sprintf(`"bytes_out":%d`, w.Body.Len())) {
+			t.Errorf("%s %s：客户端收到 %d（%d 字节），访问日志该对得上：\n%s", c.method, c.path, w.Code, w.Body.Len(), buf.String())
+		}
+	}
+}
+
 func TestLogSkipPaths_ReallySkipsThesePaths(t *testing.T) {
 	// 光在配置里写上不够：它得一路传到 middleware.Log 里
 	buf := captureLog(t)
 	e := New().WithConfig(configWith(func(c *Config) {
 		c.Metric, c.Trace = false, false
 		c.LogSkipPaths = []string{"/healthz", "/static/"}
-	})).WithRoutes(func(e *gin.Engine) {
-		e.GET("/healthz", func(c *gin.Context) { c.String(200, "ok") })
-		e.GET("/static/*file", func(c *gin.Context) { c.String(200, "ok") })
-		e.GET("/work", func(c *gin.Context) { c.String(200, "ok") })
+	})).WithRoutes(func(e *echo.Echo) {
+		e.GET("/healthz", ok)
+		e.GET("/static/*", ok)
+		e.GET("/work", ok)
 	}).Engine()
 
 	for _, path := range []string{"/healthz", "/static/app.js"} {
@@ -458,8 +488,8 @@ func TestLogBody_TogglesAreIndependent(t *testing.T) {
 		e := New().WithConfig(configWith(func(cfg *Config) {
 			cfg.Metric, cfg.Trace = false, false
 			cfg.LogRequestBody, cfg.LogResponseBody = c.req, c.resp
-		})).WithRoutes(func(e *gin.Engine) {
-			e.POST("/echo", func(c *gin.Context) { c.JSON(200, gin.H{"greeting": "hi-bob"}) })
+		})).WithRoutes(func(e *echo.Echo) {
+			e.POST("/echo", func(c echo.Context) error { return c.JSON(200, map[string]string{"greeting": "hi-bob"}) })
 		}).Engine()
 
 		req := httptest.NewRequest("POST", "/echo", strings.NewReader(`{"name":"alice"}`))
@@ -491,11 +521,11 @@ func TestLogQueryAndHeaders_TogglesReachMiddleware(t *testing.T) {
 		e := New().WithConfig(configWith(func(cfg *Config) {
 			cfg.Metric, cfg.Trace = false, false
 			cfg.LogQuery, cfg.LogRequestHeaders, cfg.LogResponseHeaders = c.query, c.reqH, c.header
-		})).WithRoutes(func(e *gin.Engine) {
-			e.GET("/search", func(c *gin.Context) {
-				c.Header("X-Page-Total", "7")
-				c.Header("Set-Cookie", "sid=abc123")
-				c.Status(200)
+		})).WithRoutes(func(e *echo.Echo) {
+			e.GET("/search", func(c echo.Context) error {
+				c.Response().Header().Set("X-Page-Total", "7")
+				c.Response().Header().Set("Set-Cookie", "sid=abc123")
+				return c.NoContent(200)
 			})
 		}).Engine()
 		req := httptest.NewRequest("GET", "/search?page=2&token=t0p", nil)
@@ -526,16 +556,16 @@ func TestTrace_NoSpanWhenDisabled(t *testing.T) {
 	otel.SetTracerProvider(tp)
 	t.Cleanup(func() { otel.SetTracerProvider(old) })
 
-	for _, trace := range []bool{true, false} {
+	for _, on := range []bool{true, false} {
 		exp.Reset()
-		e := New().WithConfig(configWith(quiet, func(c *Config) { c.Trace = trace })).Engine()
+		e := New().WithConfig(configWith(quiet, func(c *Config) { c.Trace = on })).Engine()
 		w := doRequest(t, e, "GET", "/nope")
 
-		if got := len(exp.GetSpans()) > 0; got != trace {
-			t.Errorf("Trace=%v 时开了 Span=%v", trace, got)
+		if got := len(exp.GetSpans()) > 0; got != on {
+			t.Errorf("Trace=%v 时开了 Span=%v", on, got)
 		}
-		if got := w.Header().Get(middleware.TraceIDHeader) != ""; got != trace {
-			t.Errorf("Trace=%v 时响应里带了 %s=%v", trace, middleware.TraceIDHeader, got)
+		if got := w.Header().Get(middleware.TraceIDHeader) != ""; got != on {
+			t.Errorf("Trace=%v 时响应里带了 %s=%v", on, middleware.TraceIDHeader, got)
 		}
 	}
 }
@@ -553,63 +583,92 @@ func TestMetric_NoRequestMetricsWhenDisabled(t *testing.T) {
 	for _, metric := range []bool{true, false} {
 		route := fmt.Sprintf("/probe-%v", metric)
 		e := New().WithConfig(configWith(func(c *Config) { c.Log, c.Trace, c.Metric = false, false, metric })).
-			WithRoutes(func(e *gin.Engine) { e.GET(route, func(c *gin.Context) { c.Status(200) }) }).
+			WithRoutes(func(e *echo.Echo) { e.GET(route, ok) }).
 			Engine()
 		e.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", route, nil))
 
-		w := httptest.NewRecorder()
-		m.Handler.ServeHTTP(w, httptest.NewRequest("GET", "/metrics", nil))
-		if got := strings.Contains(w.Body.String(), `route="`+route+`"`); got != metric {
-			t.Errorf("Metric=%v 时记了请求指标=%v\n%s", metric, got, w.Body.String())
+		out := testkit.Scrape(m.Handler)
+		if got := strings.Contains(out, `route="`+route+`"`); got != metric {
+			t.Errorf("Metric=%v 时记了请求指标=%v\n%s", metric, got, out)
 		}
 	}
 }
 
-func TestZHTranslations_InstallsChineseTranslations(t *testing.T) {
-	New().WithConfig(configWith(quiet, func(c *Config) { c.Trace, c.ZHTranslations = false, true })).Engine()
-
-	var req struct {
-		Name string `binding:"required"`
-	}
-	c, _ := gin.CreateTestContext(httptest.NewRecorder())
-	c.Request = httptest.NewRequest("POST", "/", strings.NewReader("{}"))
-	c.Request.Header.Set("Content-Type", "application/json")
-	err := c.ShouldBindJSON(&req)
-	if err == nil {
-		t.Fatal("缺必填字段应当报错")
-	}
-	if got := trans.Msg(err); !strings.Contains(got, "必填") {
-		t.Errorf("没翻成中文，got=%q", got)
-	}
-}
-
 func TestWithRecoverFunc_ReplacesPanicResponse(t *testing.T) {
-	g := New().WithConfig(configWith(func(c *Config) { c.Log, c.Trace, c.Metric = false, false, false })).
-		WithRecoverFunc(func(c *gin.Context, _ any) { c.String(503, "custom") }).
-		WithRoutes(func(e *gin.Engine) {
-			e.GET("/boom", func(*gin.Context) { panic("boom") })
+	x := New().WithConfig(configWith(func(c *Config) { c.Log, c.Trace, c.Metric = false, false, false })).
+		WithRecoverFunc(func(c echo.Context, _ any) error { return c.String(503, "custom") }).
+		WithRoutes(func(e *echo.Echo) {
+			e.GET("/boom", func(echo.Context) error { panic("boom") })
 		})
 
-	w := httptest.NewRecorder()
-	g.Engine().ServeHTTP(w, httptest.NewRequest("GET", "/boom", nil))
+	w := doRequest(t, x.Engine(), "GET", "/boom")
 	if w.Code != 503 || w.Body.String() != "custom" {
 		t.Errorf("自定义 recover 没生效，got=%d %q", w.Code, w.Body.String())
 	}
 }
 
-// ---- 配置落到 engine 上 ----
+// ---- 配置落到 echo 上 ----
+
+func TestEcho_DefaultIPExtractorTrustsEveryone(t *testing.T) {
+	// 钉住下面那几条的前提（echo v4.16.0）：IPExtractor 为 nil 时 c.RealIP() 谁发来的转发头都信。
+	// 哪天 echo 的默认变安全了，这条先红
+	e := echo.New()
+	echoClientIP(e)
+	if got := clientIPOf(t, e, "203.0.113.9:1234"); got != "1.2.3.4" {
+		t.Errorf("echo 的默认是全都信，公网对端伪造的 X-Forwarded-For 照收，got=%q", got)
+	}
+	req := httptest.NewRequest("GET", "/client-ip", nil)
+	req.RemoteAddr = "203.0.113.9:1234"
+	req.Header.Set("X-Real-IP", "5.6.7.8")
+	w := httptest.NewRecorder()
+	e.ServeHTTP(w, req)
+	if w.Body.String() != "5.6.7.8" {
+		t.Errorf("只带 X-Real-IP 也照收，got=%q", w.Body.String())
+	}
+}
 
 func TestBuild_TrustsOnlyPrivateProxiesByDefault(t *testing.T) {
-	// gin 自己的默认是 trustedProxies = 0.0.0.0/0 + ::/0，也就是全都信。
-	// 那意味着任何人发一个 X-Forwarded-For 就能决定访问日志里的
-	// client_ip 是什么——日志可以伪造，建在这个字段上的限流和审计一起失效。
+	// echo 自己的默认是谁发来的都信，任何人发一个 X-Forwarded-For 就能决定访问日志里的
+	// client_ip——日志可以伪造，建在这个字段上的限流和审计一起失效。
 	// 默认只信私有网段：负载均衡、Ingress 转发来的认，公网直连的不认
-	e := New().WithConfig(configWith(quiet)).WithRoutes(echoClientIP).Engine()
+	buf := captureLog(t)
+	e := New().WithConfig(configWith(func(c *Config) { c.Metric, c.Trace = false, false })).WithRoutes(echoClientIP).Engine()
 	if got := clientIPOf(t, e, "203.0.113.9:1234"); got != "203.0.113.9" {
 		t.Errorf("公网对端的 X-Forwarded-For 不该认，client_ip 应该是对端地址本身，got=%q（请求头里伪造的是 1.2.3.4）", got)
 	}
+	if !strings.Contains(buf.String(), `"client_ip":"203.0.113.9"`) {
+		t.Errorf("访问日志的 client_ip 也该是对端本身：\n%s", buf.String())
+	}
 	if got := clientIPOf(t, e, "10.0.0.5:1234"); got != "1.2.3.4" {
 		t.Errorf("私有网段的对端（负载均衡）发来的 X-Forwarded-For 该认，got=%q", got)
+	}
+	req := httptest.NewRequest("GET", "/client-ip", nil)
+	req.RemoteAddr = "203.0.113.9:1234"
+	req.Header.Set("X-Real-IP", "5.6.7.8")
+	w := httptest.NewRecorder()
+	e.ServeHTTP(w, req)
+	if w.Body.String() != "203.0.113.9" {
+		t.Errorf("公网对端的 X-Real-IP 也不该认，got=%q", w.Body.String())
+	}
+}
+
+func TestBuild_ClientIPWalksForwardedChainLikeXgin(t *testing.T) {
+	// 多跳代理：从右往左找第一个不可信的地址，和 xgin（gin 的 ClientIP）一样，
+	// 两边一致由 xgin 的 TestClientIP_SharedRuleMatchesGin 逐条比对着
+	e := New().WithConfig(configWith(quiet)).WithRoutes(echoClientIP).Engine()
+	for xff, want := range map[string]string{
+		"1.2.3.4, 5.6.7.8, 10.0.0.9": "5.6.7.8",  // 10.0.0.9 是自己的代理，5.6.7.8 是离我们最近的外人
+		"10.0.0.7, 10.0.0.8":         "10.0.0.7", // 全都可信取最左边
+		"1.2.3.4, junk":              "10.0.0.5", // 解不出的一项之后不再往左看，退回对端
+	} {
+		req := httptest.NewRequest("GET", "/client-ip", nil)
+		req.RemoteAddr = "10.0.0.5:1"
+		req.Header.Set("X-Forwarded-For", xff)
+		w := httptest.NewRecorder()
+		e.ServeHTTP(w, req)
+		if w.Body.String() != want {
+			t.Errorf("X-Forwarded-For: %s → client_ip 该是 %s，got=%q", xff, want, w.Body.String())
+		}
 	}
 }
 
@@ -623,43 +682,119 @@ func TestBuild_TrustedProxiesEmptyListTrustsNone(t *testing.T) {
 }
 
 func TestBuild_ForwardedHeadersOnlyWithProxiesConfigured(t *testing.T) {
-	e := New().WithConfig(configWith(quiet, func(c *Config) { c.TrustedProxies = []string{"10.0.0.0/8"} })).
+	e := New().WithConfig(configWith(quiet, func(c *Config) { c.TrustedProxies = []string{"203.0.113.0/24"} })).
 		WithRoutes(echoClientIP).Engine()
-	if got := clientIPOf(t, e, "10.0.0.5:1234"); got != "1.2.3.4" {
+	if got := clientIPOf(t, e, "203.0.113.9:1234"); got != "1.2.3.4" {
 		t.Errorf("对端在信任网段内，应该认转发头里的地址，got=%q", got)
 	}
-}
-
-func TestBuild_MultipartMemoryThresholdFromConfig(t *testing.T) {
-	// gin 自己默认 32MB，而这个数不是「请求体上限」是「超过多少才落盘」，
-	// 实际代价约是它的三倍：一次 60MB 的上传，配 32MB 时解析这一步
-	// 让堆多占 96MB，二十个并发就是两个 G
-	g := New().WithConfig(configWith(quiet, func(c *Config) { c.MaxMultipartMemory = 2 << 20 }))
-	if got := g.Engine().MaxMultipartMemory; got != 2<<20 {
-		t.Errorf("该用配置里的阈值，got=%d want=%d", got, 2<<20)
+	if got := clientIPOf(t, e, "10.0.0.5:1234"); got != "10.0.0.5" {
+		t.Errorf("列表整体替换默认值，没写 private 就不信私有网段，got=%q", got)
 	}
 }
 
 func TestBuild_CallbackEngineSettingsOverrideConfig(t *testing.T) {
-	// 回调在配置落到 engine 上之后才跑：使用者在代码里明确设了的，就以代码为准。
-	// 原先反过来——Start 时再把配置落一遍，回调里的设置被悄悄盖掉。
-	// 所以起了服务再看一次：Start 不能再落一遍配置
+	// 回调在配置落到 echo 上之后才跑：使用者在代码里明确设了的，就以代码为准。
+	// 起了服务再看一次：Start 不能再落一遍配置
 	port := testkit.FreePort(t)
-	g := New().WithConfig(configWith(quiet, on(port), func(c *Config) { c.MaxMultipartMemory = 2 << 20 })).
-		WithRoutes(echoClientIP, func(e *gin.Engine) {
-			e.MaxMultipartMemory = 64 << 20
-			if err := e.SetTrustedProxies([]string{"10.0.0.0/8"}); err != nil {
-				t.Error(err)
-			}
-		})
-	g.Engine() // 在测试协程里装配：回调里的 t.Error 不能跑在别的协程上
-	serving(t, g, port)
+	x := New().WithConfig(configWith(quiet, on(port))).
+		WithRoutes(echoClientIP, func(e *echo.Echo) { e.IPExtractor = echo.ExtractIPDirect() })
+	x.Engine()
+	serving(t, x, port)
 
-	if got := g.Engine().MaxMultipartMemory; got != 64<<20 {
-		t.Errorf("该以回调里设的为准，got=%d", got)
+	if got := clientIPOf(t, x.Engine(), "10.0.0.5:1234"); got != "10.0.0.5" {
+		t.Errorf("回调里换成了 ExtractIPDirect，client_ip 该是直连地址，got=%q", got)
 	}
-	if got := clientIPOf(t, g.Engine(), "10.0.0.5:1234"); got != "1.2.3.4" {
-		t.Errorf("回调里信任了 10.0.0.0/8，client_ip 该认转发头，got=%q", got)
+}
+
+func TestBuild_CallbackHTTPErrorHandlerStillLoggedAsSent(t *testing.T) {
+	// 回调里换了错误处理：中间件经 c.Error 调的就是它，访问日志记它写出去的状态码
+	buf := captureLog(t)
+	e := New().WithConfig(configWith(func(c *Config) { c.Metric, c.Trace = false, false })).
+		WithRoutes(func(e *echo.Echo) {
+			e.HTTPErrorHandler = func(err error, c echo.Context) { _ = c.String(503, "custom error") }
+			e.GET("/fail", func(echo.Context) error { return errors.New("boom") })
+		}).Engine()
+	w := doRequest(t, e, "GET", "/fail")
+	if w.Code != 503 || w.Body.String() != "custom error" || !strings.Contains(buf.String(), `"status":503`) {
+		t.Errorf("该用回调里的错误处理、访问日志记 503，got=%d %q\n%s", w.Code, w.Body.String(), buf.String())
+	}
+}
+
+func TestEcho_TrailingSlashAndHEADNotRouted(t *testing.T) {
+	// 钉住 README「行为与实测」里写的两条 echo 默认（v4.16.0），框架没改：
+	// 末尾斜杠严格匹配（/a/ 是 404，gin 默认 301 到 /a）；HEAD 不自动路由到 GET（405）
+	e := New().WithConfig(configWith(quiet)).WithRoutes(func(e *echo.Echo) { e.GET("/a", ok) }).Engine()
+	if w := doRequest(t, e, "GET", "/a/"); w.Code != 404 {
+		t.Errorf("/a/ 该是 404，got=%d", w.Code)
+	}
+	if w := doRequest(t, e, "HEAD", "/a"); w.Code != 405 || w.Header().Get("Allow") != "OPTIONS, GET" {
+		t.Errorf("HEAD 该是 405、Allow 是 OPTIONS, GET，got=%d %q", w.Code, w.Header().Get("Allow"))
+	}
+	if w := doRequest(t, e, "OPTIONS", "/a"); w.Code != 204 || w.Header().Get("Allow") != "OPTIONS, GET" {
+		t.Errorf("OPTIONS 由 echo 自己回 204，got=%d %q", w.Code, w.Header().Get("Allow"))
+	}
+}
+
+func TestEcho_TrailingParamMatchesSlashes(t *testing.T) {
+	// 钉住 README「行为与实测」里的一条 echo 默认：路径参数在路由末尾时吃得下后面的 /，
+	// /users/:id 匹配 /users/1/z，id 是 1/z
+	e := echo.New()
+	e.GET("/users/:id", func(c echo.Context) error { return c.String(200, c.Param("id")) })
+	if w := doRequest(t, e, "GET", "/users/1/z"); w.Code != 200 || w.Body.String() != "1/z" {
+		t.Errorf("got=%d %q", w.Code, w.Body.String())
+	}
+}
+
+// ---- echo 自己的日志 ----
+
+// failWriter 写响应体一律失败，像是客户端已经断开
+type failWriter struct{ h http.Header }
+
+func (w *failWriter) Header() http.Header       { return w.h }
+func (w *failWriter) WriteHeader(int)           {}
+func (w *failWriter) Write([]byte) (int, error) { return 0, errors.New("write: broken pipe") }
+
+func TestEchoLogger_DefaultWritesToStdout(t *testing.T) {
+	// 钉住 applyConfig 那一段的前提（echo v4.16.0 / gommon v0.5.0）：echo 自己的日志写 os.Stdout，
+	// 格式是它自己的 JSON，不经过 slog
+	if out := echo.New().Logger.Output(); out != os.Stdout {
+		t.Errorf("echo 的日志默认写 os.Stdout，got=%T", out)
+	}
+}
+
+func TestEchoLogger_RoutedToSlog(t *testing.T) {
+	// 错误响应写失败时 echo 的默认错误处理调 e.Logger.Error：接到 slog 上，不再写 stdout
+	buf := captureLog(t)
+	e := New().WithConfig(configWith(quiet)).WithRoutes(func(e *echo.Echo) {
+		e.GET("/fail", func(echo.Context) error { return errors.New("boom") })
+	}).Engine()
+	if out := e.Logger.Output(); out == os.Stdout || out == os.Stderr {
+		t.Fatalf("echo 的日志不该再直写标准输出，got=%T", out)
+	}
+	e.ServeHTTP(&failWriter{h: http.Header{}}, httptest.NewRequest("GET", "/fail", nil))
+
+	out := buf.String()
+	if !strings.Contains(out, `"level":"ERROR","msg":"echo internal log","message":"write: broken pipe"`) {
+		t.Errorf("echo 的日志该转成一条 slog 的 ERROR：\n%s", out)
+	}
+
+	// 级别沿用 echo 的默认（ERROR 以上才写）；各级别对得上
+	buf.Reset()
+	e.Logger.Warn("dropped")
+	e.Logger.Print("printed")
+	if strings.Contains(buf.String(), "dropped") || !strings.Contains(buf.String(), `"level":"INFO","msg":"echo internal log","message":"printed"`) {
+		t.Errorf("WARN 被 echo 的级别挡掉，Print 记成 INFO：\n%s", buf.String())
+	}
+}
+
+func TestEchoLevel(t *testing.T) {
+	for in, want := range map[string]slog.Level{
+		"DEBUG": slog.LevelDebug, "INFO": slog.LevelInfo, "WARN": slog.LevelWarn,
+		"ERROR": slog.LevelError, "PANIC": slog.LevelError, "FATAL": slog.LevelError, "-": slog.LevelInfo,
+	} {
+		if got := echoLevel(in); got != want {
+			t.Errorf("echoLevel(%q)=%v want %v", in, got, want)
+		}
 	}
 }
 
@@ -667,12 +802,12 @@ func TestBuild_CallbackEngineSettingsOverrideConfig(t *testing.T) {
 
 func TestStartStop_GracefulShutdown(t *testing.T) {
 	port := testkit.FreePort(t)
-	g := New().WithConfig(configWith(quiet, on(port))).WithRoutes(func(e *gin.Engine) {
-		e.GET("/ping", func(c *gin.Context) { c.String(200, "pong") })
+	x := New().WithConfig(configWith(quiet, on(port))).WithRoutes(func(e *echo.Echo) {
+		e.GET("/ping", func(c echo.Context) error { return c.String(200, "pong") })
 	})
 
 	done := make(chan error, 1)
-	go func() { done <- g.Start(context.Background()) }()
+	go func() { done <- x.Start(context.Background()) }()
 
 	url := fmt.Sprintf("http://127.0.0.1:%d/ping", port)
 	waitServing(t, url)
@@ -687,7 +822,7 @@ func TestStartStop_GracefulShutdown(t *testing.T) {
 		t.Errorf("响应不对，got=%s", body)
 	}
 
-	if err := g.Stop(context.Background()); err != nil {
+	if err := x.Stop(context.Background()); err != nil {
 		t.Fatalf("关闭失败：%v", err)
 	}
 	select {
@@ -700,12 +835,40 @@ func TestStartStop_GracefulShutdown(t *testing.T) {
 	}
 }
 
+func TestStart_ServerTimeoutsFromConfig(t *testing.T) {
+	// echo 自己的 e.Server 四个超时全是 0；本模块不用它，用 web.Server 按配置建的那个。
+	// 发半个请求头的连接到 ReadHeaderTimeout 就该被断开
+	port := testkit.FreePort(t)
+	x := New().WithConfig(configWith(quiet, on(port), func(c *Config) { c.ReadHeaderTimeout = 200 * time.Millisecond }))
+	serving(t, x, port)
+	if e := echo.New(); e.Server.ReadHeaderTimeout != 0 || e.Server.IdleTimeout != 0 {
+		t.Fatalf("前提：echo 的 e.Server 超时是 0，got=%+v", e.Server)
+	}
+
+	conn, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	conn.Write([]byte("GET / HTTP/1.1\r\nHost: x\r\n")) // 头只发一半
+	conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	start := time.Now()
+	_, err = io.ReadAll(conn)
+	var ne net.Error
+	if errors.As(err, &ne) && ne.Timeout() {
+		t.Fatalf("服务端该在 ReadHeaderTimeout 到点时断开，3s 了还没断")
+	}
+	if d := time.Since(start); d > 2*time.Second {
+		t.Errorf("断开得太晚：%v", d)
+	}
+}
+
 func TestStart_DoesNotListenOnInvalidConfig(t *testing.T) {
 	err := startErr(t, New().WithConfig(configWith(func(c *Config) { c.CertFile = "只配了一半" })))
 
 	var xe *xerror.Error
-	if !errors.As(err, &xe) || xe.Module != "xgin" || xe.Op != "config" {
-		t.Fatalf("该是 xgin 的 config 错误，got=%v", err)
+	if !errors.As(err, &xe) || xe.Module != "xecho" || xe.Op != "config" {
+		t.Fatalf("该是 xecho 的 config 错误，got=%v", err)
 	}
 	// 进程里可能有两个服务：错误得说清楚是 WithConfig 那份，以及哪一项
 	if !strings.Contains(err.Error(), "WithConfig") || !strings.Contains(err.Error(), "CertFile") {
@@ -714,28 +877,27 @@ func TestStart_DoesNotListenOnInvalidConfig(t *testing.T) {
 }
 
 func TestStart_UsesConfigFromBuildTime(t *testing.T) {
-	// 监听地址、超时和 engine 上的中间件、信任的代理必须出自同一份配置。
-	// Start 自己再读一遍的话两边可能对不上——这里用「装配之后才 WithConfig」
-	// 造出这种局面：它在装配之后不生效，监听的端口也就不该跟着变
+	// 监听地址、超时和 echo 上的中间件、信任的代理必须出自同一份配置。
+	// 「装配之后才 WithConfig」不生效，监听的端口也就不该跟着变
 	portA, portB := testkit.FreePort(t), testkit.FreePort(t)
-	g := New().WithConfig(configWith(quiet, on(portA)))
-	g.Engine()
-	g.WithConfig(configWith(quiet, on(portB)))
+	x := New().WithConfig(configWith(quiet, on(portA)))
+	x.Engine()
+	x.WithConfig(configWith(quiet, on(portB)))
 
-	serving(t, g, portA)
+	serving(t, x, portA)
 }
 
 func TestStart_SignalArrivesBeforeStart(t *testing.T) {
 	// 照常监听的话，服务会在「已经收到停止信号」之后才起来，
 	// 然后一直跑到框架等超时为止
 	port := testkit.FreePort(t)
-	g := New().WithConfig(configWith(quiet, on(port)))
-	if err := g.Stop(context.Background()); err != nil {
+	x := New().WithConfig(configWith(quiet, on(port)))
+	if err := x.Stop(context.Background()); err != nil {
 		t.Fatalf("还没启动就 Stop 不该报错：%v", err)
 	}
 
 	done := make(chan error, 1)
-	go func() { done <- g.Start(context.Background()) }()
+	go func() { done <- x.Start(context.Background()) }()
 	select {
 	case err := <-done:
 		if err != nil {
@@ -745,7 +907,6 @@ func TestStart_SignalArrivesBeforeStart(t *testing.T) {
 		t.Fatal("Stop 之后 Start 不该真的开始监听")
 	}
 
-	// 确认端口上真的没人监听
 	if conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), 200*time.Millisecond); err == nil {
 		conn.Close()
 		t.Error("服务不该起来")
@@ -754,11 +915,12 @@ func TestStart_SignalArrivesBeforeStart(t *testing.T) {
 
 func TestStart_RepeatedStartFails(t *testing.T) {
 	port := testkit.FreePort(t)
-	g := New().WithConfig(configWith(quiet, on(port)))
-	serving(t, g, port)
+	x := New().WithConfig(configWith(quiet, on(port)))
+	serving(t, x, port)
 
-	if err := g.Start(context.Background()); err == nil {
-		t.Error("重复启动应当报错")
+	err := x.Start(context.Background())
+	if err == nil || xerror.Module(err) != "xecho" {
+		t.Errorf("重复启动应当报 xecho 的错，got=%v", err)
 	}
 }
 
@@ -768,27 +930,20 @@ func TestStop_SafeWithoutStart(t *testing.T) {
 	}
 }
 
-// servingWithHungRequest 起一个服务，并让一个请求挂在 handler 里不返回，
-// 这样 Shutdown 必须等它 —— 才测得出等多久
-func servingWithHungRequest(t *testing.T) *XGin {
-	g, _ := servingWithHungRequestDone(t)
-	return g
-}
-
-// servingWithHungRequestDone 同上，另外返回一个在「那个挂住的请求结束时」
-// 关闭的 channel —— 强制断连有没有生效，只有它看得出来
-func servingWithHungRequestDone(t *testing.T) (*XGin, <-chan struct{}) {
+// servingWithHungRequestDone 起一个服务，并让一个请求挂在 handler 里不返回；
+// 返回一个在「那个挂住的请求结束时」关闭的 channel——强制断连有没有生效，只有它看得出来
+func servingWithHungRequestDone(t *testing.T) (*XEcho, <-chan struct{}) {
 	t.Helper()
 	port := testkit.FreePort(t)
 
 	release := make(chan struct{})
 	t.Cleanup(func() { close(release) })
 
-	g := New().WithConfig(configWith(quiet, on(port))).WithRoutes(func(e *gin.Engine) {
-		e.GET("/ping", func(c *gin.Context) { c.Status(200) })
-		e.GET("/hang", func(c *gin.Context) { <-release; c.Status(200) })
+	x := New().WithConfig(configWith(quiet, on(port))).WithRoutes(func(e *echo.Echo) {
+		e.GET("/ping", ok)
+		e.GET("/hang", func(c echo.Context) error { <-release; return c.NoContent(200) })
 	})
-	go g.Start(context.Background())
+	go x.Start(context.Background())
 	base := fmt.Sprintf("http://127.0.0.1:%d", port)
 	waitServing(t, base+"/ping")
 
@@ -801,18 +956,17 @@ func servingWithHungRequestDone(t *testing.T) (*XGin, <-chan struct{}) {
 	}()
 	// 等这个请求真的到了 handler 里，否则 Shutdown 可能在它之前就走完了
 	time.Sleep(100 * time.Millisecond)
-	return g, hung
+	return x, hung
 }
 
-// stopWithin 带 200ms 的截止时间调 Stop，3s 还没返回就判失败。
-// 在另一个协程里调：Stop 不听截止时间的话会一直挂在那个请求上，测试不能跟着挂死
-func stopWithin(t *testing.T, g *XGin) error {
+// stopWithin 带 200ms 的截止时间调 Stop，3s 还没返回就判失败
+func stopWithin(t *testing.T, x *XEcho) error {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
 
 	done := make(chan error, 1)
-	go func() { done <- g.Stop(ctx) }()
+	go func() { done <- x.Stop(ctx) }()
 	select {
 	case err := <-done:
 		return err
@@ -823,23 +977,17 @@ func stopWithin(t *testing.T, g *XGin) error {
 }
 
 func TestStop_HonorsCallerDeadline(t *testing.T) {
-	// 回归用例。等多久只看调用方的 ctx，xone.Run 给的是服务那一段停止预算。
-	// 这里曾经用 context.WithoutCancel 换掉它，于是会实打实地等满自己的上限——
-	// 「所有组件共享一份预算」就成了一句空话
-	g := servingWithHungRequest(t)
-	if err := stopWithin(t, g); err == nil {
+	// 等多久只看调用方的 ctx，xone.Run 给的是服务那一段停止预算
+	x, _ := servingWithHungRequestDone(t)
+	if err := stopWithin(t, x); err == nil {
 		t.Error("在途请求没做完就到点了，该如实报错")
 	}
 }
 
 func TestStop_ForceClosesInFlightConnsAfterTimeout(t *testing.T) {
-	// Shutdown 超时只返回错误，它不动那些连接。就这么走的话 handler 还在跑，
-	// 而框架紧接着就去关数据库和缓存了——那些请求会摸到已经关掉的连接池。
-	//
-	// 只看端口连不连得上是测不出来的：Shutdown 一进去就把监听关了，
-	// 连不上是两种情况共有的表现。要看的是那个在途请求有没有被断掉。
-	g, hung := servingWithHungRequestDone(t)
-	if err := stopWithin(t, g); err == nil {
+	// Shutdown 超时只返回错误，它不动那些连接；要看的是那个在途请求有没有被断掉
+	x, hung := servingWithHungRequestDone(t)
+	if err := stopWithin(t, x); err == nil {
 		t.Fatal("在途请求没做完就到点了，该报错")
 	}
 
@@ -851,20 +999,20 @@ func TestStop_ForceClosesInFlightConnsAfterTimeout(t *testing.T) {
 }
 
 func TestStop_WaitsForHandlersAfterForceClose(t *testing.T) {
-	// Close 只关连接、取消请求的 ctx，handler 所在的协程照跑。原先 Close 完就返回，
-	// 看到 ctx 取消、正在收尾的 handler 还没返回，框架就接着去关数据库了。
-	// 截止时间也不能被 Shutdown 用满：得给断连之后的这段收尾留出时间
+	// Close 只关连接、取消请求的 ctx，handler 所在的协程照跑：
+	// Stop 得等正在收尾的 handler 真正返回
 	port := testkit.FreePort(t)
 	var returned atomic.Bool
-	g := New().WithConfig(configWith(quiet, on(port))).WithRoutes(func(e *gin.Engine) {
-		e.GET("/ping", func(c *gin.Context) { c.Status(200) })
-		e.GET("/hang", func(c *gin.Context) {
-			<-c.Request.Context().Done()
+	x := New().WithConfig(configWith(quiet, on(port))).WithRoutes(func(e *echo.Echo) {
+		e.GET("/ping", ok)
+		e.GET("/hang", func(c echo.Context) error {
+			<-c.Request().Context().Done()
 			time.Sleep(50 * time.Millisecond) // 收尾：回滚事务、写审计……
 			returned.Store(true)
+			return nil
 		})
 	})
-	go g.Start(context.Background())
+	go x.Start(context.Background())
 	base := fmt.Sprintf("http://127.0.0.1:%d", port)
 	waitServing(t, base+"/ping")
 	go func() {
@@ -874,12 +1022,10 @@ func TestStop_WaitsForHandlersAfterForceClose(t *testing.T) {
 	}()
 	time.Sleep(100 * time.Millisecond) // 等请求真的进了 handler
 
-	// 预算的 20% 留给断连之后的收尾（shutdownCtx）：2s 的预算留 400ms，是这里 50ms 收尾的 8 倍。
-	// 原先给 500ms、只留 100ms：-race 加上别的包并行跑时调度一慢就不够，-count=3 下三次挂两次。
-	// 实测正常负载下 Stop 在 Shutdown 到点后约 50ms 返回；余量是留给调度抖动的
+	// 预算的 20% 留给断连之后的收尾（shutdownCtx）：2s 的预算留 400ms，是这里 50ms 收尾的 8 倍
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	err := g.Stop(ctx)
+	err := x.Stop(ctx)
 	if !returned.Load() {
 		t.Fatal("Stop 返回时 handler 还没返回——框架接着就会去关数据库")
 	}
@@ -891,54 +1037,48 @@ func TestStop_WaitsForHandlersAfterForceClose(t *testing.T) {
 func TestStop_HandlerIgnoringCtxReportsRemainingCount(t *testing.T) {
 	// Go 没有从外面终止协程的办法，不看 ctx 的 handler 断连之后照跑。
 	// 框架停不下它，但至少要如实说出来，不能让人以为已经停干净了
-	g := servingWithHungRequest(t)
-	err := stopWithin(t, g)
-	if err == nil || !strings.Contains(err.Error(), "1 handler(s) still running") {
-		t.Errorf("该报出还有 1 个 handler 没返回，got=%v", err)
+	x, _ := servingWithHungRequestDone(t)
+	err := stopWithin(t, x)
+	if err == nil || !strings.Contains(err.Error(), "1 handler(s) still running") || xerror.Module(err) != "xecho" {
+		t.Errorf("该是 xecho 报的、还有 1 个 handler 没返回，got=%v", err)
 	}
 }
 
 // ---- 读配置文件 ----
 
 func TestEngine_UsesFinalConfigEvenBeforeRun(t *testing.T) {
-	// 使用者在 main 顶上建好 XGin、调 Engine()（比如为了挂 Swagger），之后才 xone.Run。
-	// 曾经那时配置还没加载，TrustedProxies 和 MaxMultipartMemory 只好推迟到 Start
-	// 才落到 engine 上，单独拿 Engine() 去用的只拿得到默认值。现在配置在第一次读的
-	// 时候才加载：New 在前、配置文件就位在后，装配时读到的照样是最终值
-	g := New().WithRoutes(echoClientIP)
-	testkit.UseConfigEnv(t, "XGin:\n  TrustedProxies: [10.0.0.0/8]\n  MaxMultipartMemory: 1048576\n  Metric: false\n")
+	// 使用者在 main 顶上建好 XEcho、调 Engine()，之后才 xone.Run：
+	// 配置在第一次读的时候才加载，New 在前、配置文件就位在后，装配时读到的照样是最终值
+	x := New().WithRoutes(echoClientIP)
+	testkit.UseConfigEnv(t, "XEcho:\n  TrustedProxies: [203.0.113.0/24]\n  Metric: false\n")
 
-	if got := clientIPOf(t, g.Engine(), "10.0.0.5:1234"); got != "1.2.3.4" {
+	if got := clientIPOf(t, x.Engine(), "203.0.113.9:1234"); got != "1.2.3.4" {
 		t.Errorf("配置里的 TrustedProxies 没生效，client_ip=%q", got)
 	}
-	if got := g.Engine().MaxMultipartMemory; got != 1<<20 {
-		t.Errorf("配置里的 MaxMultipartMemory 没生效，got=%d", got)
-	}
-	if w := doRequest(t, g.Engine(), "GET", "/metrics"); w.Code == 200 {
+	if w := doRequest(t, x.Engine(), "GET", "/metrics"); w.Code == 200 {
 		t.Error("配置里关掉了指标，不该有 /metrics")
 	}
 }
 
 func TestEngine_InvalidConfigFallsBackToSafeDefaults(t *testing.T) {
-	// 照样给一个 engine（使用者可能在 Run 之前就拿了它），但按默认值装：
+	// 照样给一个 echo（使用者可能在 Run 之前就拿了它），但按默认值装：
 	// 解到一半的非法配置里，TrustedProxies 可能正是 0.0.0.0/0。错误由 Start 报，不监听
-	testkit.UseConfigEnv(t, "XGin:\n  Port: 0\n  TrustedProxies: [0.0.0.0/0]\n")
-	g := New().WithRoutes(echoClientIP)
-	if got := clientIPOf(t, g.Engine(), "203.0.113.9:1234"); got != "203.0.113.9" {
+	testkit.UseConfigEnv(t, "XEcho:\n  Port: 0\n  TrustedProxies: [0.0.0.0/0]\n")
+	x := New().WithRoutes(echoClientIP)
+	if got := clientIPOf(t, x.Engine(), "203.0.113.9:1234"); got != "203.0.113.9" {
 		t.Errorf("配置不合法时该退回默认值（只信私有网段），公网对端的转发头不该认，client_ip=%q", got)
 	}
 
-	err := startErr(t, g)
-	if xerror.Module(err) != "xgin" || !xerror.Is(err, "xconfig") || !strings.Contains(err.Error(), "Port") {
-		t.Errorf("该是 xgin 报的、裹着配置文件那一块的错误，got=%v", err)
+	err := startErr(t, x)
+	if xerror.Module(err) != "xecho" || !xerror.Is(err, "xconfig") || !strings.Contains(err.Error(), "Port") {
+		t.Errorf("该是 xecho 报的、裹着配置文件那一块的错误，got=%v", err)
 	}
 }
 
 func TestCurrentConfig_AlwaysReadsConfigSection(t *testing.T) {
-	// 不用等 xone.Run：第一次读的时候才加载配置文件，读到的就是最终值
-	testkit.UseConfigEnv(t, "XGin:\n  Port: 18080\n  Mode: debug\n  Log: false\n")
+	testkit.UseConfigEnv(t, "XEcho:\n  Port: 18080\n  Log: false\n")
 	c := CurrentConfig()
-	if c.Port != 18080 || c.Mode != "debug" || c.Log {
+	if c.Port != 18080 || c.Log {
 		t.Errorf("该读到配置文件里的值，got=%+v", c)
 	}
 	if c.Host != "0.0.0.0" || !c.Metric {
@@ -947,29 +1087,26 @@ func TestCurrentConfig_AlwaysReadsConfigSection(t *testing.T) {
 }
 
 func TestCurrentConfig_ReturnsDefaultsWhenSectionInvalid(t *testing.T) {
-	// 错误由 xone.Run 在启动时报（见 TestLoadConfig_StartupFailsOnInvalidValue）。
 	// 这里返回的东西会被拿去 WithConfig，必须是安全的：解到一半的非法配置不算
-	testkit.UseConfigEnv(t, "XGin:\n  Port: 0\n  TrustedProxies: [0.0.0.0/0]\n")
+	testkit.UseConfigEnv(t, "XEcho:\n  Port: 0\n  TrustedProxies: [0.0.0.0/0]\n")
 	if got := CurrentConfig(); !reflect.DeepEqual(got, DefaultConfig()) {
 		t.Errorf("该退回默认值，got=%+v", got)
 	}
 }
 
 func TestLoadConfig_StartupFailsOnFieldTypo(t *testing.T) {
-	// 拼错的字段在启动阶段就该被拦下，否则使用者会一直以为自己配上了
-	testkit.UseConfigEnv(t, "XGin:\n  Prot: 8080\n")
+	testkit.UseConfigEnv(t, "XEcho:\n  Prot: 8080\n")
 	if err := loadConfig(context.Background()); err == nil {
 		t.Fatal("字段拼错应当让启动失败")
 	}
 }
 
 func TestLoadConfig_StartupFailsOnInvalidValue(t *testing.T) {
-	// 端口越界、TLS 只配一半、指标路径写错，原先要等到服务 Start 才报。
 	// Config 实现了 Validate，解码时就一起查了，于是 StageServer 的这个钩子让启动当场失败
 	for name, yml := range map[string]string{
-		"端口越界":        "XGin:\n  Port: 70000\n",
-		"只配一半的 TLS":   "XGin:\n  CertFile: cert.pem\n",
-		"指标路径不以 / 开头": "XGin:\n  MetricPath: metrics\n",
+		"端口越界":        "XEcho:\n  Port: 70000\n",
+		"只配一半的 TLS":   "XEcho:\n  CertFile: cert.pem\n",
+		"指标路径不以 / 开头": "XEcho:\n  MetricPath: metrics\n",
 	} {
 		testkit.UseConfigEnv(t, yml)
 		if err := loadConfig(context.Background()); err == nil {
@@ -978,11 +1115,17 @@ func TestLoadConfig_StartupFailsOnInvalidValue(t *testing.T) {
 	}
 }
 
+func TestLoadConfig_EmptyTrustedProxiesInFileTrustsNone(t *testing.T) {
+	// 配置文件写 [] 得真的换成空列表，而不是解码时被当成「没写」留下默认的 private
+	testkit.UseConfigEnv(t, "XEcho:\n  TrustedProxies: []\n")
+	if got := clientIPOf(t, New().WithRoutes(echoClientIP).Engine(), "10.0.0.5:1234"); got != "10.0.0.5" {
+		t.Errorf("配置文件写了 [] 就该谁都不信，got=%q", got)
+	}
+}
+
 func TestWithConfig_TwoInstancesListenOnOwnPorts(t *testing.T) {
-	// 没有 WithConfig 时两个实例读的是同一块配置，只能监听同一个端口——
-	// 「需要两套配置时也有出路」这条承诺对 xgin 就是假的。
 	// 配置文件里那一块留在默认端口上，证明两个实例谁都没按它监听
-	testkit.UseConfigEnv(t, "XGin:\n  Port: 8080\n")
+	testkit.UseConfigEnv(t, "XEcho:\n  Port: 8080\n")
 
 	portA, portB := testkit.FreePort(t), testkit.FreePort(t)
 	for _, s := range []struct {
@@ -993,10 +1136,10 @@ func TestWithConfig_TwoInstancesListenOnOwnPorts(t *testing.T) {
 		c.Host, c.Port = "127.0.0.1", s.port
 		quiet(&c)
 		body := s.body
-		g := New().WithConfig(c).WithRoutes(func(e *gin.Engine) {
-			e.GET("/who", func(c *gin.Context) { c.String(200, body) })
+		x := New().WithConfig(c).WithRoutes(func(e *echo.Echo) {
+			e.GET("/who", func(c echo.Context) error { return c.String(200, body) })
 		})
-		serving(t, g, s.port)
+		serving(t, x, s.port)
 	}
 
 	for _, c := range []struct {
@@ -1015,15 +1158,24 @@ func TestWithConfig_TwoInstancesListenOnOwnPorts(t *testing.T) {
 	}
 }
 
-func TestWithConfig_FollowsConfigFileWhenOmitted(t *testing.T) {
-	// 默认路径：端口、开关都来自配置文件里的 XGin 块
-	port := testkit.FreePort(t)
-	testkit.UseConfigEnv(t, fmt.Sprintf("XGin:\n  Host: 127.0.0.1\n  Port: %d\n  Log: false\n  Metric: false\n", port))
+func TestWithConfig_InstancesKeepTheirOwnTrustedProxies(t *testing.T) {
+	// IPExtractor 是每个 echo 实例自己的（不像 gin.SetMode 是进程级的）：两份配置各管各的
+	a := New().WithConfig(configWith(quiet, func(c *Config) { c.TrustedProxies = []string{} })).WithRoutes(echoClientIP).Engine()
+	b := New().WithConfig(configWith(quiet)).WithRoutes(echoClientIP).Engine()
+	if got := clientIPOf(t, a, "10.0.0.5:1"); got != "10.0.0.5" {
+		t.Errorf("实例 A 谁都不信，got=%q", got)
+	}
+	if got := clientIPOf(t, b, "10.0.0.5:1"); got != "1.2.3.4" {
+		t.Errorf("实例 B 信私有网段，got=%q", got)
+	}
+}
 
-	g := New().WithRoutes(func(e *gin.Engine) {
-		e.GET("/ping", func(c *gin.Context) { c.Status(200) })
-	})
-	serving(t, g, port)
+func TestWithConfig_FollowsConfigFileWhenOmitted(t *testing.T) {
+	port := testkit.FreePort(t)
+	testkit.UseConfigEnv(t, fmt.Sprintf("XEcho:\n  Host: 127.0.0.1\n  Port: %d\n  Log: false\n  Metric: false\n", port))
+
+	x := New().WithRoutes(func(e *echo.Echo) { e.GET("/ping", ok) })
+	serving(t, x, port)
 }
 
 // ---- 登记 ----
@@ -1031,24 +1183,24 @@ func TestWithConfig_FollowsConfigFileWhenOmitted(t *testing.T) {
 func TestRegister_OnlyReadsConfigNoStopHook(t *testing.T) {
 	var got *hook.Entry
 	for _, e := range hook.Start() {
-		if e.Pkg == "github.com/xiaoshicae/xone/xgin" {
+		if e.Pkg == "github.com/xiaoshicae/xone/xecho" {
 			got = &e
 		}
 	}
 	if got == nil {
-		t.Fatal("没有登记启动钩子，XGin 那一块就没人认领、配错了也要等到 Start 才报")
+		t.Fatal("没有登记启动钩子，XEcho 那一块就没人认领、配错了也要等到 Start 才报")
 	}
 	if got.Stage != hook.StageServer {
 		t.Errorf("服务应在最后一档，got=%v", got.Stage)
 	}
 	for _, e := range hook.Stop() {
-		if e.Pkg == "github.com/xiaoshicae/xone/xgin" {
+		if e.Pkg == "github.com/xiaoshicae/xone/xecho" {
 			t.Error("服务由使用者交给 xone.Run 启停，不该在这里登记停止钩子")
 		}
 	}
 }
 
-func TestXGin_ImplementsRunnable(t *testing.T) {
+func TestXEcho_ImplementsRunnable(t *testing.T) {
 	// 结构化满足即可，不 import 根包——「集成不依赖框架」这条要在编译层面成立
 	var _ interface {
 		Start(context.Context) error
@@ -1056,14 +1208,8 @@ func TestXGin_ImplementsRunnable(t *testing.T) {
 	} = New()
 }
 
-func TestSensitiveFieldsAPI(t *testing.T) {
-	// 打开 body 日志之前要能把自定义敏感字段补上
-	middleware.AddSensitiveFields("x_custom")
-	middleware.AddSensitiveHeaders("X-Custom")
-}
-
-// doRequest 对 engine 发一次请求
-func doRequest(t *testing.T, e *gin.Engine, method, path string) *httptest.ResponseRecorder {
+// doRequest 对 echo 发一次请求
+func doRequest(t *testing.T, e *echo.Echo, method, path string) *httptest.ResponseRecorder {
 	t.Helper()
 	w := httptest.NewRecorder()
 	e.ServeHTTP(w, httptest.NewRequest(method, path, nil))
@@ -1085,15 +1231,11 @@ func waitServing(t *testing.T, url string) {
 }
 
 func TestBuild_MetricsKeptWhenEngineFetchedFirst(t *testing.T) {
-	// 回归用例。装配时如果就把 xmetric 的 registry 抓走，而那时 xmetric
-	// 还没初始化，指标会被注册到一个永远不会被导出的兜底 registry 上：
-	// 请求正常处理、指标正常记录、/metrics 里什么都没有，且没有任何迹象。
-	g := New().WithConfig(DefaultConfig()).WithRoutes(func(e *gin.Engine) {
-		e.GET("/x", func(c *gin.Context) { c.Status(200) })
-	})
-	e := g.Engine() // 使用者在 Run 之前拿一下 engine，很自然的写法
+	// 装配时如果就把 xmetric 的 registry 抓走，而那时 xmetric 还没初始化，
+	// 指标会被注册到一个永远不会被导出的兜底 registry 上
+	x := New().WithConfig(DefaultConfig()).WithRoutes(func(e *echo.Echo) { e.GET("/x", ok) })
+	e := x.Engine() // 使用者在 Run 之前拿一下 echo，很自然的写法
 
-	// 此后框架才初始化 xmetric（StageTelemetry 在 StageServer 之前）
 	m, closer, err := xmetric.New(xmetric.Config{Namespace: "demo"})
 	if err != nil {
 		t.Fatal(err)
@@ -1103,10 +1245,8 @@ func TestBuild_MetricsKeptWhenEngineFetchedFirst(t *testing.T) {
 
 	e.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", "/x", nil))
 
-	w := httptest.NewRecorder()
-	m.Handler.ServeHTTP(w, httptest.NewRequest("GET", "/metrics", nil))
-	if !strings.Contains(w.Body.String(), "demo_http_requests_total") {
-		t.Errorf("指标应记在初始化之后的 registry 上\n实际=\n%s", w.Body.String())
+	if out := testkit.Scrape(m.Handler); !strings.Contains(out, "demo_http_requests_total") {
+		t.Errorf("指标应记在初始化之后的 registry 上\n实际=\n%s", out)
 	}
 }
 
@@ -1121,10 +1261,8 @@ func TestBuild_MetricsEndpointOKWhenEngineFetchedFirst(t *testing.T) {
 	defer closer.Close()
 	m.Install()
 
-	// 先打一个请求产出指标，再抓 /metrics
 	e.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", "/nope", nil))
-	w := httptest.NewRecorder()
-	e.ServeHTTP(w, httptest.NewRequest("GET", "/metrics", nil))
+	w := doRequest(t, e, "GET", "/metrics")
 
 	if !strings.Contains(w.Body.String(), "demo_http_requests_total") {
 		t.Errorf("/metrics 应导出当前生效的 registry\n实际=\n%s", w.Body.String())
@@ -1132,50 +1270,20 @@ func TestBuild_MetricsEndpointOKWhenEngineFetchedFirst(t *testing.T) {
 }
 
 func TestBuild_MetricsEndpointRunsUserMiddleware(t *testing.T) {
-	// gin 在注册路由那一刻就把处理链定死了。指标端点原先注册在
-	// e.Use(g.extra...) 之前，于是 WithMiddleware 挂的统一鉴权
-	// 对业务路由生效、对 /metrics 不生效——一个以为被保护的端点其实敞着
-	auth := func(c *gin.Context) { c.AbortWithStatus(http.StatusUnauthorized) }
+	// WithMiddleware 挂的统一鉴权对业务路由、指标端点、没匹配上的路径都生效：
+	// 一个以为被保护起来的端点不能是敞开的
+	auth := func(echo.HandlerFunc) echo.HandlerFunc {
+		return func(echo.Context) error { return echo.ErrUnauthorized }
+	}
 
 	e := New().WithConfig(configWith(func(c *Config) { c.Log = false })).
 		WithMiddleware(auth).
-		WithRoutes(func(e *gin.Engine) {
-			e.GET("/biz", func(c *gin.Context) { c.Status(200) })
-		}).Engine()
+		WithRoutes(func(e *echo.Echo) { e.GET("/biz", ok) }).Engine()
 
-	for _, path := range []string{"/biz", "/metrics"} {
-		w := httptest.NewRecorder()
-		e.ServeHTTP(w, httptest.NewRequest("GET", path, nil))
-		if w.Code != http.StatusUnauthorized {
+	for _, path := range []string{"/biz", "/metrics", "/nope"} {
+		if w := doRequest(t, e, "GET", path); w.Code != http.StatusUnauthorized {
 			t.Errorf("%s 该被鉴权中间件拦住，got=%d", path, w.Code)
 		}
-	}
-}
-
-// ---- applyConfig ----
-
-func TestApplyConfig_FallsBackToTrustNoneOnProxyError(t *testing.T) {
-	// gin 的默认是全都信，于是任何人发一个 X-Forwarded-For 就能决定
-	// 访问日志里的 client_ip。它的解析行为是「解到出错为止、把已经解出来的
-	// 留下」，所以列表前半段会被留着信任——必须整个退到安全的那一侧。
-	//
-	// 非法项前面要先放一个合法网段：只放非法项的话，gin 留下的是空列表，
-	// 两种实现看起来一模一样，这条用例就什么都没在测
-	e := gin.New()
-	e.GET("/", func(c *gin.Context) { c.String(200, c.ClientIP()) })
-
-	c := DefaultConfig()
-	c.TrustedProxies = []string{"10.0.0.0/8", "not-an-ip"} // Validate 会拦，这里直接绕过它
-	applyConfig(e, c)
-
-	req := httptest.NewRequest("GET", "/", nil)
-	req.RemoteAddr = "10.0.0.1:1234" // 落在前半段那个网段里
-	req.Header.Set("X-Forwarded-For", "1.2.3.4")
-	w := httptest.NewRecorder()
-	e.ServeHTTP(w, req)
-
-	if w.Body.String() != "10.0.0.1" {
-		t.Errorf("设置出错时应当谁都不信、用直连地址，got=%q", w.Body.String())
 	}
 }
 
@@ -1194,26 +1302,28 @@ func (trustProbe) Inject(context.Context, propagation.TextMapCarrier) {}
 func (trustProbe) Fields() []string                                   { return nil }
 
 // probeTrust 装上 trustProbe，返回「这次请求的对端被当成可信了吗」
-func probeTrust(t *testing.T) func(e *gin.Engine, remote string) bool {
+func probeTrust(t *testing.T) func(e *echo.Echo, remote string) bool {
 	t.Helper()
 	old := otel.GetTextMapPropagator()
 	t.Cleanup(func() { otel.SetTextMapPropagator(old) })
 	var got atomic.Bool
 	otel.SetTextMapPropagator(trustProbe{got: &got})
 
-	return func(e *gin.Engine, remote string) bool {
+	return func(e *echo.Echo, remote string) bool {
 		got.Store(false)
 		req := httptest.NewRequest("GET", "/", nil)
 		req.RemoteAddr = remote
+		// 可信与否只看直连对端，不看 c.RealIP()：可信对端转发来的公网地址不该让它变得不可信，
+		// 公网对端也不能靠转发头冒充成自己人
+		req.Header.Set("X-Forwarded-For", "1.2.3.4")
 		e.ServeHTTP(httptest.NewRecorder(), req)
 		return got.Load()
 	}
 }
 
 func TestBuild_PassthroughHeadersOnlyFromTrustedProxies(t *testing.T) {
-	// 回归用例。透传 Header 原先从任何入站请求里都照单全收：公网客户端发一个
-	// X-Tenant-Id / X-Internal-Token，就被当成自己人给的，带进内网的每一次调用。
-	// 「谁是自己人」用的是信任代理的那张表，不另设开关
+	// 透传 Header 照单全收的话：公网客户端发一个 X-Tenant-Id / X-Internal-Token，
+	// 就被当成自己人给的，带进内网的每一次调用。「谁是自己人」用的是信任代理的那张表
 	trusted := probeTrust(t)
 	e := New().WithConfig(configWith(quiet, func(c *Config) {
 		c.TrustedProxies = []string{"10.0.0.0/8", "192.168.1.7"}
@@ -1257,24 +1367,20 @@ func TestBuild_PassthroughHeadersOnlyFromPrivateByDefault(t *testing.T) {
 	}
 }
 
-func TestLoadConfig_EmptyTrustedProxiesInFileTrustsNone(t *testing.T) {
-	// 默认值预填在结构体里；配置文件写 [] 得真的换成空列表，而不是解码时被当成「没写」留下默认的 private
-	testkit.UseConfigEnv(t, "XGin:\n  TrustedProxies: []\n")
-	if got := clientIPOf(t, New().WithRoutes(echoClientIP).Engine(), "10.0.0.5:1234"); got != "10.0.0.5" {
-		t.Errorf("配置文件写了 [] 就该谁都不信，got=%q", got)
-	}
-}
-
 func TestBuild_TrustedProxiesMixesPrivateWithOtherCIDRs(t *testing.T) {
 	// 列表整体替换默认值：要在私有网段之外再加一段，把 private 一起写上
 	trusted := probeTrust(t)
 	e := New().WithConfig(configWith(quiet, func(c *Config) {
 		c.TrustedProxies = []string{"private", "203.0.113.0/24"}
-	})).Engine()
+	})).WithRoutes(echoClientIP).Engine()
 	for remote, want := range map[string]bool{"10.0.0.5:1": true, "203.0.113.9:1": true, "198.51.100.1:1": false} {
 		if got := trusted(e, remote); got != want {
 			t.Errorf("对端 %s 可信=%v，want %v", remote, got, want)
 		}
+	}
+	// client_ip 那一边同一张表
+	if got := clientIPOf(t, e, "203.0.113.9:1"); got != "1.2.3.4" {
+		t.Errorf("203.0.113.0/24 里的对端转发来的该认，got=%q", got)
 	}
 	// 写 [] 就谁都不信，透传 Header 也一样
 	none := New().WithConfig(configWith(quiet, func(c *Config) { c.TrustedProxies = []string{} })).Engine()
@@ -1284,8 +1390,7 @@ func TestBuild_TrustedProxiesMixesPrivateWithOtherCIDRs(t *testing.T) {
 }
 
 func TestBuild_TraceDisabledOnlySkipsSpan_StillPropagates(t *testing.T) {
-	// 回归用例。XGin.Trace: false 原先连 Extract 一起摘掉：可信对端发来的
-	// X-Request-Id、上游的 traceparent 都断在这一跳，而它本该只管 Span
+	// XEcho.Trace: false 只管 Span：可信对端发来的 X-Request-Id、上游的 traceparent 照样接
 	trusted := probeTrust(t)
 	off := func(c *Config) { c.Trace = false }
 	e := New().WithConfig(configWith(quiet, off, func(c *Config) {
@@ -1307,9 +1412,10 @@ func TestBuild_TraceDisabledOnlySkipsSpan_StillPropagates(t *testing.T) {
 
 	const upstream = "4bf92f3577b34da6a3ce929d0e0e4736"
 	var seen string
-	e = New().WithConfig(configWith(quiet, off)).WithRoutes(func(e *gin.Engine) {
-		e.GET("/x", func(c *gin.Context) {
-			seen = trace.SpanContextFromContext(c.Request.Context()).TraceID().String()
+	e = New().WithConfig(configWith(quiet, off)).WithRoutes(func(e *echo.Echo) {
+		e.GET("/x", func(c echo.Context) error {
+			seen = trace.SpanContextFromContext(c.Request().Context()).TraceID().String()
+			return nil
 		})
 	}).Engine()
 	req := httptest.NewRequest("GET", "/x", nil)
@@ -1338,25 +1444,25 @@ func h2cClient() *http.Client {
 }
 
 // servingH2C 起一个开了 h2c 的服务，/slow 会在 handler 里睡 d
-func servingH2C(t *testing.T, d time.Duration) (base string, g *XGin, entered, finished chan struct{}) {
+func servingH2C(t *testing.T, d time.Duration) (base string, x *XEcho, entered, finished chan struct{}) {
 	t.Helper()
 	port := testkit.FreePort(t)
 
 	entered, finished = make(chan struct{}), make(chan struct{})
-	g = New().WithConfig(configWith(quiet, on(port), func(c *Config) { c.UseH2C = true })).
-		WithRoutes(func(e *gin.Engine) {
-			e.GET("/ping", func(c *gin.Context) { c.Status(200) })
-			e.GET("/slow", func(c *gin.Context) {
+	x = New().WithConfig(configWith(quiet, on(port), func(c *Config) { c.UseH2C = true })).
+		WithRoutes(func(e *echo.Echo) {
+			e.GET("/ping", ok)
+			e.GET("/slow", func(c echo.Context) error {
 				close(entered)
 				time.Sleep(d)
 				close(finished)
-				c.String(200, "done")
+				return c.String(200, "done")
 			})
 		})
-	go g.Start(context.Background())
+	go x.Start(context.Background())
 	base = fmt.Sprintf("http://127.0.0.1:%d", port)
 	waitServing(t, base+"/ping")
-	return base, g, entered, finished
+	return base, x, entered, finished
 }
 
 type h2cResult struct {
@@ -1382,15 +1488,13 @@ func h2cGet(url string) <-chan h2cResult {
 }
 
 func TestStop_H2CWaitsForInFlightRequests(t *testing.T) {
-	// 回归用例。h2c 原先靠 x/net 的 h2c.NewHandler：连接被它劫持走，
-	// http.Server 从此不认识这些连接——实测 Shutdown 约 60µs 就返回 nil，
-	// 而一个 2s 的在途请求还在跑；Close() 同样够不着它们。
-	// 框架紧接着去关数据库，那个请求就摸到了已经关掉的连接池
-	base, g, entered, finished := servingH2C(t, time.Second)
+	// h2c 的连接也归 Shutdown 管：x/net 的 h2c.NewHandler 会把连接劫持走，
+	// Shutdown 约 60µs 就返回 nil 而在途请求照跑
+	base, x, entered, finished := servingH2C(t, time.Second)
 	got := h2cGet(base + "/slow")
 	<-entered
 
-	if err := g.Stop(context.Background()); err != nil {
+	if err := x.Stop(context.Background()); err != nil {
 		t.Fatalf("在途请求能在预算内做完，Stop 不该报错：%v", err)
 	}
 	select {
@@ -1408,13 +1512,11 @@ func TestStop_H2CWaitsForInFlightRequests(t *testing.T) {
 }
 
 func TestStop_H2CForceClosesAfterTimeout(t *testing.T) {
-	// 另一半：到点还没做完的 h2c 请求要被 Close() 断掉，
-	// 而不是在框架关掉数据库之后继续跑
-	base, g, entered, _ := servingH2C(t, 5*time.Second)
+	base, x, entered, _ := servingH2C(t, 5*time.Second)
 	got := h2cGet(base + "/slow")
 	<-entered
 
-	if err := stopWithin(t, g); err == nil {
+	if err := stopWithin(t, x); err == nil {
 		t.Fatal("在途请求没做完就到点了，该报错")
 	}
 	select {
@@ -1430,89 +1532,10 @@ func TestStop_H2CForceClosesAfterTimeout(t *testing.T) {
 func TestStart_CleartextHTTP2RejectedWithoutH2C(t *testing.T) {
 	// 开关要真的是开关：没开 UseH2C 时，明文 HTTP/2 的前言不该被接受
 	port := testkit.FreePort(t)
-	g := New().WithConfig(configWith(quiet, on(port))).WithRoutes(func(e *gin.Engine) {
-		e.GET("/ping", func(c *gin.Context) { c.Status(200) })
-	})
-	base := serving(t, g, port)
+	x := New().WithConfig(configWith(quiet, on(port))).WithRoutes(func(e *echo.Echo) { e.GET("/ping", ok) })
+	base := serving(t, x, port)
 
 	if r := <-h2cGet(base + "/ping"); r.err == nil {
 		t.Errorf("没开 UseH2C，明文 HTTP/2 不该成功，got=HTTP/%d", r.proto)
-	}
-}
-
-func TestDefault404And405_SameAsGinAndBytesOutCounted(t *testing.T) {
-	// gin 默认的 404 / 405 正文在中间件链跑完之后才写，访问日志的 bytes_out 原先记成 0；
-	// 换成在链里写之后，响应得和 gin 自己的一个字节不差
-	bare := gin.New()
-	bare.HandleMethodNotAllowed = true
-	bare.GET("/only-get", func(c *gin.Context) {})
-
-	for _, c := range []struct{ name, method, path string }{
-		{"404", "GET", "/nope"},
-		{"405", "POST", "/only-get"},
-	} {
-		buf := captureLog(t)
-		e := New().WithConfig(configWith(func(cfg *Config) { cfg.Metric, cfg.Trace = false, false })).
-			WithRoutes(func(e *gin.Engine) { e.GET("/only-get", func(c *gin.Context) {}) }).Engine()
-		got, want := httptest.NewRecorder(), httptest.NewRecorder()
-		e.ServeHTTP(got, httptest.NewRequest(c.method, c.path, nil))
-		bare.ServeHTTP(want, httptest.NewRequest(c.method, c.path, nil))
-
-		if got.Code != want.Code || got.Body.String() != want.Body.String() ||
-			got.Header().Get("Content-Type") != want.Header().Get("Content-Type") {
-			t.Errorf("%s：响应该和 gin 默认的一样，got=%d %q %q want=%d %q %q", c.name,
-				got.Code, got.Header().Get("Content-Type"), got.Body, want.Code, want.Header().Get("Content-Type"), want.Body)
-		}
-		if w := fmt.Sprintf(`"bytes_out":%d`, want.Body.Len()); !strings.Contains(buf.String(), w) {
-			t.Errorf("%s：访问日志的 bytes_out 该是正文长度 %d\n%s", c.name, want.Body.Len(), buf.String())
-		}
-	}
-}
-
-func TestNoRoute_UserHandlerStillWins(t *testing.T) {
-	// 框架的 NoRoute 注册在用户路由之前，WithRoutes 里自己设的要盖得过它
-	e := New().WithConfig(configWith(func(cfg *Config) { cfg.Metric, cfg.Trace, cfg.Log = false, false, false })).
-		WithRoutes(func(e *gin.Engine) { e.NoRoute(func(c *gin.Context) { c.String(404, "custom") }) }).Engine()
-	w := httptest.NewRecorder()
-	e.ServeHTTP(w, httptest.NewRequest("GET", "/nope", nil))
-	if w.Body.String() != "custom" {
-		t.Errorf("用户自己的 NoRoute 该生效，got=%q", w.Body)
-	}
-}
-
-func TestClientIP_SharedRuleMatchesGin(t *testing.T) {
-	// xecho 没有 gin 可用，client_ip 按 internal/web 的 Proxies.ClientIP 算；它的规则照抄 gin。
-	// 同一个服务换一个框架 client_ip 不该变，所以逐条比对 gin 自己算出来的
-	for _, proxies := range [][]string{{web.TrustPrivate}, {}, {"10.0.0.0/8", "203.0.113.7"}, {web.TrustPrivate, "203.0.113.0/24"}} {
-		e := New().WithConfig(configWith(quiet, func(c *Config) { c.TrustedProxies = proxies })).WithRoutes(echoClientIP).Engine()
-		shared := web.ParseProxies(proxies)
-		for _, remote := range []string{"203.0.113.9:1", "203.0.113.7:1", "10.0.0.5:1", "[::ffff:10.0.0.5]:1", "[::1]:1", "[2001:db8::1]:1", "junk"} {
-			for _, h := range []map[string][]string{
-				{},
-				{"X-Forwarded-For": {"1.2.3.4"}},
-				{"X-Forwarded-For": {"1.2.3.4, 10.0.0.9"}},
-				{"X-Forwarded-For": {"1.2.3.4, 5.6.7.8, 10.0.0.9"}},
-				{"X-Forwarded-For": {"10.0.0.7, 10.0.0.8"}},
-				{"X-Forwarded-For": {"1.2.3.4", "5.6.7.8"}},
-				{"X-Forwarded-For": {"junk, 10.0.0.9"}},
-				{"X-Forwarded-For": {"1.2.3.4, junk"}},
-				{"X-Forwarded-For": {"junk"}, "X-Real-Ip": {"9.9.9.9"}},
-				{"X-Real-Ip": {"9.9.9.9"}},
-				{"X-Forwarded-For": {" 1.2.3.4 ,10.0.0.9 "}},
-			} {
-				req := httptest.NewRequest("GET", "/client-ip", nil)
-				req.RemoteAddr = remote
-				for k, vs := range h {
-					for _, v := range vs {
-						req.Header.Add(k, v)
-					}
-				}
-				w := httptest.NewRecorder()
-				e.ServeHTTP(w, req)
-				if got := shared.ClientIP(req); got != w.Body.String() {
-					t.Errorf("proxies=%v remote=%s headers=%v：gin=%q web=%q", proxies, remote, h, w.Body.String(), got)
-				}
-			}
-		}
 	}
 }

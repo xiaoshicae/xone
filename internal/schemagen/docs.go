@@ -24,6 +24,7 @@ var configDocs = map[string]docSection{
 	"XHttp":       {"xhttp/README.md", "配置"},
 	"XGin":        {"xgin/README.md", "配置"},
 	"XGinSwagger": {"xginswagger/README.md", "配置"},
+	"XEcho":       {"xecho/README.md", "配置"},
 	"XFlow":       {"xflow/README.md", "配置"},
 }
 

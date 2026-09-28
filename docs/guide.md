@@ -80,7 +80,7 @@ func warmup(ctx context.Context) error {
 | `StageTelemetry` | 要早于客户端，客户端的 Span 才挂得上、指标才收得到 | xtrace、xmetric |
 | `StageClient` | 被业务依赖的客户端 | xgorm、xredis、xcache、xhttp |
 | `StageBusiness` | 你自己的业务资源：预热、定时任务、订阅。**不写 `At` 就是它** | 你的钩子 |
-| `StageServer` | 对外服务：最后起、最先关 | xgin、xginswagger（读配置） |
+| `StageServer` | 对外服务：最后起、最先关 | xgin、xecho、xginswagger（读配置） |
 
 只有必须早于或晚于别人时才写 `xhook.At(xhook.StageClient)` 之类。**同一档内的顺序是 Go 初始化包的顺序**：
 同一份代码每次都一样，但由 import 关系和包路径的字典序决定，不是 import 语句的书写顺序——有先后要求的放进不同档位。

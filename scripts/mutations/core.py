@@ -620,3 +620,19 @@ mutate("脱敏后不转义 HTML 字符", "internal/web/redact.go", ".", "TestRed
        swap('\tenc.SetEscapeHTML(false)\n', ''))
 mutate("JSON 后面跟着别的东西时整个遮掉", "internal/web/redact.go", ".", "TestRedactBody",
        swap('dec.Decode(new(any)) != io.EOF', '(dec.Decode(new(any)) != io.EOF && false)'))
+
+section("Web 集成共用：client_ip 与标签收敛")
+# xecho 的 client_ip 按这里的规则算（xgin 用 gin 自己的，两者一致由 xgin 的 TestClientIP_SharedRuleMatchesGin 比对）。
+# 规则的每一处都是 gin v1.12.0 的行为，改一处就是同一个服务换框架之后 client_ip 变了
+mutate("client_ip 从右往左停在第一个不可信的地址", "internal/web/proxy.go", ".", "TestProxies_ClientIP",
+       swap('if i == 0 || !ps.contains(ip) {', 'if i == 0 {'))
+mutate("转发头有好几行时拼成一个列表", "internal/web/proxy.go", ".", "TestProxies_ClientIP",
+       swap('ps.fromHeader(strings.Join(r.Header.Values(name), ","))', 'ps.fromHeader(r.Header.Get(name))'))
+mutate("转发头里解不出的一项之后不再往左看", "internal/web/proxy.go", ".", "TestProxies_ClientIP",
+       swap('\t\tif ip == nil {\n\t\t\tbreak\n\t\t}\n', '\t\tif ip == nil {\n\t\t\tcontinue\n\t\t}\n'))
+mutate("X-Forwarded-For 没有可用的值时看 X-Real-IP", "internal/web/proxy.go", ".", "TestProxies_ClientIP",
+       swap('var forwardedHeaders = []string{"X-Forwarded-For", "X-Real-IP"}', 'var forwardedHeaders = []string{"X-Forwarded-For"}'))
+mutate("方法收敛到固定集合", "internal/web/request.go", ".", "TestNormalizeMethod",
+       swap('\treturn MethodOther\n', '\treturn m\n'))
+mutate("认出 connection reset", "internal/web/request.go", ".", "TestIsBrokenPipe",
+       swap(' || strings.Contains(msg, "connection reset by peer")', ''))

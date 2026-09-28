@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -184,21 +183,6 @@ func TestRecover_NoOpWithoutPanic(t *testing.T) {
 	})
 	if w.Code != 201 {
 		t.Errorf("正常请求不该被干预，got=%d", w.Code)
-	}
-}
-
-func TestIsBrokenPipe(t *testing.T) {
-	// 客户端提前断开不算故障，不值得打一份完整栈
-	broken := &net.OpError{Err: &os.SyscallError{Syscall: "write", Err: errors.New("broken pipe")}}
-	if !isBrokenPipe(broken) {
-		t.Error("broken pipe 应当被认出来")
-	}
-	reset := &net.OpError{Err: &os.SyscallError{Syscall: "read", Err: errors.New("connection reset by peer")}}
-	if !isBrokenPipe(reset) {
-		t.Error("connection reset 应当被认出来")
-	}
-	if isBrokenPipe("普通 panic") || isBrokenPipe(&net.OpError{Err: errors.New("其它")}) {
-		t.Error("其它错误不该被当成断连")
 	}
 }
 

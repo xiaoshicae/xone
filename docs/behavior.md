@@ -26,6 +26,11 @@
 | [`XGin.MaxMultipartMemory`](../xgin/README.md#行为与实测) | 32MB | 8MB | 它是落盘阈值不是请求体上限，堆开销约为它的三倍 |
 | [`XGin.ReadHeaderTimeout: 0`](../xgin/README.md#行为与实测) | 退到 `ReadTimeout`（默认 0），即不限时 | 启动失败 | 发半个请求头就能一直占着连接 |
 | [`XGin.UseH2C`](../xgin/README.md#行为与实测) | x/net 的 `h2c.NewHandler` | 标准库的 `Protocols.SetUnencryptedHTTP2` | 前者劫持连接，`Shutdown` 管不到在途请求 |
+| [`XEcho.TrustedProxies`](../xecho/README.md#行为与实测) | `IPExtractor` 为 nil：`X-Forwarded-For` / `X-Real-IP` 谁发来的都信 | 只信私有网段（`private`），算法同 xgin | 实测公网对端发 `X-Forwarded-For: 1.2.3.4`，`c.RealIP()` 就是 `1.2.3.4` |
+| [`XEcho` 错误响应](../xecho/README.md#行为与实测) | 整条中间件链返回之后才由 `HTTPErrorHandler` 渲染 | 内置中间件在自己这一层渲染 | 否则 404 / 405 / 500 在访问日志、指标、链路里都是 `bytes_out` 为 0 的 200 |
+| [`XEcho` panic](../xecho/README.md#行为与实测) | 不兜：连接断掉，栈由 net/http 写 stderr | 兜住，记 ERROR 日志、回 500 | 栈进不了日志平台，客户端只看到 EOF |
+| [`XEcho` 服务器超时](../xecho/README.md#行为与实测) | `e.Server` 四个超时全是 0 | 不用 `e.Start`，同 `XGin` 的四个超时 | 同 `XGin.ReadHeaderTimeout` |
+| [echo 自己的日志](../xecho/README.md#行为与实测) | gommon 写 `os.Stdout`，自己的 JSON 格式 | 接到 slog，级别不变 | 绕开 slog 的输出进不了日志平台 |
 | [`XGorm.Log: false`](../xgorm/README.md#行为与实测) | 换成 GORM 自己的 stdout logger | 真的不打 | 那个默认实现带 ANSI 颜色直写 `os.Stdout` |
 | [`XGorm.Log: true`](../xgorm/README.md#行为与实测) | 参数值代进 SQL 再记 | 只记带占位符的 SQL | 否则 `WHERE password = ?` 记下来的是真实的密码 |
 | [`XGorm` 建连](../xgorm/README.md#行为与实测) | `gorm.Open` 自己 ping 一次 | 关掉，走框架的 ctx-aware 探测 | 它用自己的 context，退出信号和重试都管不到 |
@@ -44,7 +49,7 @@
 | [`XHttp` 的 cookie](../xhttp/README.md#行为与实测) | `resty.New()` 自带 cookie jar | 没有 | 不相干的调用会共享别人种下的会话 cookie |
 | [`XHttp` 出站 Span](../xhttp/README.md#行为与实测) | `url.full` 带查询串 | 去掉查询串，Span 名只用方法 | 令牌不进链路后端，Span 名基数有界 |
 | [`XHttp` 重试条件](../xhttp/README.md#行为与实测) | 挂上条件后 resty 自己的判断作废 | 只重试传输层错误 | 否则 200 + 坏 JSON 也会重试 |
-| [`XTrace` 透传与 baggage](../xtrace/README.md#行为与实测) | 入站的值照单全收 | 只收直连对端在 `XGin.TrustedProxies` 里的 | 否则公网客户端能伪造 `X-Tenant-Id` 带进内网 |
+| [`XTrace` 透传与 baggage](../xtrace/README.md#行为与实测) | 入站的值照单全收 | 只收直连对端在 `XGin.TrustedProxies`（`XEcho.TrustedProxies`）里的 | 否则公网客户端能伪造 `X-Tenant-Id` 带进内网 |
 | [`XTrace` 采样](../xtrace/README.md#行为与实测) | `AlwaysSample` 无视上游 | `ParentBased`，有上游时听上游 | 否则上游 `sampled=00` 被改成 `-01` 往下传 |
 | [`XMetric.Namespace`](../xmetric/README.md#行为与实测) | 不合规的名字导出时转义 | 读配置时失败 | 否则看板按你写的名字查不到 |
 
@@ -77,6 +82,7 @@ XGorm、XRedis 启动时各探一次，共用同一份实现（`internal/xclient
 | [xcache](../xcache/README.md#行为与实测) | ristretto：内部开销、停止、指标开销、TTL |
 | [xhttp](../xhttp/README.md#行为与实测) | resty / otelhttp / 标准库 Transport 的默认 |
 | [xgin](../xgin/README.md#行为与实测) | gin / net/http：代理、上传、超时、h2c、TLS、优雅退出 |
+| [xecho](../xecho/README.md#行为与实测) | echo：client_ip、错误渲染、路由模板、panic、gommon 日志、multipart 阈值、路由的严格匹配 |
 | [xmetric](../xmetric/README.md#行为与实测) | client_golang：桶、名字、常量标签 |
 | [xtrace](../xtrace/README.md#行为与实测) | OTel SDK：采样、service.name、透传 |
 | [xlog](../xlog/README.md#行为与实测) | `Perm`、轮转文件名、时区 |

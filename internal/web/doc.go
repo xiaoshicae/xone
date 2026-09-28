@@ -1,4 +1,4 @@
-// Package web 是 Web 集成（xgin，以及之后别的 Web 框架）共用的、与框架无关的那一半。
+// Package web 是 Web 集成（xgin、xecho）共用的、与框架无关的那一半。
 //
 // 一个 Web 集成要做的事里，有一大半跟用的是哪个框架没有关系：
 //

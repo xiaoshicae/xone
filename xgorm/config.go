@@ -112,6 +112,32 @@ type ClientConfig struct {
 	// IgnoreNotFound 是否不把「没查到记录」当错误记日志。默认 false。
 	IgnoreNotFound bool `yaml:"IgnoreNotFound"`
 
+	// DisableForeignKeyConstraintWhenMigrating AutoMigrate 建表时不建外键约束。默认 false，即 GORM 的默认：按模型里的关联建外键。
+	//
+	// 只影响迁移建表，查询和关联照常：实测 GORM v1.31.2 + PostgreSQL 16，Owner has many Order 的两张表，
+	// 默认建出 fk_owners_orders，插一条 owner_id 不存在的 order 被拒；开着时不建外键，这条照样插进去，
+	// Preload("Orders") 照常查得出来。引用完整性从此由你的代码保证。已经建好的外键不会被删。
+	DisableForeignKeyConstraintWhenMigrating bool `yaml:"DisableForeignKeyConstraintWhenMigrating"`
+
+	// SkipDefaultTransaction 单条的 Create / Update / Delete 不再自动包一层事务。默认 false（GORM 的默认：包）。
+	//
+	// 省掉的是 BEGIN / COMMIT 两个来回：实测本机回环、500 次单条 Create，PostgreSQL 16 每次约 500µs → 230µs，
+	// MySQL 8.0 约 1.0ms → 0.9ms。代价是 BeforeCreate 这类钩子里的写和主语句不再同进退；显式的 Transaction 不受影响。
+	SkipDefaultTransaction bool `yaml:"SkipDefaultTransaction"`
+
+	// PrepareStmt 把执行过的 SQL 缓存成预编译语句，后面同样的 SQL 直接复用。默认 false。
+	//
+	// 实测本机回环、2000 次同一条带参数的查询：MySQL 8.0 每次约 180µs → 94µs（不开时驱动每条都要
+	// prepare / execute / close 三个来回），PostgreSQL 16 约 100µs → 85µs（pgx 本来就缓存语句，差别不大）。
+	// 缓存上限和过期用 GORM 的默认值（不限条数、1h）。经 PgBouncer 这类连接池中间件时（尤其 transaction 模式），先在那套环境里量过再开。
+	PrepareStmt bool `yaml:"PrepareStmt"`
+
+	// CreateBatchSize Create 一个切片时每条 INSERT 最多带几行。默认 0：整个切片一条 INSERT。
+	//
+	// 实测 10 行、配 3：PostgreSQL 和 MySQL 都发 4 条 INSERT（3+3+3+1），10 行都写进去。
+	// 切片很大时用它避开单条 SQL 的参数上限（PostgreSQL 65535 个）和包大小上限（MySQL max_allowed_packet）。
+	CreateBatchSize int `yaml:"CreateBatchSize"`
+
 	// Trace 是否挂 OpenTelemetry 插件。默认开启。
 	//
 	// 没装链路时它产出的是 noop Span，代价可以忽略，所以默认就开着。
@@ -231,6 +257,9 @@ func (c ClientConfig) Validate() error {
 	}
 	if c.MaxIdleConns < 0 {
 		return fmt.Errorf("MaxIdleConns must not be negative, got=%d", c.MaxIdleConns)
+	}
+	if c.CreateBatchSize < 0 {
+		return fmt.Errorf("CreateBatchSize must not be negative, got=%d", c.CreateBatchSize)
 	}
 	// 负的时长没有一个说得通的含义，而且底下每一处都把它静默变成「不限」：
 	// database/sql 把负的 MaxLifetime / MaxIdleTime 当成与 0 相同的「不按时长关连接」；

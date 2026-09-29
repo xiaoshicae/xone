@@ -521,6 +521,14 @@
         {
           "type": "object",
           "properties": {
+            "CreateBatchSize": {
+              "type": [
+                "integer",
+                "string"
+              ],
+              "description": "Create 一个切片时每条 INSERT 最多带几行。默认 0：整个切片一条 INSERT。 实测 10 行、配 3：PostgreSQL 和 MySQL 都发 4 条 INSERT（3+3+3+1），10 行都写进去。 切片很大时用它避开单条 SQL 的参数上限（PostgreSQL 65535 个）和包大小上限（MySQL max_allowed_packet）。",
+              "pattern": "\\$\\{"
+            },
             "DSN": {
               "type": "string",
               "description": "连接串，必填。 建议写成 \"${DB_DSN}\"：凭证不该进版本库，漏配时启动就失败。 MySQL 的 DSN 里没写 parseTime 的，补成 parseTime=true：驱动默认 false， DATETIME 扫不进 time.Time（实测 go-sql-driver v1.10.1，带 CreatedAt 的模型 First 一次就报 unsupported Scan）。写了的以 DSN 为准。"
@@ -528,6 +536,14 @@
             "DialTimeout": {
               "type": "string",
               "description": "建连超时。默认 500ms。 MySQL 注入 DSN 的 timeout，PostgreSQL 注入 connect_timeout（向上取整为秒）。 配 0 就不注入、用驱动自己的（两个驱动都是不限时）。不能为负，下面的时长都是。（时长，写成 30s / 1500ms / 1h30m 这种形式；写裸数字会启动失败）"
+            },
+            "DisableForeignKeyConstraintWhenMigrating": {
+              "type": [
+                "boolean",
+                "string"
+              ],
+              "description": "AutoMigrate 建表时不建外键约束。默认 false，即 GORM 的默认：按模型里的关联建外键。 只影响迁移建表，查询和关联照常：实测 GORM v1.31.2 + PostgreSQL 16，Owner has many Order 的两张表， 默认建出 fk_owners_orders，插一条 owner_id 不存在的 order 被拒；开着时不建外键，这条照样插进去， Preload(\"Orders\") 照常查得出来。引用完整性从此由你的代码保证。已经建好的外键不会被删。",
+              "pattern": "\\$\\{"
             },
             "Driver": {
               "type": "string",
@@ -622,6 +638,22 @@
               },
               "additionalProperties": false
             },
+            "PrepareStmt": {
+              "type": [
+                "boolean",
+                "string"
+              ],
+              "description": "把执行过的 SQL 缓存成预编译语句，后面同样的 SQL 直接复用。默认 false。 实测本机回环、2000 次同一条带参数的查询：MySQL 8.0 每次约 180µs → 94µs（不开时驱动每条都要 prepare / execute / close 三个来回），PostgreSQL 16 约 100µs → 85µs（pgx 本来就缓存语句，差别不大）。 缓存上限和过期用 GORM 的默认值（不限条数、1h）。经 PgBouncer 这类连接池中间件时（尤其 transaction 模式），先在那套环境里量过再开。",
+              "pattern": "\\$\\{"
+            },
+            "SkipDefaultTransaction": {
+              "type": [
+                "boolean",
+                "string"
+              ],
+              "description": "单条的 Create / Update / Delete 不再自动包一层事务。默认 false（GORM 的默认：包）。 省掉的是 BEGIN / COMMIT 两个来回：实测本机回环、500 次单条 Create，PostgreSQL 16 每次约 500µs → 230µs， MySQL 8.0 约 1.0ms → 0.9ms。代价是 BeforeCreate 这类钩子里的写和主语句不再同进退；显式的 Transaction 不受影响。",
+              "pattern": "\\$\\{"
+            },
             "SlowThreshold": {
               "type": "string",
               "description": "超过这个耗时的 SQL 记一条 warn 日志。默认 3s，需 Log 开启，配 0 不记。（时长，写成 30s / 1500ms / 1h30m 这种形式；写裸数字会启动失败）"
@@ -677,6 +709,14 @@
               "additionalProperties": {
                 "type": "object",
                 "properties": {
+                  "CreateBatchSize": {
+                    "type": [
+                      "integer",
+                      "string"
+                    ],
+                    "description": "Create 一个切片时每条 INSERT 最多带几行。默认 0：整个切片一条 INSERT。 实测 10 行、配 3：PostgreSQL 和 MySQL 都发 4 条 INSERT（3+3+3+1），10 行都写进去。 切片很大时用它避开单条 SQL 的参数上限（PostgreSQL 65535 个）和包大小上限（MySQL max_allowed_packet）。",
+                    "pattern": "\\$\\{"
+                  },
                   "DSN": {
                     "type": "string",
                     "description": "连接串，必填。 建议写成 \"${DB_DSN}\"：凭证不该进版本库，漏配时启动就失败。 MySQL 的 DSN 里没写 parseTime 的，补成 parseTime=true：驱动默认 false， DATETIME 扫不进 time.Time（实测 go-sql-driver v1.10.1，带 CreatedAt 的模型 First 一次就报 unsupported Scan）。写了的以 DSN 为准。"
@@ -684,6 +724,14 @@
                   "DialTimeout": {
                     "type": "string",
                     "description": "建连超时。默认 500ms。 MySQL 注入 DSN 的 timeout，PostgreSQL 注入 connect_timeout（向上取整为秒）。 配 0 就不注入、用驱动自己的（两个驱动都是不限时）。不能为负，下面的时长都是。（时长，写成 30s / 1500ms / 1h30m 这种形式；写裸数字会启动失败）"
+                  },
+                  "DisableForeignKeyConstraintWhenMigrating": {
+                    "type": [
+                      "boolean",
+                      "string"
+                    ],
+                    "description": "AutoMigrate 建表时不建外键约束。默认 false，即 GORM 的默认：按模型里的关联建外键。 只影响迁移建表，查询和关联照常：实测 GORM v1.31.2 + PostgreSQL 16，Owner has many Order 的两张表， 默认建出 fk_owners_orders，插一条 owner_id 不存在的 order 被拒；开着时不建外键，这条照样插进去， Preload(\"Orders\") 照常查得出来。引用完整性从此由你的代码保证。已经建好的外键不会被删。",
+                    "pattern": "\\$\\{"
                   },
                   "Driver": {
                     "type": "string",
@@ -777,6 +825,22 @@
                       }
                     },
                     "additionalProperties": false
+                  },
+                  "PrepareStmt": {
+                    "type": [
+                      "boolean",
+                      "string"
+                    ],
+                    "description": "把执行过的 SQL 缓存成预编译语句，后面同样的 SQL 直接复用。默认 false。 实测本机回环、2000 次同一条带参数的查询：MySQL 8.0 每次约 180µs → 94µs（不开时驱动每条都要 prepare / execute / close 三个来回），PostgreSQL 16 约 100µs → 85µs（pgx 本来就缓存语句，差别不大）。 缓存上限和过期用 GORM 的默认值（不限条数、1h）。经 PgBouncer 这类连接池中间件时（尤其 transaction 模式），先在那套环境里量过再开。",
+                    "pattern": "\\$\\{"
+                  },
+                  "SkipDefaultTransaction": {
+                    "type": [
+                      "boolean",
+                      "string"
+                    ],
+                    "description": "单条的 Create / Update / Delete 不再自动包一层事务。默认 false（GORM 的默认：包）。 省掉的是 BEGIN / COMMIT 两个来回：实测本机回环、500 次单条 Create，PostgreSQL 16 每次约 500µs → 230µs， MySQL 8.0 约 1.0ms → 0.9ms。代价是 BeforeCreate 这类钩子里的写和主语句不再同进退；显式的 Transaction 不受影响。",
+                    "pattern": "\\$\\{"
                   },
                   "SlowThreshold": {
                     "type": "string",

@@ -8,6 +8,11 @@
 
 ## [未发布]
 
+### 新增
+
+- xgorm 新增配置项 `DisableForeignKeyConstraintWhenMigrating`（默认 false）：设为 true 时 `AutoMigrate` 建表不建外键约束，查询和 `Preload` 不受影响；已经建好的外键不会被删。
+- xgorm 新增配置项 `SkipDefaultTransaction`、`PrepareStmt`（默认都是 false）和 `CreateBatchSize`（默认 0，负数启动失败），原样交给 GORM，默认值与 GORM 相同，不配的行为不变。
+
 ## [v1.16.0] - 2026-09-28
 
 ### 不兼容变更

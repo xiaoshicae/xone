@@ -721,3 +721,44 @@ func TestNew_DialectDecidesAuthFailureRecognition(t *testing.T) {
 		t.Errorf("方言认不出就照常重试，calls=%d err=%v", calls, err)
 	}
 }
+
+func TestNew_GormOptionsReachGorm(t *testing.T) {
+	// 这几项原样交给 gorm.Config：不配是 GORM 的默认，配了就是配的那个值
+	for _, on := range []bool{false, true} {
+		t.Run(fmt.Sprint(on), func(t *testing.T) {
+			var got *gorm.Config
+			withDialect(t, Dialect{
+				Name: "cfgprobe",
+				Open: func(string) gorm.Dialector { return configDialector{seen: &got} },
+			})
+			c := DefaultClientConfig()
+			c.Driver, c.DSN = "cfgprobe", "cfgprobe://h:1/d"
+			c.DisableForeignKeyConstraintWhenMigrating, c.SkipDefaultTransaction, c.PrepareStmt = on, on, on
+			if on {
+				c.CreateBatchSize = 7
+			}
+			New(context.Background(), c)
+			if got == nil {
+				t.Fatal("dialector 没被调到")
+			}
+			if got.DisableForeignKeyConstraintWhenMigrating != on || got.SkipDefaultTransaction != on ||
+				got.PrepareStmt != on || got.CreateBatchSize != c.CreateBatchSize {
+				t.Errorf("配置该原样交给 GORM：DisableForeignKeyConstraintWhenMigrating=%v SkipDefaultTransaction=%v PrepareStmt=%v CreateBatchSize=%d，want %v / %v / %v / %d",
+					got.DisableForeignKeyConstraintWhenMigrating, got.SkipDefaultTransaction, got.PrepareStmt, got.CreateBatchSize,
+					on, on, on, c.CreateBatchSize)
+			}
+		})
+	}
+}
+
+// configDialector 在 Initialize 里记下 GORM 最终拿到的配置，然后让 Open 失败
+type configDialector struct {
+	loggingDialector
+	seen **gorm.Config
+}
+
+func (d configDialector) Initialize(db *gorm.DB) error {
+	cp := *db.Config
+	*d.seen = &cp
+	return errors.New("stop after recording config")
+}

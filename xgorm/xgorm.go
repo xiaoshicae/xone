@@ -83,7 +83,13 @@ func open(ctx context.Context, name string, cfg ClientConfig) (*gorm.DB, io.Clos
 	// 其余几项 GORM 的默认值原样保留，量过，理由见 xgorm/README.md「通用」：
 	// SkipDefaultTransaction=false（每次写多两个往返，换来钩子失败时整体回滚）、
 	// PrepareStmt=false、NowFunc 用本地时间、TranslateError=false。
-	gormCfg := &gorm.Config{DisableAutomaticPing: true}
+	gormCfg := &gorm.Config{
+		DisableAutomaticPing:                     true,
+		DisableForeignKeyConstraintWhenMigrating: cfg.DisableForeignKeyConstraintWhenMigrating,
+		SkipDefaultTransaction:                   cfg.SkipDefaultTransaction,
+		PrepareStmt:                              cfg.PrepareStmt,
+		CreateBatchSize:                          cfg.CreateBatchSize,
+	}
 	if cfg.Log {
 		gormCfg.Logger = newGormLogger(cfg, dialect, dialector)
 	} else {

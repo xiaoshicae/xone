@@ -6,8 +6,8 @@ require (
 	github.com/ClickHouse/ch-go v0.74.0
 	github.com/ClickHouse/clickhouse-go/v2 v2.48.0
 	github.com/hashicorp/go-version v1.9.0
-	github.com/xiaoshicae/xone v1.16.0
-	github.com/xiaoshicae/xone/xgorm v1.16.0
+	github.com/xiaoshicae/xone v1.17.0
+	github.com/xiaoshicae/xone/xgorm v1.17.0
 	gorm.io/driver/clickhouse v0.7.0
 	gorm.io/gorm v1.31.2
 )
@@ -39,8 +39,8 @@ require (
 	github.com/prometheus/procfs v0.21.1 // indirect
 	github.com/segmentio/asm v1.2.1 // indirect
 	github.com/shopspring/decimal v1.4.0 // indirect
-	github.com/xiaoshicae/xone/xmetric v1.16.0 // indirect
-	github.com/xiaoshicae/xone/xtrace v1.16.0 // indirect
+	github.com/xiaoshicae/xone/xmetric v1.17.0 // indirect
+	github.com/xiaoshicae/xone/xtrace v1.17.0 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/contrib/propagators/b3 v1.46.0 // indirect
 	go.opentelemetry.io/otel v1.46.0 // indirect

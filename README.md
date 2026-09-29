@@ -20,7 +20,7 @@
 **1. 安装**（核心 Go 1.23+，集成 Go 1.25+；所有模块共用一个版本号，写同一个）
 
 ```bash
-go get github.com/xiaoshicae/xone@v1.16.0 github.com/xiaoshicae/xone/xgin@v1.16.0
+go get github.com/xiaoshicae/xone@v1.17.0 github.com/xiaoshicae/xone/xgin@v1.17.0
 ```
 
 升级时同样把用到的每个 xone 模块都列上、写同一个版本号，如

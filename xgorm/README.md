@@ -52,6 +52,7 @@ XGorm:
   Log: false               # 把 SQL 接到 slog，默认关；只记占位符，不记参数值
   SlowThreshold: 3s        # 超过就记 warn，需 Log 开启；0 = 不记
   IgnoreNotFound: false    # true：「没查到记录」不记 SQL failed 日志（Log 开着时）；返回的错误不变
+  DisableForeignKeyConstraintWhenMigrating: false  # true：AutoMigrate 建表时不建外键约束；查询、Preload 不受影响
   Trace: true              # 每条 SQL 一个 Span
   Metric: true             # 连接池指标 db_pool_*，按实例生效
   MySQL:                   # 仅 Driver: mysql 生效
@@ -166,6 +167,10 @@ GORM v1.31.2。
 
 **不给 Logger 不等于不打日志**：GORM 会补上它自己的默认实现，带 ANSI 颜色直写 `os.Stdout`。
 `Log: false` 时这里换成真的什么都不写的 Logger。
+
+**`AutoMigrate` 默认按关联建外键。** 实测 PostgreSQL 16，`Owner` has many `Order` 两张表建出 `fk_owners_orders`，
+插一条 `owner_id` 不存在的 `order` 被拒。`DisableForeignKeyConstraintWhenMigrating: true` 时不建外键，这条照样插进去，
+`Preload("Orders")` 照常查得出来。它只管建表那一刻，已经建好的外键不会被删。
 
 **SQL 日志里的参数值。** GORM 的 Logger 不实现 `ParamsFilter` 时把真实参数代进 SQL。
 xgorm 的 Logger 实现了它，记的是带占位符的 SQL（MySQL 是 `?`，PostgreSQL 是 `$1`；

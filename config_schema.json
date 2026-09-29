@@ -529,6 +529,14 @@
               "type": "string",
               "description": "建连超时。默认 500ms。 MySQL 注入 DSN 的 timeout，PostgreSQL 注入 connect_timeout（向上取整为秒）。 配 0 就不注入、用驱动自己的（两个驱动都是不限时）。不能为负，下面的时长都是。（时长，写成 30s / 1500ms / 1h30m 这种形式；写裸数字会启动失败）"
             },
+            "DisableForeignKeyConstraintWhenMigrating": {
+              "type": [
+                "boolean",
+                "string"
+              ],
+              "description": "AutoMigrate 建表时不建外键约束。默认 false，即 GORM 的默认：按模型里的关联建外键。 只影响迁移建表，查询和关联照常：实测 GORM v1.31.2 + PostgreSQL 16，Owner has many Order 的两张表， 默认建出 fk_owners_orders，插一条 owner_id 不存在的 order 被拒；开着时不建外键，这条照样插进去， Preload(\"Orders\") 照常查得出来。引用完整性从此由你的代码保证。已经建好的外键不会被删。",
+              "pattern": "\\$\\{"
+            },
             "Driver": {
               "type": "string",
               "description": "驱动：mysql / postgres。默认 postgres。 其余驱动住在自己的 module 里，匿名 import 即可注册"
@@ -684,6 +692,14 @@
                   "DialTimeout": {
                     "type": "string",
                     "description": "建连超时。默认 500ms。 MySQL 注入 DSN 的 timeout，PostgreSQL 注入 connect_timeout（向上取整为秒）。 配 0 就不注入、用驱动自己的（两个驱动都是不限时）。不能为负，下面的时长都是。（时长，写成 30s / 1500ms / 1h30m 这种形式；写裸数字会启动失败）"
+                  },
+                  "DisableForeignKeyConstraintWhenMigrating": {
+                    "type": [
+                      "boolean",
+                      "string"
+                    ],
+                    "description": "AutoMigrate 建表时不建外键约束。默认 false，即 GORM 的默认：按模型里的关联建外键。 只影响迁移建表，查询和关联照常：实测 GORM v1.31.2 + PostgreSQL 16，Owner has many Order 的两张表， 默认建出 fk_owners_orders，插一条 owner_id 不存在的 order 被拒；开着时不建外键，这条照样插进去， Preload(\"Orders\") 照常查得出来。引用完整性从此由你的代码保证。已经建好的外键不会被删。",
+                    "pattern": "\\$\\{"
                   },
                   "Driver": {
                     "type": "string",

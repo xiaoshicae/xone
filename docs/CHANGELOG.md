@@ -8,6 +8,10 @@
 
 ## [未发布]
 
+### 新增
+
+- xgorm 新增配置项 `DisableForeignKeyConstraintWhenMigrating`（默认 false）：设为 true 时 `AutoMigrate` 建表不建外键约束，查询和 `Preload` 不受影响；已经建好的外键不会被删。
+
 ## [v1.16.0] - 2026-09-28
 
 ### 不兼容变更

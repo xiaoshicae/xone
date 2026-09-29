@@ -112,6 +112,13 @@ type ClientConfig struct {
 	// IgnoreNotFound 是否不把「没查到记录」当错误记日志。默认 false。
 	IgnoreNotFound bool `yaml:"IgnoreNotFound"`
 
+	// DisableForeignKeyConstraintWhenMigrating AutoMigrate 建表时不建外键约束。默认 false，即 GORM 的默认：按模型里的关联建外键。
+	//
+	// 只影响迁移建表，查询和关联照常：实测 GORM v1.31.2 + PostgreSQL 16，Owner has many Order 的两张表，
+	// 默认建出 fk_owners_orders，插一条 owner_id 不存在的 order 被拒；开着时不建外键，这条照样插进去，
+	// Preload("Orders") 照常查得出来。引用完整性从此由你的代码保证。已经建好的外键不会被删。
+	DisableForeignKeyConstraintWhenMigrating bool `yaml:"DisableForeignKeyConstraintWhenMigrating"`
+
 	// Trace 是否挂 OpenTelemetry 插件。默认开启。
 	//
 	// 没装链路时它产出的是 noop Span，代价可以忽略，所以默认就开着。

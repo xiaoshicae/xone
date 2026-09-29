@@ -721,3 +721,34 @@ func TestNew_DialectDecidesAuthFailureRecognition(t *testing.T) {
 		t.Errorf("方言认不出就照常重试，calls=%d err=%v", calls, err)
 	}
 }
+
+func TestNew_DisableForeignKeyConstraintReachesGorm(t *testing.T) {
+	// 配置项要真的交到 gorm.Config 上：AutoMigrate 建不建外键只看它
+	for _, disable := range []bool{false, true} {
+		t.Run(fmt.Sprint(disable), func(t *testing.T) {
+			var got *bool
+			withDialect(t, Dialect{
+				Name: "fkprobe",
+				Open: func(string) gorm.Dialector { return configDialector{seen: &got} },
+			})
+			c := DefaultClientConfig()
+			c.Driver, c.DSN, c.DisableForeignKeyConstraintWhenMigrating = "fkprobe", "fkprobe://h:1/d", disable
+			New(context.Background(), c)
+			if got == nil || *got != disable {
+				t.Errorf("DisableForeignKeyConstraintWhenMigrating=%v 该原样交给 GORM，got=%v", disable, got)
+			}
+		})
+	}
+}
+
+// configDialector 在 Initialize 里记下 GORM 最终拿到的配置，然后让 Open 失败
+type configDialector struct {
+	loggingDialector
+	seen **bool
+}
+
+func (d configDialector) Initialize(db *gorm.DB) error {
+	v := db.Config.DisableForeignKeyConstraintWhenMigrating
+	*d.seen = &v
+	return errors.New("stop after recording config")
+}

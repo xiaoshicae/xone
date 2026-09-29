@@ -64,7 +64,7 @@
   <line x1="720.5" y1="187.0" x2="733.5" y2="187.0" class="edge" marker-end="url(#arrow)"/>
   <rect x="873.0" y="150" width="121.5" height="74" rx="6" class="st"/>
   <text x="933.8" y="172" font-size="13" font-weight="700" text-anchor="middle" class="st-t">Server</text>
-  <text x="933.8" y="190" font-size="10.5" text-anchor="middle" class="st-m">xgin</text>
+  <text x="933.8" y="190" font-size="10.5" text-anchor="middle" class="st-m">xgin · xecho</text>
   <text x="933.8" y="205" font-size="10.5" text-anchor="middle" class="st-m">xginswagger</text>
   <line x1="858.0" y1="187.0" x2="871.0" y2="187.0" class="edge" marker-end="url(#arrow)"/>
   <rect x="1010.5" y="150" width="121.5" height="74" rx="6" class="run"/>
@@ -87,7 +87,7 @@
   <line x1="216.3" y1="413.0" x2="229.3" y2="413.0" class="edge" marker-end="url(#arrow)"/>
   <rect x="414.7" y="376" width="167.3" height="74" rx="6" class="dn"/>
   <text x="498.3" y="398" font-size="13" font-weight="700" text-anchor="middle" class="dn-t">Runnable.Stop</text>
-  <text x="498.3" y="416" font-size="10.5" text-anchor="middle" class="dn-m">可选；xgin 在这里</text>
+  <text x="498.3" y="416" font-size="10.5" text-anchor="middle" class="dn-m">可选；xgin / xecho 在这里</text>
   <text x="498.3" y="431" font-size="10.5" text-anchor="middle" class="dn-m">等在途请求做完</text>
   <line x1="399.7" y1="413.0" x2="412.7" y2="413.0" class="edge" marker-end="url(#arrow)"/>
   <rect x="598.0" y="376" width="167.3" height="74" rx="6" class="dn"/>

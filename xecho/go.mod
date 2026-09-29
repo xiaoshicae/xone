@@ -13,9 +13,9 @@ replace (
 require (
 	github.com/labstack/echo/v4 v4.16.0
 	github.com/prometheus/client_golang v1.24.1
-	github.com/xiaoshicae/xone v1.16.0
-	github.com/xiaoshicae/xone/xmetric v1.16.0
-	github.com/xiaoshicae/xone/xtrace v1.16.0
+	github.com/xiaoshicae/xone v1.17.0
+	github.com/xiaoshicae/xone/xmetric v1.17.0
+	github.com/xiaoshicae/xone/xtrace v1.17.0
 	go.opentelemetry.io/otel v1.46.0
 	go.opentelemetry.io/otel/sdk v1.46.0
 	go.opentelemetry.io/otel/trace v1.46.0

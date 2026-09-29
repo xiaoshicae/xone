@@ -169,6 +169,8 @@ func TestValidate(t *testing.T) {
 		"驱动不认识":            func(c *ClientConfig) { c.Driver = "oracle" },
 		"MaxOpenConns 为 0": func(c *ClientConfig) { c.MaxOpenConns = 0 },
 		"MaxIdleConns 为负":  func(c *ClientConfig) { c.MaxIdleConns = -1 },
+		// GORM 只在 > 0 时分批，负数静默变成「不分批」
+		"CreateBatchSize 为负": func(c *ClientConfig) { c.CreateBatchSize = -1 },
 		// 负的时长底下每一处都静默变成「不限」：go-sql-driver 的 FormatDSN 只写 > 0 的超时，
 		// database/sql 把负的存活时间当成 0
 		"DialTimeout 为负":               func(c *ClientConfig) { c.DialTimeout = -time.Second },

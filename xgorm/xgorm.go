@@ -86,6 +86,9 @@ func open(ctx context.Context, name string, cfg ClientConfig) (*gorm.DB, io.Clos
 	gormCfg := &gorm.Config{
 		DisableAutomaticPing:                     true,
 		DisableForeignKeyConstraintWhenMigrating: cfg.DisableForeignKeyConstraintWhenMigrating,
+		SkipDefaultTransaction:                   cfg.SkipDefaultTransaction,
+		PrepareStmt:                              cfg.PrepareStmt,
+		CreateBatchSize:                          cfg.CreateBatchSize,
 	}
 	if cfg.Log {
 		gormCfg.Logger = newGormLogger(cfg, dialect, dialector)

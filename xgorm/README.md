@@ -53,6 +53,9 @@ XGorm:
   SlowThreshold: 3s        # 超过就记 warn，需 Log 开启；0 = 不记
   IgnoreNotFound: false    # true：「没查到记录」不记 SQL failed 日志（Log 开着时）；返回的错误不变
   DisableForeignKeyConstraintWhenMigrating: false  # true：AutoMigrate 建表时不建外键约束；查询、Preload 不受影响
+  SkipDefaultTransaction: false  # true：单条 Create / Update / Delete 不自动包事务
+  PrepareStmt: false       # true：缓存预编译语句；经 PgBouncer 这类连接池时先量过再开
+  CreateBatchSize: 0       # Create 切片时每条 INSERT 最多几行，0 = 整个切片一条
   Trace: true              # 每条 SQL 一个 Span
   Metric: true             # 连接池指标 db_pool_*，按实例生效
   MySQL:                   # 仅 Driver: mysql 生效
@@ -171,6 +174,12 @@ GORM v1.31.2。
 **`AutoMigrate` 默认按关联建外键。** 实测 PostgreSQL 16，`Owner` has many `Order` 两张表建出 `fk_owners_orders`，
 插一条 `owner_id` 不存在的 `order` 被拒。`DisableForeignKeyConstraintWhenMigrating: true` 时不建外键，这条照样插进去，
 `Preload("Orders")` 照常查得出来。它只管建表那一刻，已经建好的外键不会被删。
+
+**三个性能相关的开关**（本机回环，量级参考，不是基准）：
+- `SkipDefaultTransaction`：500 次单条 Create，PostgreSQL 16 每次约 500µs → 230µs，MySQL 8.0 约 1.0ms → 0.9ms。
+- `PrepareStmt`：2000 次同一条带参数的查询，MySQL 约 180µs → 94µs（不开时驱动每条 prepare / execute / close 三个来回），
+  PostgreSQL 约 100µs → 85µs（pgx 本来就缓存语句）。
+- `CreateBatchSize: 3` 插 10 行：两种数据库都发 4 条 INSERT；默认 0 是 1 条。
 
 **SQL 日志里的参数值。** GORM 的 Logger 不实现 `ParamsFilter` 时把真实参数代进 SQL。
 xgorm 的 Logger 实现了它，记的是带占位符的 SQL（MySQL 是 `?`，PostgreSQL 是 `$1`；

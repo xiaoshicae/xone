@@ -57,8 +57,17 @@ mutate("DSN 里写了时区就不垫时区", "xgorm/dsn.go", "./xgorm", "TestRes
        swap('\tskipTimeZone := gormTimeZone.MatchString(dsn)\n', '\tskipTimeZone := false\n'))
 mutate("首次建连受 ctx 管", "xgorm/xgorm.go", "./xgorm", "TestNew",
        swap('\t\tDisableAutomaticPing:                     true,\n', ''))
-mutate("DisableForeignKeyConstraintWhenMigrating 交给 GORM", "xgorm/xgorm.go", "./xgorm", "TestNew_DisableForeignKeyConstraintReachesGorm",
+# 原样交给 gorm.Config 的几项，每一项在调用点上各改坏一次
+mutate("DisableForeignKeyConstraintWhenMigrating 交给 GORM", "xgorm/xgorm.go", "./xgorm", "TestNew_GormOptionsReachGorm",
        swap('DisableForeignKeyConstraintWhenMigrating: cfg.DisableForeignKeyConstraintWhenMigrating,', 'DisableForeignKeyConstraintWhenMigrating: false,'))
+mutate("SkipDefaultTransaction 交给 GORM", "xgorm/xgorm.go", "./xgorm", "TestNew_GormOptionsReachGorm",
+       swap('SkipDefaultTransaction:                   cfg.SkipDefaultTransaction,', 'SkipDefaultTransaction:                   false,'))
+mutate("PrepareStmt 交给 GORM", "xgorm/xgorm.go", "./xgorm", "TestNew_GormOptionsReachGorm",
+       swap('PrepareStmt:                              cfg.PrepareStmt,', 'PrepareStmt:                              false,'))
+mutate("CreateBatchSize 交给 GORM", "xgorm/xgorm.go", "./xgorm", "TestNew_GormOptionsReachGorm",
+       swap('CreateBatchSize:                          cfg.CreateBatchSize,', 'CreateBatchSize:                          0,'))
+mutate("CreateBatchSize 为负启动失败", "xgorm/config.go", "./xgorm", "TestValidate",
+       swap('if c.CreateBatchSize < 0 {', 'if false {'))
 # 驱动的初始化查询挪到 Ready 里，就是为了受 ctx 管、跟着重试。调用点不接的话，
 # 那次查询就没人做了
 mutate("方言的 Ready 在建连探测里执行", "xgorm/xgorm.go", "./xgorm", "TestNew",

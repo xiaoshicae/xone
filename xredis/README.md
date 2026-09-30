@@ -108,12 +108,14 @@ XRedis:
 |---|---|---|
 | `xredis connected` | INFO | `name`、`addr`、`db`、`tls`、`min_idle_conns` |
 | `xredis ready` | INFO | `instances` |
-| `redis command` / `slow redis command` / `redis command failed` | INFO / WARN / WARN | `name`（实例名）、`cmd`（命令名，小写）、`key`（第一个 key，认不准的命令不带）、`elapsed_ms`；key 超过 256 字节时截断并带 `key_truncated`；key 不存在时 `nil: true`（仍是 INFO）；慢命令带 `threshold_ms`；失败时 `error`、`error_code`（需 `XRedis.Log: true`） |
-| `redis pipeline` / `slow redis pipeline` / `redis pipeline failed` | INFO / WARN / WARN | `name`、`count`（命令数）、`cmds`（前 10 个命令名）、`elapsed_ms`；失败时是第一个不是 nil 的错误的 `error`、`error_code`（需 `XRedis.Log: true`） |
+| `redis command` / `slow redis command` / `redis command failed` | INFO / WARN / WARN | `name`（实例名）、`cmd`（命令名，小写；不像命令名的记 `<invalid>`）、`key`（第一个 key，认不准的命令不带）、`elapsed_ms`（含等连接池、新连接的拨号和 `HELLO`）；key 超过 256 字节时截断并带 `key_truncated`；key 不存在时 `nil: true`（仍是 INFO）；慢命令带 `threshold_ms`；失败时 `error`、`error_code`（需 `XRedis.Log: true`） |
+| `redis pipeline` / `slow redis pipeline` / `redis pipeline failed` | INFO / WARN / WARN | `name`、`count`（命令数，`TxPipelined` 的含 `MULTI` 和 `EXEC`）、`cmds`（前 10 个命令名）、`elapsed_ms`；WATCH 冲突时 `tx_failed: true`（仍是 INFO）；失败时是第一个不是 nil 的错误的 `error`、`error_code`（需 `XRedis.Log: true`） |
 
 命令日志**只记命令名和第一个 key**：值、其余参数一律不记；`AUTH`、`HELLO`、`MIGRATE`、`CONFIG` 这类参数里可能有凭证的命令只记命令名。
-失败时 `error` 只写 `redis server error <错误码> (message omitted, …)`，错误码另见 `error_code`，原文不记（原文会把参数带出来，见[「行为与实测」](#行为与实测)）；
-超时、连不上这类客户端一侧的错误照原文记。返回给调用方的错误不变。
+**key 是整条记的**（超过 256 字节才截断）：开着 `Log` 时别把令牌、手机号、邮箱拼进 key，它们会跟着 key 进日志。
+服务端报的错，`error` 只写 `redis server error <错误码> (message omitted, …)`，错误码另见 `error_code`，原文不记（原文会把参数带出来，见[「行为与实测」](#行为与实测)）；
+客户端一侧的错误——超时、连不上、连接断开、`context canceled`、`redis: client is closed`、连接池超时——照原文记。
+失败优先：又慢又失败的记 `… failed`，不另记慢。返回给调用方的错误不变。
 
 日志的全局约定（`trace_id` 注入、`xlog.AddKV`、框架的启停日志）见 [`docs/observability.md`](../docs/observability.md#日志)。
 
@@ -186,7 +188,9 @@ xredis 把 `DialerRetries` 固定成 1，同样的场景默认配置 2.1s、`Max
 | `XRead(... Streams: {"stream:1", "0"})` | `cmd: xread`、`key: stream:1` |
 | `Do(ctx, "auth", <密码>)` | `cmd: auth`，除命令名什么都不记 |
 | `Incr` 一个不是数字的值 | `redis command failed`（WARN），`error_code: ERR` |
-| pipeline：`Set`、`Get`（不存在）、`Incr` | 一行 `redis pipeline`，`count: 3`、`cmds: [set get incr]`；`TxPipelined` 的 `cmds` 里带着 `multi` / `exec` |
+| pipeline：`Set`、`Get`（不存在）、`Incr` | 一行 `redis pipeline`，`count: 3`、`cmds: [set get incr]`；`TxPipelined` 的 `count` 和 `cmds` 里都算上 `multi` / `exec`（一条 `Set` 是 `count: 3`、`cmds: [multi set exec]`） |
+| `Do(ctx, "SET k1 <值>")`（整条命令塞进一个参数） | `redis command failed`，`cmd: <invalid>`：go-redis 的命令名就是第 1 个参数原样转小写，不校验不截断，不修正的话记出来是 `cmd: "set k1 <值>"`。只认 `^[a-z][a-z0-9._\|-]{0,63}$`，模块命令（`json.set`）照记；pipeline 的 `cmds` 同样 |
+| `Watch` 里别人先改了 key，`TxPipelined` 返回 `redis.TxFailedErr` | 一行 INFO 的 `redis pipeline`，`cmds: [multi set exec]`、`tx_failed: true`，不带 `error`（返回给调用方的照旧是 `TxFailedErr`） |
 
 **key 在哪由这里认，不用 go-redis 的**。go-redis 自己知道（`Cmder` 未导出的 `firstKeyPos`），兜底却是「不在免 key 名单里就当
 第 1 个参数」：`MIGRATE` 的第 1 个参数是 host，`INFO`、`KEYS` 也会被当成有 key。这里反过来，只认一张「第 1 个参数一定是 key」的
@@ -208,7 +212,15 @@ xredis 把 `DialerRetries` 固定成 1，同样的场景默认配置 2.1s、`Max
 客户端一侧的错误只有超时、连不上、连接断开、ctx 取消、连接池超时 / 已关闭这几类照原文记；别的也不记原文——go-redis 解析回复失败时
 把回复内容写进错误（`reader.go` 的 `can't parse %q`）。
 
-**`redis.Nil` 不是失败**：key 不存在是读穿缓存天天走的分支，记 INFO、带 `nil: true`。pipeline 的 `Exec` 在有一条拿到 nil 时
+**`elapsed_ms` 从钩子进门算起**，不只是网络往返：实测 `PoolSize: 1`、唯一的连接被一条 1s 的 `BLPOP` 占着时，
+紧跟着的 `GET` 记 `elapsed_ms: 1028`（等连接池）；要新建连接的命令含拨号和 `HELLO`（假服务端让 `HELLO` 慢 80ms，那条 `GET` 记 81.7）。
+
+**key 超过 256 字节时截断，不切开 UTF-8 字符**：往回找字符起点最多退 3 个字节。key 是任意字节串，一串 `0x80` 这样的没有字符起点，
+就照 256 字节截（JSON 里是一串 `\ufffd`），不会截成空串。
+
+**`redis.Nil` 不是失败**：key 不存在是读穿缓存天天走的分支，记 INFO、带 `nil: true`。
+**WATCH 冲突也不是失败**：`redis.TxFailedErr` 是 go-redis 在客户端造的 `proto.RedisError`，和服务端的错误同一个类型，
+不单独认的话会记成 `redis pipeline failed`、`error: redis server error (message omitted, …)`。它是乐观锁的正常结果，记 INFO、带 `tx_failed: true`。pipeline 的 `Exec` 在有一条拿到 nil 时
 整个返回 `redis.Nil`，这里跳过它找第一个真错误：`GET`（不存在）后面跟一条报错的 `INCR`，记的是 `redis pipeline failed`、`error_code: ERR`。
 
 **日志和链路**：日志钩子挂在 redisotel 的钩子之后，go-redis 先挂的在外层，所以它在 redis Span 里面——日志的 `span_id` 是

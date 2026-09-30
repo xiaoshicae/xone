@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -24,7 +25,8 @@ const maxLoggedPipelineCmds = 10
 // logHook 把每条命令、每个 pipeline 记一条日志（ClientConfig.Log）。
 //
 // 只记命令名和第一个 key，不记值、不记其余参数：值里常有会话、令牌、个人信息，
-// 与 xgorm 只记占位符 SQL、链路不写 db.statement 是同一条原则。
+// 与 xgorm 只记占位符 SQL、链路不写 db.statement 是同一条原则。key 是整条记的：
+// 业务把令牌、手机号拼进 key 的话，它们就进了日志（见 ClientConfig.Log）。
 // ctx 用命令自己的：xlog 由此给日志带上 trace_id / span_id。钩子挂在链路钩子之后，
 // 在它里面，所以 span_id 是这条命令的 redis Span（见 New）。
 type logHook struct {
@@ -61,7 +63,7 @@ func (h logHook) command(ctx context.Context, cmd redis.Cmder, err error, elapse
 
 	attrs := make([]any, 0, 12)
 	attrs = append(attrs, h.nameAttr()...)
-	attrs = append(attrs, "cmd", cmd.Name())
+	attrs = append(attrs, "cmd", cmdName(cmd))
 	if key, ok := firstKey(cmd); ok {
 		attrs = append(attrs, keyAttrs(key)...)
 	}
@@ -78,13 +80,17 @@ func (h logHook) command(ctx context.Context, cmd redis.Cmder, err error, elapse
 }
 
 // pipeline 整个 pipeline 记一行：命令数、前几个命令名、第一个真正的错误。
-// 不带 key：一个 pipeline 可以有上千条命令，每条的 key 都列出来一行日志就没边了
+// 不带 key：一个 pipeline 可以有上千条命令，每条的 key 都列出来一行日志就没边了。
+// count 是 go-redis 实际发出去的命令数：TxPipelined 的里面带着 MULTI 和 EXEC
 func (h logHook) pipeline(ctx context.Context, cmds []redis.Cmder, err error, elapsed time.Duration) {
+	// WATCH 的 key 被别人改了：EXEC 回空数组，go-redis 给 pipeline 和里面每条命令都设成
+	// redis.TxFailedErr。那是乐观锁的正常结果（调用方重试就是了），不是故障，与 redis.Nil 同理
+	txFailed := errors.Is(err, redis.TxFailedErr)
 	// Exec 在某条命令拿到 redis.Nil 时也返回它，那不算失败；找第一个不是 Nil 的
-	if err == nil || errors.Is(err, redis.Nil) {
+	if err == nil || errors.Is(err, redis.Nil) || txFailed {
 		err = nil
 		for _, c := range cmds {
-			if e := c.Err(); e != nil && !errors.Is(e, redis.Nil) {
+			if e := c.Err(); e != nil && !errors.Is(e, redis.Nil) && !errors.Is(e, redis.TxFailedErr) {
 				err = e
 				break
 			}
@@ -96,9 +102,12 @@ func (h logHook) pipeline(ctx context.Context, cmds []redis.Cmder, err error, el
 
 	names := make([]string, 0, min(len(cmds), maxLoggedPipelineCmds))
 	for _, c := range cmds[:cap(names)] {
-		names = append(names, c.Name())
+		names = append(names, cmdName(c))
 	}
 	attrs := append(h.nameAttr(), "count", len(cmds), "cmds", names, "elapsed_ms", ms(elapsed))
+	if txFailed {
+		attrs = append(attrs, "tx_failed", true)
+	}
 
 	switch {
 	case err != nil:
@@ -128,16 +137,40 @@ func nilAttr(err error, extra ...any) []any {
 	return extra
 }
 
-// keyAttrs key 超长时截到 maxLoggedKey 字节（不切断 UTF-8 字符），带上 key_truncated
+// keyAttrs key 超长时截到 maxLoggedKey 字节（不切断 UTF-8 字符），带上 key_truncated。
+//
+// 往回找字符起点最多退 utf8.UTFMax-1 个字节：合法的 UTF-8 一定在这几步里找到。
+// key 是任意字节串，一串 0x80 这样的根本没有起点，一路退下去会截成空串
 func keyAttrs(key string) []any {
 	if len(key) <= maxLoggedKey {
 		return []any{"key", key}
 	}
 	cut := maxLoggedKey
-	for cut > 0 && !utf8.RuneStart(key[cut]) {
+	for back := 0; back < utf8.UTFMax-1 && !utf8.RuneStart(key[cut]); back++ {
 		cut--
 	}
+	if !utf8.RuneStart(key[cut]) {
+		cut = maxLoggedKey
+	}
 	return []any{"key", key[:cut], "key_truncated", true}
+}
+
+// invalidCmdName 命令名不像命令名时记成这个
+const invalidCmdName = "<invalid>"
+
+// validCmdName Redis 的命令名，加上模块命令里的点（json.set、ft.search）、子命令记法里的 |，最长 64 字节
+var validCmdName = regexp.MustCompile(`^[a-z][a-z0-9._|-]{0,63}$`)
+
+// cmdName 日志里的命令名。
+//
+// go-redis 的 cmd.Name() 是第 1 个参数原样转小写，不截断、不校验：实测
+// Do(ctx, "SET k1 <值>") 记出来是 cmd: "set k1 <值>"，整条命令连同值都在命令名里。
+// 不像命令名的一律换成固定的占位，不猜它哪一截是命令
+func cmdName(cmd redis.Cmder) string {
+	if name := cmd.Name(); validCmdName.MatchString(name) {
+		return name
+	}
+	return invalidCmdName
 }
 
 // firstKey 取命令的第一个 key，认不准就不给。

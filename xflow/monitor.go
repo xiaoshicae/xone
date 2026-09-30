@@ -99,15 +99,14 @@ func recoverNotify() {
 
 // slogMonitor 默认实现，写到标准库 slog。
 //
-// 成功的步骤记 debug 而不是 info：一个五步的流程每次执行会产出六行，
-// 默认级别下把它们全打出来，日志里就只剩流程编排了。
-// 需要逐步排查时把级别调到 debug；失败的步骤和流程结果任何时候都看得到。
+// 成功的步骤记 info：开着 XFlow.Monitor 就是想看每一步，默认级别下就该看得到。
+// 一个五步的流程每次执行会写六行；不想要逐步日志的，关掉 Monitor 或者用 SetMonitor 换成自己的实现。
 type slogMonitor struct{}
 
 func (slogMonitor) OnStep(ctx context.Context, e *StepEvent) {
-	// 成功的步骤记 debug。级别没开就在这里返回，不要先把这一行拼出来
+	// 成功的步骤记 info。级别没开（比如日志级别设成 warn）就在这里返回，不要先把这一行拼出来
 	// 再交给 slog 丢掉——一个五步的流程每次执行要拼五次，全是白干
-	if e.Err == nil && !slog.Default().Enabled(ctx, slog.LevelDebug) {
+	if e.Err == nil && !slog.Default().Enabled(ctx, slog.LevelInfo) {
 		return
 	}
 
@@ -127,7 +126,7 @@ func (slogMonitor) OnStep(ctx context.Context, e *StepEvent) {
 		slog.WarnContext(ctx, "xflow step "+action+" failed", attrs...)
 		return
 	}
-	slog.DebugContext(ctx, "xflow step "+action+" done", attrs...)
+	slog.InfoContext(ctx, "xflow step "+action+" done", attrs...)
 }
 
 func (slogMonitor) OnFlow(ctx context.Context, e *FlowEvent) {

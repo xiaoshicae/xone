@@ -184,6 +184,7 @@ func TestValidate(t *testing.T) {
 		"PoolTimeout 为负":         func(c *ClientConfig) { c.PoolTimeout = -time.Second },
 		"ConnMaxIdleTime 为负":     func(c *ClientConfig) { c.ConnMaxIdleTime = -1 },
 		"ConnMaxLifetime 为负":     func(c *ClientConfig) { c.ConnMaxLifetime = -time.Second },
+		"SlowThreshold 为负":       func(c *ClientConfig) { c.SlowThreshold = -time.Millisecond },
 		"MaxRetries 小于 -1":       func(c *ClientConfig) { c.MaxRetries = -2 },
 		"MinRetryBackoff 为 -2ns": func(c *ClientConfig) { c.MinRetryBackoff = -2 },
 		"MaxRetryBackoff 为 -1s":  func(c *ClientConfig) { c.MaxRetryBackoff = -time.Second },
@@ -240,5 +241,17 @@ func TestNew_NoClientSetinfoNorMaintNotifications(t *testing.T) {
 	}
 	if n := f.count("client"); n != 0 {
 		t.Errorf("建连时不该发 CLIENT 子命令，收到 %d 次", n)
+	}
+}
+
+func TestConfig_LogDefaultsAndOverride(t *testing.T) {
+	// Log 默认关着；SlowThreshold 默认 100ms，只在 Log 开着时有用
+	c := load(t, "XRedis:\n  Addr: h:6379\n")
+	if got := c.Clients[DefaultName]; got.Log || got.SlowThreshold != 100*time.Millisecond {
+		t.Errorf("默认 Log=false、SlowThreshold=100ms，got Log=%v SlowThreshold=%v", got.Log, got.SlowThreshold)
+	}
+	c = load(t, "XRedis:\n  Clients:\n    a: {Addr: h:6379, Log: true, SlowThreshold: 0s}\n    b: {Addr: h:6380}\n")
+	if a, b := c.Clients["a"], c.Clients["b"]; !a.Log || a.SlowThreshold != 0 || b.Log {
+		t.Errorf("Log 按实例生效，got a=%+v b=%+v", a, b)
 	}
 }

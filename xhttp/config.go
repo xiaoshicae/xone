@@ -95,6 +95,17 @@ type Config struct {
 	// Metric 是否导出出站请求的指标（按方法、目标、状态码分）。默认开启。
 	Metric bool `yaml:"Metric"`
 
+	// Log 是否每个逻辑请求记一条日志（所有重试结束之后记一次）。默认关闭。
+	//
+	// 记方法、host、路径、状态码、耗时、尝试次数，失败时加上错误；查询串、片段、userinfo、
+	// Header、body 一律不记，错误原文里 URL 的查询串也去掉。5xx 和传输层错误记 warn。
+	// 开着时 resty 自己在重试路径上的那几行（每次尝试一行 WARN、用完一行 ERROR）不再打，
+	// 一个请求只有这一行。字段和实测见 xhttp/README.md「可观测」「行为与实测」。
+	Log bool `yaml:"Log"`
+
+	// SlowThreshold 整次逻辑请求（含重试和退避）超过这个耗时就记一条 warn 日志。默认 1s，需 Log 开启，配 0 不记。
+	SlowThreshold time.Duration `yaml:"SlowThreshold"`
+
 	// TLS 出站 https 请求的 TLS 设置：自签的 CA、双向认证的客户端证书、比对的名字。
 	// 默认不配，用标准库的默认（系统根证书、不带客户端证书）。字段和规则各模块共用，见 xtls.Config。
 	//
@@ -117,6 +128,7 @@ func DefaultConfig() Config {
 		RetryWaitTime:       100 * time.Millisecond,
 		RetryMaxWaitTime:    2 * time.Second,
 		RetryOnlyIdempotent: true,
+		SlowThreshold:       time.Second,
 		Trace:               true,
 		Metric:              true,
 	}
@@ -149,6 +161,7 @@ func (c Config) Validate() error {
 		{"IdleConnTimeout", c.IdleConnTimeout},
 		{"RetryWaitTime", c.RetryWaitTime},
 		{"RetryMaxWaitTime", c.RetryMaxWaitTime},
+		{"SlowThreshold", c.SlowThreshold},
 	} {
 		if d.val < 0 {
 			return fmt.Errorf("%s must not be negative, got=%v", d.name, d.val)

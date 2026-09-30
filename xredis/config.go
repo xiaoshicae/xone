@@ -107,6 +107,18 @@ type ClientConfig struct {
 	// 按实例生效：配了 Metric: false 的实例不出现在 /metrics 里。
 	Metric bool `yaml:"Metric"`
 
+	// Log 是否每条命令记一条日志（pipeline 整个记一条）。默认关闭。
+	//
+	// 只记命令名和第一个 key，不记值、不记其余参数；AUTH、HELLO 这类参数里可能有凭证的
+	// 命令只记命令名。key 不存在（redis.Nil）不算失败，照常记 INFO、带 nil=true。
+	// 失败时 error 字段只记服务端的错误码（另有 error_code 字段），不记原文：实测 Redis 7.0.15
+	// 的 ERR unknown command 'foo', with args beginning with: … 把参数原样带出来。
+	// 返回给调用方的错误不变。字段和实测见 xredis/README.md「可观测」「行为与实测」。
+	Log bool `yaml:"Log"`
+
+	// SlowThreshold 超过这个耗时的命令（或 pipeline）记一条 warn 日志。默认 100ms，需 Log 开启，配 0 不记。
+	SlowThreshold time.Duration `yaml:"SlowThreshold"`
+
 	// TLS 连 Redis 时走不走 TLS。默认不走。字段和规则各模块共用，见 xtls.Config。
 	//
 	// 握手受 DialTimeout 管：go-redis v9.22.0 用 tls.DialWithDialer，拨号和握手共用那一个超时。
@@ -124,6 +136,7 @@ func DefaultClientConfig() ClientConfig {
 		PoolTimeout:     time.Second,
 		ConnMaxIdleTime: 5 * time.Minute,
 		ConnMaxLifetime: 5 * time.Minute,
+		SlowThreshold:   100 * time.Millisecond,
 		Trace:           true,
 		Metric:          true,
 	}
@@ -176,6 +189,7 @@ func (c ClientConfig) Validate() error {
 		{"PoolTimeout", c.PoolTimeout},
 		{"ConnMaxIdleTime", c.ConnMaxIdleTime},
 		{"ConnMaxLifetime", c.ConnMaxLifetime},
+		{"SlowThreshold", c.SlowThreshold},
 	} {
 		if d.val < 0 {
 			return fmt.Errorf("%s must not be negative, got=%v", d.name, d.val)

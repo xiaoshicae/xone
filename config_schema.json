@@ -934,6 +934,14 @@
           "type": "string",
           "description": "空闲连接多久后关闭。默认 90s，与标准库一致。 下游（或中间的负载均衡）先于它关掉空闲连接时，恰好在那一刻复用这条连接的请求 会失败：实测服务端空闲超时 200ms、请求间隔在 200ms 上下时，300 个 POST 失败 27 个 （connection reset by peer / use of closed network connection）；GET 由标准库自动 在新连接上重发，200 个一个都没失败。所以它要小于下游的 keep-alive 超时。（时长，写成 30s / 1500ms / 1h30m 这种形式；写裸数字会启动失败）"
         },
+        "Log": {
+          "type": [
+            "boolean",
+            "string"
+          ],
+          "description": "是否每个逻辑请求记一条日志（所有重试结束之后记一次）。默认关闭。 记方法、host、路径、状态码、耗时、尝试次数，失败时加上错误；查询串、片段、userinfo、 Header、body 一律不记，错误原文里 URL 的查询串也去掉。5xx 和传输层错误记 warn。 开着时 resty 自己在重试路径上的那几行（每次尝试一行 WARN、用完一行 ERROR）不再打， 一个请求只有这一行。字段和实测见 xhttp/README.md「可观测」「行为与实测」。",
+          "pattern": "\\$\\{"
+        },
         "MaxConnsPerHost": {
           "type": [
             "integer",
@@ -989,6 +997,10 @@
         "RetryWaitTime": {
           "type": "string",
           "description": "重试的起始等待时间。默认 100ms。（时长，写成 30s / 1500ms / 1h30m 这种形式；写裸数字会启动失败）"
+        },
+        "SlowThreshold": {
+          "type": "string",
+          "description": "整次逻辑请求（含重试和退避）超过这个耗时就记一条 warn 日志。默认 1s，需 Log 开启，配 0 不记。（时长，写成 30s / 1500ms / 1h30m 这种形式；写裸数字会启动失败）"
         },
         "TLS": {
           "type": "object",
@@ -1213,6 +1225,14 @@
               "type": "string",
               "description": "建连超时。默认 500ms。（时长，写成 30s / 1500ms / 1h30m 这种形式；写裸数字会启动失败）"
             },
+            "Log": {
+              "type": [
+                "boolean",
+                "string"
+              ],
+              "description": "是否每条命令记一条日志（pipeline 整个记一条）。默认关闭。 只记命令名和第一个 key，不记值、不记其余参数；AUTH、HELLO 这类参数里可能有凭证的 命令只记命令名。key 不存在（redis.Nil）不算失败，照常记 INFO、带 nil=true。 失败时 error 字段只记服务端的错误码（另有 error_code 字段），不记原文：实测 Redis 7.0.15 的 ERR unknown command 'foo', with args beginning with: … 把参数原样带出来。 返回给调用方的错误不变。字段和实测见 xredis/README.md「可观测」「行为与实测」。",
+              "pattern": "\\$\\{"
+            },
             "MaxActiveConns": {
               "type": [
                 "integer",
@@ -1280,6 +1300,10 @@
             "ReadTimeout": {
               "type": "string",
               "description": "读超时。默认 500ms。（时长，写成 30s / 1500ms / 1h30m 这种形式；写裸数字会启动失败）"
+            },
+            "SlowThreshold": {
+              "type": "string",
+              "description": "超过这个耗时的命令（或 pipeline）记一条 warn 日志。默认 100ms，需 Log 开启，配 0 不记。（时长，写成 30s / 1500ms / 1h30m 这种形式；写裸数字会启动失败）"
             },
             "TLS": {
               "type": "object",
@@ -1364,6 +1388,14 @@
                     "type": "string",
                     "description": "建连超时。默认 500ms。（时长，写成 30s / 1500ms / 1h30m 这种形式；写裸数字会启动失败）"
                   },
+                  "Log": {
+                    "type": [
+                      "boolean",
+                      "string"
+                    ],
+                    "description": "是否每条命令记一条日志（pipeline 整个记一条）。默认关闭。 只记命令名和第一个 key，不记值、不记其余参数；AUTH、HELLO 这类参数里可能有凭证的 命令只记命令名。key 不存在（redis.Nil）不算失败，照常记 INFO、带 nil=true。 失败时 error 字段只记服务端的错误码（另有 error_code 字段），不记原文：实测 Redis 7.0.15 的 ERR unknown command 'foo', with args beginning with: … 把参数原样带出来。 返回给调用方的错误不变。字段和实测见 xredis/README.md「可观测」「行为与实测」。",
+                    "pattern": "\\$\\{"
+                  },
                   "MaxActiveConns": {
                     "type": [
                       "integer",
@@ -1431,6 +1463,10 @@
                   "ReadTimeout": {
                     "type": "string",
                     "description": "读超时。默认 500ms。（时长，写成 30s / 1500ms / 1h30m 这种形式；写裸数字会启动失败）"
+                  },
+                  "SlowThreshold": {
+                    "type": "string",
+                    "description": "超过这个耗时的命令（或 pipeline）记一条 warn 日志。默认 100ms，需 Log 开启，配 0 不记。（时长，写成 30s / 1500ms / 1h30m 这种形式；写裸数字会启动失败）"
                   },
                   "TLS": {
                     "type": "object",

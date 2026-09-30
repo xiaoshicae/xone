@@ -5,6 +5,7 @@
 - 链路已装好：`traceparent` 自动带给下游，Span 名只用方法（`Run` 起来之后的实例；之前、之后的兜底实例没有）
 - 出站耗时指标 `http_client_request_duration_seconds`，一次逻辑请求记一次
 - 只重试传输层的错，默认只重试幂等方法
+- 可选的请求日志（`Log: true`）：一个逻辑请求一行，方法、host、路径、状态码、耗时、尝试次数，不记查询串
 - 日志和 Span 里的 URL 去掉查询串；没有 cookie jar
 - 要第二套参数（比如调公网、关指标）就用 `xhttp.New` 另建一个
 
@@ -58,6 +59,8 @@ XHttp:
   RetryOnlyIdempotent: true  # 只重试幂等方法
   Trace: true                # 出站 Span；关掉后 traceparent、baggage、透传 Header 照样带给下游
   Metric: true               # 出站耗时指标
+  Log: false                 # 每个逻辑请求一行日志（重试完记一次）；不记查询串、Header、body
+  SlowThreshold: 1s          # 整次请求超过它记 WARN；需 Log 开启，0 = 不记
   TLS:                       # 规则见 xtls；管这个客户端发出的每一个 https 请求，http:// 不受影响
     Enable: false
     CAFile: ""               # 填了就只认它：公网的 https 下游从此校验不过
@@ -89,6 +92,21 @@ TLS 块适合「只调一类内部下游」的客户端；要同时调公网的�
   `Metric: false` 的客户端。见[「指标」](#指标)。
 
 ## 可观测
+
+### 日志
+
+| 消息 | 级别 | 字段 |
+|---|---|---|
+| `xhttp ready` | INFO | `timeout`、`max_idle_conns_per_host`、`retries` |
+| `xhttp resty log` | resty 的原级别 | `detail`（resty 自己的日志原文，URL 去掉查询串） |
+| `http request` / `slow http request` / `http request failed` | INFO / WARN / WARN | `method`、`host`（`host[:port]`）、`path`（不带查询串）、`status`（没拿到响应时 `0`）、`elapsed_ms`（整次逻辑请求，含重试和退避）、`attempts`；慢请求带 `threshold_ms`；有错误时 `error`（URL 去掉查询串和 userinfo）（需 `XHttp.Log: true`） |
+
+- **失败**是没拿到响应（传输层错误、ctx 到期）或者下游回了 5xx；4xx 是下游的业务回答，记 INFO。
+- **一个逻辑请求一行**，所有重试结束后才记。`Log: true` 时 resty 自己在重试路径上的那几行 `xhttp resty log`
+  （每次失败的尝试一行 WARN、用完一行 ERROR）不再打，内容就是这一行的 `error`；resty 别的提醒（比如明文 HTTP 上用 Basic Auth）照旧。
+- 查询串、片段、userinfo、Header、body 一律不记。日志用调用方的 ctx，`trace_id` / `span_id` 是调用方的（出站 Span 这时已经结束）。
+
+日志的全局约定（`trace_id` 注入、`xlog.AddKV`、框架的启停日志）见 [`docs/observability.md`](../docs/observability.md#日志)。
 
 ### 指标
 
@@ -136,6 +154,23 @@ resty v2.17.2、otelhttp v0.71.0、Go 1.25。
 | 重定向 | 标准库：最多跟 10 次 | 第 11 次报 `stopped after 10 redirects`。跨 host 跳转时只去掉 `Authorization`、`Cookie` 这几个，**自定义的凭证头（如 `X-Api-Key`）照样带给新 host**；302 把 POST 变成不带 body 的 GET，307 保留方法和 body |
 | HTTP/2 | `ForceAttemptHTTP2: true` | 换了 `TLSClientConfig`（TLS 块）之后照旧协商出 `HTTP/2.0` |
 
+**请求日志（`Log: true`）**。实测 resty v2.17.2：`OnSuccess` / `OnError` 在所有重试结束之后只调一次，
+`Request.Attempt` 是用掉的尝试次数；拿到响应就走 `OnSuccess`，**5xx 也是**（resty 只在有 error 时调 `OnError`），
+所以 5xx 算不算失败是这里判的。`RetryCount: 2`、`RetryWaitTime` / `RetryMaxWaitTime: 5ms` 时量出来的：
+
+| 下游 | 下游收到 | 回调 | 日志 |
+|---|---|---|---|
+| 200 | 1 次 | `OnSuccess` 1 次 | `http request`，`status: 200`、`attempts: 1` |
+| 500 | 1 次（拿到响应不重试） | `OnSuccess` 1 次 | `http request failed`，`status: 500`、`attempts: 1` |
+| 每次都掐断连接 | 4 次 | `OnError` 1 次，`Attempt` 3 | `http request failed`，`status: 0`、`attempts: 3`、`elapsed_ms` 约 12（含两次退避）、`error: Get "http://127.0.0.1:…/cut": EOF` |
+| 端口没人监听 | — | `OnError` 1 次，`Attempt` 3 | `http request failed`，`attempts: 3`、`error: Get "http://127.0.0.1:1/x/y": dial tcp …: connection refused` |
+
+掐断连接那一行下游收到 4 次、`attempts` 是 3：第一次尝试用的是池子里复用的空闲连接，标准库在它被对端关掉时自己在新连接上重发了一次 GET
+（见上面 `IdleConnTimeout` 那一条），这一次 resty 看不见。`attempts` 数的是 resty 的尝试。
+
+错误原文是 `*url.Error`：`Get "http://someone:***@host/x?token=…": …`——整条 URL 连查询串都在，标准库只把密码换成 `***`、用户名照留。
+日志里的 `error` 去掉查询串、片段和 userinfo，返回给调用方的错误不变。
+
 不想跟随重定向：`xhttp.C().SetRedirectPolicy(resty.NoRedirectPolicy())`。
 
 **`IdleConnTimeout` 要小于下游的 keep-alive 超时**：对端先关掉空闲连接时，恰好在那一刻复用它的请求会失败。
@@ -146,7 +181,7 @@ GET 由标准库自动在新连接上重发，200 个一个没失败。
 
 | | 库自己的默认 | 这里 |
 |---|---|---|
-| resty 的日志 | 写 `os.Stderr`；开了重试后每次失败打一行 `WARN RESTY Get "http://…?token=…": …, Attempt 1`，用完再打一行 ERROR | 接到 slog（`xhttp resty log`，内容在 `detail`），级别照搬，URL 去掉查询串 |
+| resty 的日志 | 写 `os.Stderr`；开了重试后每次失败打一行 `WARN RESTY Get "http://…?token=…": …, Attempt 1`，用完再打一行 ERROR | 接到 slog（`xhttp resty log`，内容在 `detail`），级别照搬，URL 去掉查询串；`Log: true` 时重试路径上的那几行不打，由 `http request failed` 一行代替 |
 | cookie jar | `resty.New()` 自带一个，同一 client 的所有请求共享会话 cookie | 没有（用 `NewWithClient`）。初始化前 / 关闭后的兜底实例也没有 |
 | 出站 Span 名 | 常见写法是 `GET /users/42`，基数随 id 增长 | 只用方法 `GET`（OTel 语义约定在没有路由模板时的写法） |
 | `url.full` | otelhttp 只去掉 `user:password`，查询串原样写进去 | 查询串和片段一并去掉 |

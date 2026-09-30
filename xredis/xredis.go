@@ -47,6 +47,12 @@ var pingInterval = time.Second
 // ctx 限定这轮建连验证的生命期：连不上时要走满一轮重试，
 // 收到退出信号就该当场放弃，而不是让进程卡在那里。
 func New(ctx context.Context, cfg ClientConfig) (*redis.Client, io.Closer, error) {
+	return newClient(ctx, "", cfg)
+}
+
+// newClient 同 New，name 是配置文件里的实例名，只用来写进命令日志（Log 开着时）；
+// 直接调 New 的没有实例名，日志里就没有 name 字段
+func newClient(ctx context.Context, name string, cfg ClientConfig) (*redis.Client, io.Closer, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, nil, xerror.Newf("xredis", "config", "invalid config: %w", err)
 	}
@@ -160,6 +166,13 @@ func New(ctx context.Context, cfg ClientConfig) (*redis.Client, io.Closer, error
 		if err := redisotel.InstrumentTracing(client, redisotel.WithDBStatement(false)); err != nil {
 			return nil, nil, xerror.Newf("xredis", "new", "install tracing hook: %w", err)
 		}
+	}
+
+	// 日志钩子挂在链路钩子之后。go-redis 的钩子先挂的在外层，所以它在 redis Span 里面：
+	// 命令 ctx 里的是这条命令的 Span，日志的 span_id 就是它，trace_id 与调用方的相同。
+	// 同样在建连验证之后挂：启动时的 Ping 不是业务命令
+	if cfg.Log {
+		client.AddHook(logHook{name: name, slow: cfg.SlowThreshold})
 	}
 
 	ok = true
@@ -307,11 +320,11 @@ func install(ctx context.Context, c Config) error {
 // 所以这里不必处理「还没建起来」。
 func closeXRedis(context.Context) error { return reg.Close() }
 
-// build 建一个实例。包一层 New 而不是直接把 New 交出去，
-// 是为了把这个实例的 Metric 开关一起带进注册表，并在日志里写上实例名——
+// build 建一个实例。包一层而不是直接把 New 交出去，
+// 是为了把这个实例的 Metric 开关一起带进注册表，并在日志里写上实例名（命令日志也带）——
 // 配了好几个 Redis 时，只写地址分不出是哪一个（同一个地址不同库号的更是如此）
 func build(ctx context.Context, name string, c ClientConfig) (instance, io.Closer, error) {
-	client, closer, err := New(ctx, c)
+	client, closer, err := newClient(ctx, name, c)
 	if err != nil {
 		return instance{}, nil, err
 	}

@@ -89,6 +89,9 @@ func New(cfg Config) (*resty.Client, io.Closer, error) {
 		}
 		installMetrics(client, hist)
 	}
+	if cfg.Log {
+		installLog(client, cfg.SlowThreshold)
+	}
 
 	return client, &clientCloser{pool: pool}, nil
 }

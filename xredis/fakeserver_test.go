@@ -29,6 +29,8 @@ type fakeRedis struct {
 	resp3    bool     // 认 HELLO 3，之后按 RESP3 回复：go-redis 只在 RESP3 连接上发维护通知的握手
 	live     int      // 当前还开着的连接数
 	conns    map[net.Conn]struct{}
+	replies  map[string]string        // 这些命令回这段原始 RESP，用来测 nil、服务端报错
+	delays   map[string]time.Duration // 这些命令等一会儿再回，用来测慢命令
 }
 
 func newFakeRedis(t *testing.T) *fakeRedis { return newFakeRedisTLS(t, nil) }
@@ -70,6 +72,26 @@ func (f *fakeRedis) setFailPing(v bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.failPing = v
+}
+
+// setReply 让命令 cmd（小写）回 raw，raw 是原始的 RESP，如 "$-1\r\n"、"-ERR x\r\n"
+func (f *fakeRedis) setReply(cmd, raw string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.replies == nil {
+		f.replies = map[string]string{}
+	}
+	f.replies[cmd] = raw
+}
+
+// setDelay 让命令 cmd（小写）等 d 再回
+func (f *fakeRedis) setDelay(cmd string, d time.Duration) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.delays == nil {
+		f.delays = map[string]time.Duration{}
+	}
+	f.delays[cmd] = d
 }
 
 func (f *fakeRedis) setResp3(v bool) {
@@ -162,7 +184,10 @@ func (f *fakeRedis) serve(conn net.Conn) {
 		failAuth := f.failAuth
 		stall := f.stall == name
 		resp3 := f.resp3
+		custom, hasCustom := f.replies[name]
+		delay := f.delays[name]
 		f.mu.Unlock()
+		time.Sleep(delay)
 
 		if stall {
 			// 收下了，就是不回。连接留着，让调用方自己决定等到什么时候
@@ -171,6 +196,8 @@ func (f *fakeRedis) serve(conn net.Conn) {
 
 		var reply string
 		switch {
+		case hasCustom:
+			reply = custom
 		case name == "hello" && resp3:
 			// HELLO 回一个 map，go-redis 由此认定协商成了 RESP3
 			reply = "%1\r\n+proto\r\n:3\r\n"

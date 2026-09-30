@@ -5,6 +5,7 @@ Redis 客户端：拿到的是原生 `*redis.Client`（go-redis v9），框架�
 - 单实例、多实例都行，`xredis.C("name")` 按名字取
 - 命令听 ctx 的截止时间（go-redis 默认不听，只认 `ReadTimeout`）
 - 每条命令一个 Span，只带命令名、不带参数
+- 可选的命令日志（`Log: true`）：命令名和第一个 key，不记值
 - 连接池指标 `redis_pool_*`，按实例开关
 - 启动时探一次，连不上直接启动失败
 
@@ -59,6 +60,8 @@ XRedis:
   MaxRetryBackoff: 0s           # 0 = go-redis 默认的 1s；-1ns 关掉
   Trace: true                   # 每条命令一个 Span
   Metric: true                  # 连接池指标
+  Log: false                    # 每条命令一行日志（pipeline 整个一行）：命令名 + 第一个 key，不记值
+  SlowThreshold: 100ms          # 超过它记 WARN；需 Log 开启，0 = 不记
   TLS:                          # 规则见 xtls；ServerName 空着 = Addr 的主机部分
     Enable: false
     CAFile: ""
@@ -105,6 +108,12 @@ XRedis:
 |---|---|---|
 | `xredis connected` | INFO | `name`、`addr`、`db`、`tls`、`min_idle_conns` |
 | `xredis ready` | INFO | `instances` |
+| `redis command` / `slow redis command` / `redis command failed` | INFO / WARN / WARN | `name`（实例名）、`cmd`（命令名，小写）、`key`（第一个 key，认不准的命令不带）、`elapsed_ms`；key 超过 256 字节时截断并带 `key_truncated`；key 不存在时 `nil: true`（仍是 INFO）；慢命令带 `threshold_ms`；失败时 `error`、`error_code`（需 `XRedis.Log: true`） |
+| `redis pipeline` / `slow redis pipeline` / `redis pipeline failed` | INFO / WARN / WARN | `name`、`count`（命令数）、`cmds`（前 10 个命令名）、`elapsed_ms`；失败时是第一个不是 nil 的错误的 `error`、`error_code`（需 `XRedis.Log: true`） |
+
+命令日志**只记命令名和第一个 key**：值、其余参数一律不记；`AUTH`、`HELLO`、`MIGRATE`、`CONFIG` 这类参数里可能有凭证的命令只记命令名。
+失败时 `error` 只写 `redis server error <错误码> (message omitted, …)`，错误码另见 `error_code`，原文不记（原文会把参数带出来，见[「行为与实测」](#行为与实测)）；
+超时、连不上这类客户端一侧的错误照原文记。返回给调用方的错误不变。
 
 日志的全局约定（`trace_id` 注入、`xlog.AddKV`、框架的启停日志）见 [`docs/observability.md`](../docs/observability.md#日志)。
 
@@ -163,6 +172,53 @@ xredis 把 `DialerRetries` 固定成 1，同样的场景默认配置 2.1s、`Max
 平时只有 `MinIdleConns`（默认 5）条。缓冲区大小不开放配置。`MaxConcurrentDials` 默认等于 `PoolSize`，不另设。
 
 **TLS 握手受 `DialTimeout` 管**（go-redis 用 `tls.DialWithDialer`，拨号和握手共用一个超时）。
+
+**命令日志（`Log: true`）记什么**。实测 go-redis v9.22.0、Redis 7.0.15，调用方的 ctx 里没有 Span（一条命令一个根 Span）：
+
+| 调用 | 日志 |
+|---|---|
+| `Set(ctx, "user:42", <值>, time.Minute)` | `redis command`，`cmd: set`、`key: user:42` |
+| `Get(ctx, "user:42")` 命中 | `redis command`，`cmd: get`、`key: user:42` |
+| `Get(ctx, "user:missing")` 不存在 | `redis command`（INFO），`cmd: get`、`key: user:missing`、`nil: true` |
+| `HSet(ctx, "h:1", <字段>, <值>)` | `cmd: hset`、`key: h:1` |
+| `MGet(ctx, "a:1", "a:2")` | `cmd: mget`、`key: a:1`（只记第一个） |
+| `Eval(ctx, script, []string{"lua:key"}, <ARGV>)` | `cmd: eval`、`key: lua:key`；`keys` 为空时不带 key（第 3 个参数已经是 ARGV） |
+| `XRead(... Streams: {"stream:1", "0"})` | `cmd: xread`、`key: stream:1` |
+| `Do(ctx, "auth", <密码>)` | `cmd: auth`，除命令名什么都不记 |
+| `Incr` 一个不是数字的值 | `redis command failed`（WARN），`error_code: ERR` |
+| pipeline：`Set`、`Get`（不存在）、`Incr` | 一行 `redis pipeline`，`count: 3`、`cmds: [set get incr]`；`TxPipelined` 的 `cmds` 里带着 `multi` / `exec` |
+
+**key 在哪由这里认，不用 go-redis 的**。go-redis 自己知道（`Cmder` 未导出的 `firstKeyPos`），兜底却是「不在免 key 名单里就当
+第 1 个参数」：`MIGRATE` 的第 1 个参数是 host，`INFO`、`KEYS` 也会被当成有 key。这里反过来，只认一张「第 1 个参数一定是 key」的
+命令名单（string、hash、list、set、zset、stream、geo、bitmap 的常用命令），外加 `EVAL` / `EVALSHA` / `FCALL`（`numkeys` 大于 0 时
+取第 3 个参数；go-redis 的 `Eval` 传的 `numkeys` 是 int，`Do` 拼的是字符串，两种都认）、`XREAD` / `XREADGROUP`（`STREAMS` 后面那个）；
+名单外的一律不记 key——猜错的代价是把一个值写进日志，漏记一个 key 只是少一个字段。key 只取字符串或 `[]byte` 类型的参数，别的类型不猜。
+
+**服务端的错误原文会带出参数**，所以只记错误码（Redis 7.0.15 实测）：
+
+| 情形 | 原文 | 日志里的 `error_code` |
+|---|---|---|
+| 未知命令 | `ERR unknown command 'foo', with args beginning with: 'secretarg1' 'secretarg2'` | `ERR` |
+| `EVAL` 里 `redis.error_reply(ARGV[1])` | `ERR mysecretvalue`（7.0 自动补了 `ERR`） | `ERR` |
+| `EVAL` 里 `return {err=ARGV[1]}` | `plainsecret`：错误码的位置上就是值 | 不带 |
+| `WRONGTYPE`、`ERR value is not an integer or out of range` | 不含参数 | `WRONGTYPE` / `ERR` |
+
+最后一种说明「取第一个词当错误码」也不安全：错误码只认 Redis 自己用的那组（`ERR`、`WRONGTYPE`、`NOSCRIPT`、`BUSY`、`NOAUTH`、
+`WRONGPASS`、`NOPERM`、`OOM`、`READONLY`、`EXECABORT`、`LOADING`、`MOVED`、`ASK`、`CROSSSLOT`、`CLUSTERDOWN` 等），其余的只说是服务端的错。
+客户端一侧的错误只有超时、连不上、连接断开、ctx 取消、连接池超时 / 已关闭这几类照原文记；别的也不记原文——go-redis 解析回复失败时
+把回复内容写进错误（`reader.go` 的 `can't parse %q`）。
+
+**`redis.Nil` 不是失败**：key 不存在是读穿缓存天天走的分支，记 INFO、带 `nil: true`。pipeline 的 `Exec` 在有一条拿到 nil 时
+整个返回 `redis.Nil`，这里跳过它找第一个真错误：`GET`（不存在）后面跟一条报错的 `INCR`，记的是 `redis pipeline failed`、`error_code: ERR`。
+
+**日志和链路**：日志钩子挂在 redisotel 的钩子之后，go-redis 先挂的在外层，所以它在 redis Span 里面——日志的 `span_id` 是
+这条命令的 Span，`trace_id` 与调用方的相同（实测：调用方 Span `48ee662c…`，redis Span `c97ed554…` 的父是它，日志带的是
+`c97ed554…`）。调用方没有 Span 时一条命令一个根 Span，日志带的是它的 `trace_id`；`Trace: false` 时日志的 ctx 就是调用方的。
+
+**每条新连接一行 `hello`**：go-redis 在新连接上发的 `HELLO`（和 `DB` 不为 0 时的 `SELECT`）也走钩子，实测每条新连接一行
+`redis command`、`cmd: hello`（`DB: 1` 时再一行 `redis pipeline`、`cmds: [select]`）；配了密码时 `HELLO 3 AUTH <用户> <密码>` 也只记
+`cmd: hello`，实测输出里搜不到密码。连接池按 `ConnMaxLifetime`（默认 5m）换连接，就每 5 分钟一批。Redis 6 之前没有 `HELLO`，
+每条新连接会是一行 `redis command failed`（go-redis 吞掉这个错、退回 RESP2）。启动时的建连探测不记：钩子在探测成功之后才挂。
 
 **`Trace`**：redisotel 默认把整条命令连同参数写进 `db.statement`（实测 `SET` 的值原样出现），这里关掉了
 （`WithDBStatement(false)`）。钩子不是零成本：没装链路时实测每条命令约 +3µs、+8 次分配。

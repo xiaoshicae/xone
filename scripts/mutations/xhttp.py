@@ -53,3 +53,32 @@ mutate("出站 Span 名只用方法", "xhttp/xhttp.go", "./xhttp", "TestTranspor
 # resty.New() 自带 cookie jar：初始化前、关闭后的请求会共享别人种下的会话
 mutate("兜底实例不带 cookie jar", "xhttp/xhttp.go", "./xhttp", "TestC_",
        swap('var fallback = newResty(&http.Client{Timeout: fallbackTimeout})', 'var fallback = resty.New().SetTimeout(fallbackTimeout)'))
+
+section("请求日志")
+mutate("出站请求日志只在 Log 开着时挂", "xhttp/xhttp.go", "./xhttp", "TestLog_OffMeansNoRequestLinesAndRestyLogsUnchanged",
+       swap('\tif cfg.Log {\n\t\tinstallLog(', '\tif true {\n\t\tinstallLog('))
+mutate("出站慢请求阈值交给日志", "xhttp/xhttp.go", "./xhttp", "TestLog_SlowThreshold",
+       swap('installLog(client, cfg.SlowThreshold)', 'installLog(client, 0)'))
+# *url.Error 的原文是 Get "http://host/x?token=…": …，查询串里的令牌跟着错误进了日志
+mutate("出站请求日志的错误去掉查询串", "xhttp/log.go", "./xhttp", "TestLog_TransportError",
+       swap('"error", scrubErrorText(err.Error())', '"error", err.Error()'))
+mutate("出站请求日志的错误去掉 userinfo", "xhttp/log.go", "./xhttp", "TestLog_TransportErrorAfterRetriesOneLineNoQuery|TestScrubErrorText",
+       swap('urlUserinfo.ReplaceAllString(stripQuery(s), "$1")', 'stripQuery(s)'))
+mutate("5xx 记成失败", "xhttp/log.go", "./xhttp", "TestLog_5xxWithRetriesConfiguredIsOneWarnLine",
+       swap('failed := err != nil || status >= 500', 'failed := err != nil'))
+# 起点只在 Metric 开着时记的话，Metric: false 的客户端日志里的耗时只是最后一次尝试
+mutate("出站请求日志的耗时算整次逻辑请求", "xhttp/log.go", "./xhttp", "TestLog_ElapsedCoversRetriesWithMetricOff",
+       swap('func installLog(client *resty.Client, slow time.Duration) {\n\tmarkStart(client)\n', 'func installLog(client *resty.Client, slow time.Duration) {\n'))
+mutate("出站请求日志用调用方的 ctx", "xhttp/log.go", "./xhttp", "TestLog_UsesCallerCtx",
+       swap('\tctx := req.Context()\n', '\tctx := resty.New().R().Context()\n'))
+# 同一件事不说两遍：resty 在重试路径上每次尝试一行 WARN、用完一行 ERROR
+mutate("Log 开着时不再打 resty 的重试日志", "xhttp/log.go", "./xhttp", "TestLog_TransportErrorAfterRetriesOneLineNoQuery",
+       swap('\t\treq.SetLogger(quietRequestLogger{})\n', ''))
+mutate("Log 开着时不打 resty 每次尝试的 WARN", "xhttp/log.go", "./xhttp", "TestLog_TransportErrorAfterRetriesOneLineNoQuery",
+       swap('\tif format == "%v, Attempt %v" {\n\t\treturn\n\t}\n', ''))
+mutate("Log 开着时不打 resty 重试用完的 ERROR", "xhttp/log.go", "./xhttp", "TestLog_TransportErrorAfterRetriesOneLineNoQuery",
+       swap('func (quietRequestLogger) Errorf(string, ...any) {}', 'func (l quietRequestLogger) Errorf(f string, v ...any) { l.restyLogger.Errorf(f, v...) }'))
+mutate("Log 开着时 resty 的其余提醒照旧", "xhttp/log.go", "./xhttp", "TestLog_OtherRestyWarningsStillLogged",
+       swap('\tl.restyLogger.Warnf(format, v...)\n', ''))
+mutate("XHttp SlowThreshold 为负要被拦住", "xhttp/config.go", "./xhttp", "TestConfig_LogDefaults",
+       swap('\t\t{"SlowThreshold", c.SlowThreshold},\n', ''))

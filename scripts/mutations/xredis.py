@@ -76,3 +76,52 @@ section("链路")
 # 全局的 TracerProvider 就一直是 noop：Span 什么都不记、日志没有 trace_id，而且没有任何报错
 mutate("用了 xredis 不另外 import xtrace 也有链路", "xredis/xredis.go", "./xredis", "TestTracingWorksWithoutImportingXtrace",
        swap('\t_ "github.com/xiaoshicae/xone/xtrace"\n', ''))
+
+section("命令日志")
+# Log 默认关着：挂上钩子就是每条命令一行，量大的服务日志平台先被打满
+mutate("Redis 命令日志只在 Log 开着时挂", "xredis/xredis.go", "./xredis", "TestLog_OffMeansNoCommandLines",
+       swap('\tif cfg.Log {\n\t\tclient.AddHook(logHook{', '\tif true {\n\t\tclient.AddHook(logHook{'))
+mutate("Redis Log 开着就挂命令日志", "xredis/xredis.go", "./xredis", "TestLog_CommandLineHasNameCmdFirstKeyElapsed",
+       swap('\t\tclient.AddHook(logHook{name: name, slow: cfg.SlowThreshold})\n', ''))
+mutate("Redis 慢命令阈值交给钩子", "xredis/xredis.go", "./xredis", "TestLog_SlowThreshold",
+       swap('slow: cfg.SlowThreshold}', 'slow: 0}'))
+# 打在调用点上：build 不把名字交下去，多实例时分不出日志是哪个实例的
+mutate("Redis 命令日志带着配置里的实例名", "xredis/xredis.go", "./xredis", "TestLog_InstanceNameFromConfigReachesLog",
+       swap('newClient(ctx, name, c)', 'newClient(ctx, "", c)'))
+# 日志钩子挂到链路钩子外面，日志的 span_id 就成了调用方的，对不上这条命令的 Span
+mutate("Redis 命令日志在 redis Span 里面", "xredis/xredis.go", "./xredis", "TestLog_CarriesRedisSpanOfCallerTrace",
+       swap('\tif cfg.Log {\n\t\tclient.AddHook(logHook{name: name, slow: cfg.SlowThreshold})\n\t}\n', ''),
+       swap('\tif cfg.Trace {\n\t\t// 关掉 db.statement', '\tif cfg.Log {\n\t\tclient.AddHook(logHook{name: name, slow: cfg.SlowThreshold})\n\t}\n\tif cfg.Trace {\n\t\t// 关掉 db.statement'))
+mutate("Redis 命令日志用命令的 ctx", "xredis/log.go", "./xredis", "TestLog_CarriesRedisSpanOfCallerTrace",
+       swap('slog.InfoContext(ctx, "redis command"', 'slog.InfoContext(context.Background(), "redis command"'))
+# 读穿缓存天天走 key 不存在：当成失败的话 WARN 刷屏，真故障淹在里面
+mutate("redis.Nil 不算失败", "xredis/log.go", "./xredis", "TestLog_NilIsNotAFailure",
+       swap('failed := err != nil && !errors.Is(err, redis.Nil)', 'failed := err != nil'))
+mutate("pipeline 里的 redis.Nil 不算失败", "xredis/log.go", "./xredis", "TestLog_PipelineNilIsNotFailureButLaterErrorIs",
+       swap('\tif err == nil || errors.Is(err, redis.Nil) {\n', '\tif err == nil {\n'))
+mutate("pipeline 认出 nil 之后的真错误", "xredis/log.go", "./xredis", "TestLog_PipelineNilIsNotFailureButLaterErrorIs",
+       swap('if e := c.Err(); e != nil && !errors.Is(e, redis.Nil) {', 'if e := c.Err(); false && e != nil {'))
+# 只记第一个 key：往后错一位，SET 的值就成了 key 进了日志
+mutate("Redis 命令日志不记值", "xredis/log.go", "./xredis", "TestLog_ValuesAndOtherArgsNeverLogged|TestFirstKey",
+       swap('\treturn argString(args, pos)\n}', '\treturn argString(args, pos+1)\n}'))
+# go-redis 自己的兜底就是「不在免 key 名单里就当第 1 个参数」：AUTH 的用户名、MIGRATE 的 host 都会被当成 key
+mutate("名单外的命令不记 key", "xredis/log.go", "./xredis", "TestLog_ValuesAndOtherArgsNeverLogged|TestFirstKey",
+       swap('\t\tif _, ok := keyAtFirstArg[name]; ok {\n', '\t\tif true {\n'))
+mutate("EVAL 的 numkeys 为 0 时第 3 个参数是 ARGV", "xredis/log.go", "./xredis", "TestFirstKey",
+       swap('\t\tif numKeys(args) > 0 {\n', '\t\tif len(args) > 3 {\n'))
+mutate("XREADGROUP 跳过组名和消费者名", "xredis/log.go", "./xredis", "TestFirstKey",
+       swap('pos = afterStreams(args, 4)', 'pos = afterStreams(args, 1)'))
+mutate("超长的 key 截断", "xredis/log.go", "./xredis", "TestLog_LongKeyTruncated",
+       swap('\tif len(key) <= maxLoggedKey {\n', '\tif true {\n'))
+# 实测 Redis 7.0.15：ERR unknown command 的原文把参数带出来
+mutate("Redis 服务端错误只记错误码", "xredis/log.go", "./xredis", "TestLog_FailedCommandLogsOnlyErrorCode",
+       swap('"error", "redis server error " + code + " (message omitted, it may contain argument values)", "error_code", code}',
+            '"error", err.Error(), "error_code", code}'))
+# EVAL 里 return {err=ARGV[1]}：错误原文整个就是值，取第一个词当错误码就把值记下来了
+mutate("Redis 错误码只认已知的", "xredis/log.go", "./xredis", "TestLog_FailedCommandLogsOnlyErrorCode",
+       swap('if _, ok := knownErrorCodes[code]; ok {', 'if code != "" {'))
+# go-redis 解析回复失败时把回复内容写进错误
+mutate("不认得的客户端错误不记原文", "xredis/log.go", "./xredis", "TestErrorAttrs",
+       swap('return []any{"error", "redis client error (message omitted, it may contain reply data)"}', 'return []any{"error", err.Error()}'))
+mutate("Redis SlowThreshold 为负要被拦住", "xredis/config.go", "./xredis", "TestValidate",
+       swap('\t\t{"SlowThreshold", c.SlowThreshold},\n', ''))

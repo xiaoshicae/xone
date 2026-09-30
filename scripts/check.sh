@@ -79,7 +79,7 @@ tt=$(api ./xonetest)
 [ "$tt" -le 3 ] || fail "xonetest 公开 API $tt 个，超过上限 3"
 # xtls 是各客户端集成共用的 TLS 块：一个配置类型，外加校验和装出 *tls.Config 两个方法。
 # 它出现在使用者的配置结构体里（xredis.ClientConfig.TLS），同样是永久 API。
-# 服务端那一侧（xgin 的 ClientCAFile / MinVersion）形状不同，在 internal/web 里，不往这里加
+# 服务端那一侧（xgin、xecho 的 TLS 块，带 ClientCAFile / MinVersion）形状不同，在 internal/web 里，不往这里加
 tl=$(api ./xtls)
 [ "$tl" -le 3 ] || fail "xtls 公开 API $tl 个，超过上限 3"
 echo "✓ 公开 API：根包 $a（上限 15）、xhook $r（上限 6）、xconfig $x（上限 6）、xonetest $tt（上限 3）、xtls $tl（上限 3）"

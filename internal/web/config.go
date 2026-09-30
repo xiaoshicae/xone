@@ -39,14 +39,14 @@ func (c ServerConfig) ValidateListen() error {
 	// 只配一半的 TLS 是最危险的一种配错：服务会以明文起来，
 	// 而配置文件看上去是配了证书的
 	if (c.CertFile == "") != (c.KeyFile == "") {
-		return fmt.Errorf("CertFile and KeyFile must both be set or both be empty")
+		return fmt.Errorf("TLS.CertFile and TLS.KeyFile must both be set or both be empty")
 	}
 	// 同理：以为开了双向认证，实际是谁都能连的明文
 	if c.ClientCAFile != "" && !c.tlsEnabled() {
-		return fmt.Errorf("ClientCAFile requires CertFile and KeyFile, mutual TLS runs on top of TLS")
+		return fmt.Errorf("TLS.ClientCAFile requires TLS.CertFile and TLS.KeyFile, mutual TLS runs on top of TLS")
 	}
 	if _, ok := tlsVersions[c.MinVersion]; !ok {
-		return fmt.Errorf("unknown MinVersion=%q, supported: 1.2 / 1.3", c.MinVersion)
+		return fmt.Errorf("unknown TLS.MinVersion=%q, supported: 1.2 / 1.3", c.MinVersion)
 	}
 	return nil
 }
@@ -97,11 +97,11 @@ func (c ServerConfig) serverTLS() (*tls.Config, error) {
 	if c.ClientCAFile != "" {
 		pem, err := os.ReadFile(c.ClientCAFile)
 		if err != nil {
-			return nil, fmt.Errorf("read ClientCAFile: %w", err)
+			return nil, fmt.Errorf("read TLS.ClientCAFile: %w", err)
 		}
 		pool := x509.NewCertPool()
 		if !pool.AppendCertsFromPEM(pem) {
-			return nil, fmt.Errorf("ClientCAFile %s contains no PEM certificate", c.ClientCAFile)
+			return nil, fmt.Errorf("TLS.ClientCAFile %s contains no PEM certificate", c.ClientCAFile)
 		}
 		cfg.ClientCAs = pool
 		cfg.ClientAuth = tls.RequireAndVerifyClientCert

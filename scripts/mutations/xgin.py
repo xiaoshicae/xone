@@ -215,9 +215,9 @@ mutate("XGin MinVersion 只收 1.2 / 1.3", "internal/web/config.go", "./xgin", "
        swap('if _, ok := tlsVersions[c.MinVersion]; !ok {', 'if false {'))
 # 调用点：TLS 这几项从 XGin 的配置抄给 web.Server，漏抄一项就是以为开了、实际没开
 mutate("ClientCAFile 交给了 web.Server", "xgin/config.go", "./xgin", "TestStart_ClientCAFileEnablesMutualTLS",
-       swap('\t\tClientCAFile:      c.ClientCAFile,\n', ''))
+       swap('\t\tClientCAFile:      c.TLS.ClientCAFile,\n', ''))
 mutate("MinVersion 交给了 web.Server", "xgin/config.go", "./xgin", "TestStart_MinVersion",
-       swap('\t\tMinVersion:        c.MinVersion,\n', '\t\tMinVersion:        "1.2",\n'))
+       swap('\t\tMinVersion:        c.TLS.MinVersion,\n', '\t\tMinVersion:        "1.2",\n'))
 # gin 的 ResponseWriter 接口带 WriteString，handler 直接调它是常见写法。
 # 包装层只包 Write 的话，这条路写出去的响应在日志里永远是空的
 mutate("WriteString 写的响应也截得下来", "xgin/middleware/log.go", "./xgin", "TestLog",

@@ -189,8 +189,8 @@ func TestValidate(t *testing.T) {
 	for name, mutate := range map[string]func(*Config){
 		"端口为 0":              func(c *Config) { c.Port = 0 },
 		"端口越界":               func(c *Config) { c.Port = 70000 },
-		"只配了证书":              func(c *Config) { c.CertFile = "a.pem" },
-		"只配了私钥":              func(c *Config) { c.KeyFile = "a.key" },
+		"只配了证书":              func(c *Config) { c.TLS.CertFile = "a.pem" },
+		"只配了私钥":              func(c *Config) { c.TLS.KeyFile = "a.key" },
 		"Mode 不认识":           func(c *Config) { c.Mode = "prod" },
 		"MetricPath 不以 / 开头": func(c *Config) { c.MetricPath = "metrics" },
 		"MetricPath 为空":      func(c *Config) { c.MetricPath = "" },
@@ -264,12 +264,12 @@ func TestNetHTTP_ReadHeaderTimeoutZeroLetsSlowClientHoldConn(t *testing.T) {
 func TestValidate_HalfConfiguredTLS(t *testing.T) {
 	// 这是最危险的一种配错：服务会以明文起来，而配置文件看上去是配了证书的
 	c := DefaultConfig()
-	c.CertFile = "cert.pem"
+	c.TLS.CertFile = "cert.pem"
 	err := c.Validate()
 	if err == nil {
 		t.Fatal("只配一半的 TLS 应当启动失败，而不是静默降级成明文")
 	}
-	if !strings.Contains(err.Error(), "CertFile") || !strings.Contains(err.Error(), "KeyFile") {
+	if !strings.Contains(err.Error(), "TLS.CertFile") || !strings.Contains(err.Error(), "TLS.KeyFile") {
 		t.Errorf("错误该说清楚缺了什么，got=%v", err)
 	}
 }
@@ -701,14 +701,14 @@ func TestStartStop_GracefulShutdown(t *testing.T) {
 }
 
 func TestStart_DoesNotListenOnInvalidConfig(t *testing.T) {
-	err := startErr(t, New().WithConfig(configWith(func(c *Config) { c.CertFile = "只配了一半" })))
+	err := startErr(t, New().WithConfig(configWith(func(c *Config) { c.TLS.CertFile = "只配了一半" })))
 
 	var xe *xerror.Error
 	if !errors.As(err, &xe) || xe.Module != "xgin" || xe.Op != "config" {
 		t.Fatalf("该是 xgin 的 config 错误，got=%v", err)
 	}
 	// 进程里可能有两个服务：错误得说清楚是 WithConfig 那份，以及哪一项
-	if !strings.Contains(err.Error(), "WithConfig") || !strings.Contains(err.Error(), "CertFile") {
+	if !strings.Contains(err.Error(), "WithConfig") || !strings.Contains(err.Error(), "TLS.CertFile") {
 		t.Errorf("错误该说清楚是哪份配置的哪一项，got=%v", err)
 	}
 }
@@ -968,7 +968,7 @@ func TestLoadConfig_StartupFailsOnInvalidValue(t *testing.T) {
 	// Config 实现了 Validate，解码时就一起查了，于是 StageServer 的这个钩子让启动当场失败
 	for name, yml := range map[string]string{
 		"端口越界":        "XGin:\n  Port: 70000\n",
-		"只配一半的 TLS":   "XGin:\n  CertFile: cert.pem\n",
+		"只配一半的 TLS":   "XGin:\n  TLS:\n    CertFile: cert.pem\n",
 		"指标路径不以 / 开头": "XGin:\n  MetricPath: metrics\n",
 	} {
 		testkit.UseConfigEnv(t, yml)
@@ -1524,7 +1524,7 @@ func TestZeroValue_ReportsUnderModuleName(t *testing.T) {
 	// 调用方的 xerror.Is(err, "xgin") 才成立，日志里也不会冒出 " listening" 这种没头的消息
 	buf := captureLog(t)
 	cert := filepath.Join(t.TempDir(), "missing.pem")
-	err := startErr(t, (&XGin{}).WithConfig(configWith(quiet, on(testkit.FreePort(t)), func(c *Config) { c.CertFile, c.KeyFile = cert, cert })))
+	err := startErr(t, (&XGin{}).WithConfig(configWith(quiet, on(testkit.FreePort(t)), func(c *Config) { c.TLS.CertFile, c.TLS.KeyFile = cert, cert })))
 	if !xerror.Is(err, "xgin") || xerror.Module(err) != "xgin" {
 		t.Fatalf("零值的 Start 报的错该算 xgin 的，got=%v", err)
 	}
@@ -1551,7 +1551,7 @@ func TestStart_NoListeningLogWhenListenFails(t *testing.T) {
 	}
 	defer busy.Close()
 	for name, mutate := range map[string]func(*Config){
-		"missing cert": func(c *Config) { c.Port = testkit.FreePort(t); c.CertFile, c.KeyFile = cert, cert },
+		"missing cert": func(c *Config) { c.Port = testkit.FreePort(t); c.TLS.CertFile, c.TLS.KeyFile = cert, cert },
 		"port in use":  func(c *Config) { c.Port = busy.Addr().(*net.TCPAddr).Port },
 	} {
 		buf := captureLog(t)

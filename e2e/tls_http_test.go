@@ -118,10 +118,11 @@ func TestTLS_XGin(t *testing.T) {
 	xonetest.UseConfigYAML(t, fmt.Sprintf(`XGin:
   Host: 127.0.0.1
   Port: %d
-  CertFile: %q
-  KeyFile: %q
-  ClientCAFile: %q
-  MinVersion: "1.3"
+  TLS:
+    CertFile: %q
+    KeyFile: %q
+    ClientCAFile: %q
+    MinVersion: "1.3"
   Log: false
   Metric: false
 `, port, certs.ServerCert, certs.ServerKey, certs.CAFile))
@@ -165,7 +166,7 @@ func TestTLS_XGin(t *testing.T) {
 		want string
 	}{
 		{"不带客户端证书", &tls.Config{}, "certificate required"},
-		// 服务端在握手里列出 ClientCAFile 里的 CA，Go 的客户端手里的证书不是它们签的就不出示
+		// 服务端在握手里列出 TLS.ClientCAFile 里的 CA，Go 的客户端手里的证书不是它们签的就不出示
 		{"客户端证书不是ClientCAFile里的CA签的", &tls.Config{Certificates: []tls.Certificate{mustPair(t, certs.StrangerCert, certs.StrangerKey)}},
 			"certificate required"},
 		{"TLS1.2的客户端碰上MinVersion1.3", &tls.Config{MaxVersion: tls.VersionTLS12,

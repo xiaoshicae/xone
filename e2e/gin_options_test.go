@@ -192,7 +192,7 @@ func TestCoverage_MaxMultipartMemoryIsSpillThresholdNotBodyLimit(t *testing.T) {
 	})
 }
 
-// xgin/README.md XGin.CertFile / KeyFile：配上就是 HTTPS，「TLS 模式下 HTTP/2 本来就是自动的」；
+// xgin/README.md XGin.TLS.CertFile / KeyFile：配上就是 HTTPS，「TLS 模式下 HTTP/2 本来就是自动的」；
 // 「与 KeyFile 必须同时配或同时留空，只配一半会启动失败」
 func TestCoverage_CertConfiguredMeansHTTPSWithHTTP2Negotiated(t *testing.T) {
 	harness.Require(t)
@@ -201,7 +201,7 @@ func TestCoverage_CertConfiguredMeansHTTPSWithHTTP2Negotiated(t *testing.T) {
 	t.Run("CertFile + KeyFile", func(t *testing.T) {
 		t.Parallel()
 		cert, key, pool := harness.SelfSignedCert(t, t.TempDir())
-		p := harness.Start(t, harness.Options{NoWait: true, Overlay: fmt.Sprintf("XGin:\n  CertFile: %q\n  KeyFile: %q\n", cert, key)})
+		p := harness.Start(t, harness.Options{NoWait: true, Overlay: fmt.Sprintf("XGin:\n  TLS:\n    CertFile: %q\n    KeyFile: %q\n", cert, key)})
 		c := covHTTPSClient(pool)
 		defer c.CloseIdleConnections()
 		https := fmt.Sprintf("https://127.0.0.1:%d", p.Port)
@@ -230,8 +230,8 @@ func TestCoverage_CertConfiguredMeansHTTPSWithHTTP2Negotiated(t *testing.T) {
 	t.Run("只配 CertFile 启动失败", func(t *testing.T) {
 		t.Parallel()
 		cert, _, _ := harness.SelfSignedCert(t, t.TempDir())
-		stderr := covStartupError(t, harness.Options{Overlay: fmt.Sprintf("XGin:\n  CertFile: %q\n", cert)})
-		faultMustContain(t, "只配 CertFile 时的启动错误", stderr, "xgin", "CertFile", "KeyFile")
+		stderr := covStartupError(t, harness.Options{Overlay: fmt.Sprintf("XGin:\n  TLS:\n    CertFile: %q\n", cert)})
+		faultMustContain(t, "只配 CertFile 时的启动错误", stderr, "xgin", "TLS.CertFile", "TLS.KeyFile")
 	})
 }
 

@@ -160,7 +160,7 @@ func New(ctx context.Context, cfg Config) (*T, io.Closer, error)  // 会建连�
 为此即使整块没配，启动钩子也走一遍 `Build`，注册表由此知道启动钩子跑过了。
 
 `xclient` 是 internal 的：那是三个模块的共用代码，不是使用者要学的东西。自己写的集成要多实例，一个加锁的 map 就够了。
-服务端 TLS（xgin 的 `ClientCAFile` / `MinVersion`）形状不同，在 `internal/web` 里，不往 `xtls` 加。
+服务端 TLS（xgin、xecho 的 `TLS:` 块，带 `ClientCAFile` / `MinVersion`、没有 `Enable`）形状不同，在 `internal/web` 里，不往 `xtls` 加。
 `internal/web` 同理：使用者看到的仍是 `xgin.Config` 和 `xgin/middleware` 的函数，词表进程里只有一张，
 换一个 Web 框架的服务，client_ip 信谁、日志里遮什么、退出时等不等 handler 都是同一个答案。
 

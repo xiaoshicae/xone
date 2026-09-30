@@ -16,7 +16,7 @@ package e2e
 // 文件划分：
 //
 //	tls_test.go       本文件：PostgreSQL、MySQL、Redis
-//	tls_http_test.go  xhttp 连 TLS 桩（自签 CA + 双向认证）、xgin 的 ClientCAFile / MinVersion
+//	tls_http_test.go  xhttp 连 TLS 桩（自签 CA + 双向认证）、xgin 的 TLS.ClientCAFile / MinVersion
 //	clickhouse_tls_test.go  ClickHouse（Docker 里另起的容器，见 harness/tls_clickhouse.go）
 
 import (

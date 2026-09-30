@@ -933,6 +933,48 @@ func TestNew_RestyLogsGoToSlogWithoutQuery(t *testing.T) {
 	}
 }
 
+func TestNew_RestyLogsScrubErrorArgsStructurally(t *testing.T) {
+	// Log 关着、resty 重试路径上的日志照打：参数里的 *url.Error 按结构去掉查询串。
+	// Location 里问号前有空格，按文本认不出来
+	srv, _ := echo(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Location", "/a b?token=hunter2")
+		w.WriteHeader(http.StatusFound)
+	})
+	var buf strings.Builder
+	old := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&lockedWriter{w: &buf}, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(old) })
+	c := DefaultConfig()
+	c.RetryCount, c.RetryWaitTime, c.RetryMaxWaitTime = 1, time.Millisecond, time.Millisecond
+	c.Metric, c.Trace = false, false
+	client, closer, err := New(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closer.Close()
+	client.SetRedirectPolicy(resty.NoRedirectPolicy())
+	client.R().Get(srv.URL)
+	got := buf.String()
+	if !strings.Contains(got, "Attempt") || !strings.Contains(got, "/a%20b") {
+		t.Fatalf("前提：重定向被拒也会重试，resty 打出每次尝试的那行，got=%s", got)
+	}
+	if strings.Contains(got, "hunter2") {
+		t.Errorf("查询串里的令牌进了日志：%s", got)
+	}
+}
+
+func TestRestyLogger_TextScrubbed(t *testing.T) {
+	// 不是错误的参数、格式串本身里的 URL 按文本去掉查询串和 userinfo
+	var buf strings.Builder
+	old := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&lockedWriter{w: &buf}, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(old) })
+	restyLogger{}.Warnf("see %s and https://u:p@h/y#frag", "http://h/x?token=hunter2")
+	if got := buf.String(); !strings.Contains(got, `see http://h/x and https://h/y`) {
+		t.Errorf("resty 日志里的 URL 该去掉查询串、片段和 userinfo，got=%s", got)
+	}
+}
+
 // lockedWriter resty 在自己的协程里打日志，测试这边同时在读
 type lockedWriter struct {
 	mu sync.Mutex
@@ -945,15 +987,15 @@ func (l *lockedWriter) Write(p []byte) (int, error) {
 	return l.w.Write(p)
 }
 
-func TestStripQuery(t *testing.T) {
+func TestScrubText_Query(t *testing.T) {
 	for in, want := range map[string]string{
 		`Get "http://h/x?token=a&b=c": dial tcp: refused, Attempt 1`: `Get "http://h/x": dial tcp: refused, Attempt 1`,
 		`Post "https://h:8443/a/b#frag": EOF`:                        `Post "https://h:8443/a/b": EOF`,
 		`two http://a/x?k=1 and https://b/y?k=2 end`:                 `two http://a/x and https://b/y end`,
 		`no url here?token=a`:                                        `no url here?token=a`,
 	} {
-		if got := stripQuery(in); got != want {
-			t.Errorf("stripQuery(%q)\n got=%q\nwant=%q", in, got, want)
+		if got := scrubText(in); got != want {
+			t.Errorf("scrubText(%q)\n got=%q\nwant=%q", in, got, want)
 		}
 	}
 }

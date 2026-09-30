@@ -110,9 +110,11 @@ type ClientConfig struct {
 	// Log 是否每条命令记一条日志（pipeline 整个记一条）。默认关闭。
 	//
 	// 只记命令名和第一个 key，不记值、不记其余参数；AUTH、HELLO 这类参数里可能有凭证的
-	// 命令只记命令名。key 不存在（redis.Nil）不算失败，照常记 INFO、带 nil=true。
-	// 失败时 error 字段只记服务端的错误码（另有 error_code 字段），不记原文：实测 Redis 7.0.15
-	// 的 ERR unknown command 'foo', with args beginning with: … 把参数原样带出来。
+	// 命令只记命令名。key 是整条记的（超过 256 字节才截断）：开着 Log 时别把令牌、手机号、
+	// 邮箱拼进 key。key 不存在（redis.Nil）、WATCH 冲突（redis.TxFailedErr）不算失败，照常记 INFO。
+	// 服务端报的错只记错误码（另有 error_code 字段），不记原文：实测 Redis 7.0.15
+	// 的 ERR unknown command 'foo', with args beginning with: … 把参数原样带出来；
+	// 超时、连不上、ctx 取消、redis: client is closed 这类客户端一侧的错误照原文记。
 	// 返回给调用方的错误不变。字段和实测见 xredis/README.md「可观测」「行为与实测」。
 	Log bool `yaml:"Log"`
 

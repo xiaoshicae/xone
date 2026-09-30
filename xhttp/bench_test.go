@@ -25,7 +25,7 @@ func (stubPool) RoundTrip(r *http.Request) (*http.Response, error) {
 
 // benchCall 按 New 的装配方式建 client，只把连接池换成桩，然后反复发同一个 GET
 func benchCall(b *testing.B, cfg Config) {
-	client := newResty(&http.Client{Transport: traced(cfg, stubPool{}), Timeout: cfg.Timeout})
+	client := newResty(&http.Client{Transport: traced(cfg, stubPool{}), Timeout: cfg.Timeout}, cfg.Log)
 	if cfg.Metric {
 		installMetrics(client, newDurationHistogram())
 	}

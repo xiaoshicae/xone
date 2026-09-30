@@ -98,9 +98,37 @@ mutate("Redis 命令日志用命令的 ctx", "xredis/log.go", "./xredis", "TestL
 mutate("redis.Nil 不算失败", "xredis/log.go", "./xredis", "TestLog_NilIsNotAFailure",
        swap('failed := err != nil && !errors.Is(err, redis.Nil)', 'failed := err != nil'))
 mutate("pipeline 里的 redis.Nil 不算失败", "xredis/log.go", "./xredis", "TestLog_PipelineNilIsNotFailureButLaterErrorIs",
-       swap('\tif err == nil || errors.Is(err, redis.Nil) {\n', '\tif err == nil {\n'))
+       swap('\tif err == nil || errors.Is(err, redis.Nil) || txFailed {\n', '\tif err == nil || txFailed {\n'))
 mutate("pipeline 认出 nil 之后的真错误", "xredis/log.go", "./xredis", "TestLog_PipelineNilIsNotFailureButLaterErrorIs",
-       swap('if e := c.Err(); e != nil && !errors.Is(e, redis.Nil) {', 'if e := c.Err(); false && e != nil {'))
+       swap('if e := c.Err(); e != nil && !errors.Is(e, redis.Nil) && !errors.Is(e, redis.TxFailedErr) {', 'if e := c.Err(); false && e != nil {'))
+mutate("pipeline 记第一个真错误，不是最后一个", "xredis/log.go", "./xredis", "TestLog_PipelineReportsFirstError",
+       swap('\t\t\t\terr = e\n\t\t\t\tbreak\n', '\t\t\t\terr = e\n'))
+# WATCH 冲突是 proto.RedisError（和服务端的错误同一个类型），原先记成 redis pipeline failed 的 WARN
+mutate("WATCH 冲突不算失败", "xredis/log.go", "./xredis", "TestLog_WatchConflict",
+       swap('\ttxFailed := errors.Is(err, redis.TxFailedErr)\n', '\ttxFailed := false\n'))
+mutate("WATCH 冲突时每条命令上的 TxFailedErr 也不算失败", "xredis/log.go", "./xredis", "TestLog_WatchConflict",
+       swap(' && !errors.Is(e, redis.TxFailedErr) {', ' {'))
+mutate("WATCH 冲突带 tx_failed", "xredis/log.go", "./xredis", "TestLog_WatchConflict",
+       swap('\t\tattrs = append(attrs, "tx_failed", true)\n', ''))
+# cmd.Name() 是第 1 个参数原样小写：Do(ctx, "SET k1 <值>") 把值带进了 cmd。打在两个调用点上
+mutate("命令名不像命令名就不记", "xredis/log.go", "./xredis", "TestLog_InvalidCmdNameReplaced",
+       swap('attrs = append(attrs, "cmd", cmdName(cmd))', 'attrs = append(attrs, "cmd", cmd.Name())'))
+mutate("pipeline 的命令名不像命令名就不记", "xredis/log.go", "./xredis", "TestLog_InvalidCmdNameReplaced",
+       swap('names = append(names, cmdName(c))', 'names = append(names, c.Name())'))
+mutate("命令名最长 64 字节", "xredis/log.go", "./xredis", "TestLog_InvalidCmdNameReplaced",
+       swap('[a-z0-9._|-]{0,63}$', '[a-z0-9._|-]*$'))
+mutate("又慢又失败的命令记失败", "xredis/log.go", "./xredis", "TestLog_SlowAndFailedLogsFailed",
+       swap('\tcase failed:\n', '\tcase failed && !h.isSlow(elapsed):\n'))
+mutate("又慢又失败的 pipeline 记失败", "xredis/log.go", "./xredis", "TestLog_SlowAndFailedLogsFailed",
+       swap('\tcase err != nil:\n', '\tcase err != nil && !h.isSlow(elapsed):\n'))
+mutate("slog 只收 WARN 时照样记失败和慢命令", "xredis/log.go", "./xredis", "TestLog_WarnLevelHandlerStillGetsProblems",
+       swap('if !failed && !h.isSlow(elapsed) && !slog.Default().Enabled(ctx, slog.LevelInfo) {', 'if !slog.Default().Enabled(ctx, slog.LevelInfo) {'))
+mutate("slog 只收 WARN 时照样记失败和慢 pipeline", "xredis/log.go", "./xredis", "TestLog_WarnLevelHandlerStillGetsProblems",
+       swap('if err == nil && !h.isSlow(elapsed) && !slog.Default().Enabled(ctx, slog.LevelInfo) {', 'if !slog.Default().Enabled(ctx, slog.LevelInfo) {'))
+mutate("ctx 取消照原文记", "xredis/log.go", "./xredis", "TestLog_ContextCanceledKeepsText",
+       swap('errors.Is(err, context.Canceled) || ', ''))
+mutate("Redis 命令日志的耗时保留到微秒", "xredis/log.go", "./xredis", "TestMs_KeepsSubMillisecond",
+       swap('func ms(d time.Duration) float64 { return float64(d.Microseconds()) / 1000 }', 'func ms(d time.Duration) float64 { return float64(d.Milliseconds()) }'))
 # 只记第一个 key：往后错一位，SET 的值就成了 key 进了日志
 mutate("Redis 命令日志不记值", "xredis/log.go", "./xredis", "TestLog_ValuesAndOtherArgsNeverLogged|TestFirstKey",
        swap('\treturn argString(args, pos)\n}', '\treturn argString(args, pos+1)\n}'))
@@ -113,6 +141,9 @@ mutate("XREADGROUP 跳过组名和消费者名", "xredis/log.go", "./xredis", "T
        swap('pos = afterStreams(args, 4)', 'pos = afterStreams(args, 1)'))
 mutate("超长的 key 截断", "xredis/log.go", "./xredis", "TestLog_LongKeyTruncated",
        swap('\tif len(key) <= maxLoggedKey {\n', '\tif true {\n'))
+# 一串 0x80 没有字符起点：一路往回找会截成空串
+mutate("不是 UTF-8 的长 key 不截成空串", "xredis/log.go", "./xredis", "TestKeyAttrs_InvalidUTF8NotTruncatedToEmpty",
+       swap('\tif !utf8.RuneStart(key[cut]) {\n\t\tcut = maxLoggedKey\n\t}\n', ''))
 # 实测 Redis 7.0.15：ERR unknown command 的原文把参数带出来
 mutate("Redis 服务端错误只记错误码", "xredis/log.go", "./xredis", "TestLog_FailedCommandLogsOnlyErrorCode",
        swap('"error", "redis server error " + code + " (message omitted, it may contain argument values)", "error_code", code}',

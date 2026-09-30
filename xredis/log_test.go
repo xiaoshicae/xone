@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -549,4 +550,158 @@ func (h scRecorder) Handle(ctx context.Context, r slog.Record) error {
 		h.mu.Unlock()
 	}
 	return nil
+}
+
+func TestLog_InvalidCmdNameReplaced(t *testing.T) {
+	// cmd 字段是 go-redis 的 cmd.Name()：第 1 个参数原样小写，不截断。
+	// Do(ctx, "SET k1 <值>") 把整条命令塞进了第 1 个参数，值就跟着进了 cmd
+	val := secret(t, "val")
+	f := newFakeRedis(t)
+	lines := capture(t)
+	client := logClient(t, f, "default")
+	ctx := context.Background()
+	client.Do(ctx, "SET k1 "+val)
+	client.Do(ctx, "json.set", "doc:1", "$", "{}")
+	client.Do(ctx, strings.Repeat("a", 65))
+	client.Pipelined(ctx, func(p redis.Pipeliner) error { p.Do(ctx, "SET k2 "+val); p.Get(ctx, "a"); return nil })
+
+	var cmds []any
+	for _, l := range cmdLines(lines(), "redis command") {
+		cmds = append(cmds, l["cmd"])
+	}
+	if fmt.Sprint(cmds) != "[<invalid> json.set <invalid>]" {
+		t.Errorf("不像命令名的 cmd 该换成 <invalid>，模块命令（json.set）照记，got=%v", cmds)
+	}
+	p := cmdLines(lines(), "redis pipeline")
+	if len(p) != 1 || fmt.Sprint(p[0]["cmds"]) != "[<invalid> get]" {
+		t.Errorf("pipeline 的 cmds 同样换成 <invalid>，got=%v", p)
+	}
+	if strings.Contains(strings.ToLower(fmt.Sprint(lines())), strings.ToLower(val)) {
+		t.Errorf("值从命令名进了日志：%v", lines())
+	}
+}
+
+func TestLog_WatchConflictIsNotAFailure(t *testing.T) {
+	// WATCH 的 key 被别人改了，EXEC 回空数组，go-redis 返回 redis.TxFailedErr。
+	// 它是 proto.RedisError（和服务端的错误同一个类型），但它是乐观锁的正常结果，不是故障
+	f := newFakeRedis(t)
+	f.setReply("exec", "*-1\r\n")
+	lines := capture(t)
+	client := logClient(t, f, "default")
+	ctx := context.Background()
+	_, err := client.TxPipelined(ctx, func(p redis.Pipeliner) error { p.Set(ctx, "w", "v", 0); return nil })
+	if !errors.Is(err, redis.TxFailedErr) {
+		t.Fatalf("前提：EXEC 回空数组时返回 redis.TxFailedErr，got=%v", err)
+	}
+	got := cmdLines(lines(), "redis pipeline", "redis pipeline failed", "slow redis pipeline")
+	if len(got) != 1 || got[0]["msg"] != "redis pipeline" || got[0]["level"] != "INFO" || got[0]["tx_failed"] != true {
+		t.Fatalf("WATCH 冲突该记 INFO 的 redis pipeline、带 tx_failed=true，got=%v", lines())
+	}
+	if _, ok := got[0]["error"]; ok {
+		t.Errorf("WATCH 冲突不带 error，got=%v", got[0])
+	}
+}
+
+func TestLog_WatchConflictSlowStillMarked(t *testing.T) {
+	f := newFakeRedis(t)
+	f.setReply("exec", "*-1\r\n")
+	f.setDelay("exec", 40*time.Millisecond)
+	lines := capture(t)
+	client := logClient(t, f, "default", func(c *ClientConfig) { c.SlowThreshold = 10 * time.Millisecond })
+	ctx := context.Background()
+	client.TxPipelined(ctx, func(p redis.Pipeliner) error { p.Set(ctx, "w", "v", 0); return nil })
+	if got := cmdLines(lines(), "slow redis pipeline"); len(got) != 1 || got[0]["tx_failed"] != true {
+		t.Errorf("慢的 WATCH 冲突记 slow redis pipeline、也带 tx_failed=true，got=%v", lines())
+	}
+}
+
+func TestKeyAttrs_InvalidUTF8NotTruncatedToEmpty(t *testing.T) {
+	// 一串 0x80：每个字节都不是字符的起点，一路往回找会退到 0
+	got := keyAttrs(strings.Repeat("\x80", 300))
+	if k := got[1].(string); len(k) != maxLoggedKey || got[3] != true {
+		t.Errorf("不是 UTF-8 的 key 截到 %d 字节，不该截成空串，got 长度 %d", maxLoggedKey, len(k))
+	}
+}
+
+func TestLog_WarnLevelHandlerStillGetsProblems(t *testing.T) {
+	// slog 只收 WARN 时跳过拼字段的捷径，不能把失败、慢、pipeline 失败也跳过
+	f := newFakeRedis(t)
+	f.setReply("incr", "-ERR value is not an integer or out of range\r\n")
+	f.setDelay("get", 40*time.Millisecond)
+	lines := captureAt(t, slog.LevelWarn)
+	client := logClient(t, f, "default", func(c *ClientConfig) { c.SlowThreshold = 10 * time.Millisecond })
+	ctx := context.Background()
+	client.Set(ctx, "ok", "v", 0)
+	client.Incr(ctx, "n")
+	client.Get(ctx, "slow")
+	client.Pipelined(ctx, func(p redis.Pipeliner) error { p.Incr(ctx, "n"); return nil })
+	client.Pipelined(ctx, func(p redis.Pipeliner) error { p.Get(ctx, "slow"); return nil })
+	var msgs []any
+	for _, l := range cmdLines(lines(), "redis command", "redis command failed", "slow redis command",
+		"redis pipeline", "redis pipeline failed", "slow redis pipeline") {
+		msgs = append(msgs, l["msg"])
+	}
+	if fmt.Sprint(msgs) != "[redis command failed slow redis command redis pipeline failed slow redis pipeline]" {
+		t.Errorf("只收 WARN 的 handler 照样该拿到失败、慢、pipeline 失败的行，got=%v", msgs)
+	}
+}
+
+func TestLog_PipelineReportsFirstError(t *testing.T) {
+	// 头一条是 nil：Exec 返回 redis.Nil，真错误要自己往后找，找到的是第一个
+	f := newFakeRedis(t)
+	f.setReply("get", "$-1\r\n")
+	f.setReply("incr", "-WRONGTYPE Operation against a key holding the wrong kind of value\r\n")
+	f.setReply("decr", "-ERR value is not an integer or out of range\r\n")
+	lines := capture(t)
+	client := logClient(t, f, "default")
+	ctx := context.Background()
+	client.Pipelined(ctx, func(p redis.Pipeliner) error { p.Get(ctx, "a"); p.Incr(ctx, "b"); p.Decr(ctx, "c"); return nil })
+	got := cmdLines(lines(), "redis pipeline failed")
+	if len(got) != 1 || got[0]["error_code"] != "WRONGTYPE" {
+		t.Errorf("pipeline 记第一个错误（WRONGTYPE），不是最后一个，got=%v", lines())
+	}
+}
+
+func TestLog_SlowAndFailedLogsFailed(t *testing.T) {
+	f := newFakeRedis(t)
+	f.setReply("get", "-ERR boom\r\n")
+	f.setDelay("get", 40*time.Millisecond)
+	f.setReply("incr", "-ERR boom\r\n")
+	f.setDelay("incr", 40*time.Millisecond)
+	lines := capture(t)
+	client := logClient(t, f, "default", func(c *ClientConfig) { c.SlowThreshold = 10 * time.Millisecond })
+	ctx := context.Background()
+	client.Get(ctx, "k")
+	client.Pipelined(ctx, func(p redis.Pipeliner) error { p.Incr(ctx, "n"); return nil })
+	if got := cmdLines(lines(), "redis command failed"); len(got) != 1 || got[0]["error_code"] != "ERR" {
+		t.Errorf("又慢又失败的命令记 redis command failed、带错误，got=%v", lines())
+	}
+	if got := cmdLines(lines(), "redis pipeline failed"); len(got) != 1 || got[0]["error_code"] != "ERR" {
+		t.Errorf("又慢又失败的 pipeline 记 redis pipeline failed、带错误，got=%v", lines())
+	}
+	if got := cmdLines(lines(), "slow redis command", "slow redis pipeline"); len(got) != 0 {
+		t.Errorf("失败优先，不再另记慢，got=%v", got)
+	}
+}
+
+func TestLog_ContextCanceledKeepsText(t *testing.T) {
+	f := newFakeRedis(t)
+	lines := capture(t)
+	client := logClient(t, f, "default")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	client.Get(ctx, "k")
+	got := cmdLines(lines(), "redis command failed")
+	if len(got) != 1 || got[0]["error"] != "context canceled" {
+		t.Errorf("ctx 取消照原文记，got=%v", lines())
+	}
+}
+
+func TestMs_KeepsSubMillisecond(t *testing.T) {
+	if got := ms(1500 * time.Microsecond); got != 1.5 {
+		t.Errorf("ms(1.5ms) = %v，want 1.5", got)
+	}
+	if got := ms(250 * time.Microsecond); got != 0.25 {
+		t.Errorf("ms(250µs) = %v，want 0.25", got)
+	}
 }

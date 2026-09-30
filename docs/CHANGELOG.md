@@ -8,6 +8,16 @@
 
 ## [未发布]
 
+### 修复
+
+- xhttp 的 `Log: true`：重定向策略拒绝时（`NoRedirectPolicy`、`FlexibleRedirectPolicy` 用完、`Location` 转义不合法）`error` 里带着 `Location` 的查询串，查询串里有没转义的空格时空格之后的部分也留在日志里；现在这两种都去掉了，resty 自己的日志（`xhttp resty log`）同样。
+- xhttp 的 `Log: true` 不再替换每个请求的 resty logger：自己 `client.SetLogger(…)` / `R().SetLogger(…)` 的，resty 的提醒（比如明文 HTTP 上用 Basic Auth）重新交给你的 logger。
+- xhttp 的请求日志：一次都没发出去就失败的请求（比如 `SetSRV` 查不到）`elapsed_ms` 记 `0`，不再是 `9223372036854.775`；`path` 改记转义过的形式（`/a%2Fb` 不再记成 `/a/b`）。
+- xredis 的 `Log: true`：`cmd` 字段不像命令名时记成 `<invalid>`（`Do(ctx, "SET k1 <值>")` 原先把整条命令连同值记进 `cmd`），pipeline 的 `cmds` 同样。
+- xredis 的 `Log: true`：WATCH 冲突（`redis.TxFailedErr`）不再记成 `redis pipeline failed` 的 WARN，改为 INFO 的 `redis pipeline`、带 `tx_failed: true`。
+- xredis 的 `Log: true`：超过 256 字节、又不是 UTF-8 的 key 不再截成空串。
+- 文档更正：xredis 的命令日志只对服务端报的错省略原文，超时、`context canceled`、`redis: client is closed` 这类客户端一侧的错误照原文记；key 是整条记的，开着 `Log` 时别把令牌、手机号、邮箱拼进 key。
+
 ## [v1.20.0] - 2026-09-30
 
 ### 不兼容变更

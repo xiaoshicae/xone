@@ -14,9 +14,15 @@ import (
 // capture 把 slog 默认 logger 换成写进 buffer 的，返回取解析结果的函数
 func capture(t *testing.T) func() []map[string]any {
 	t.Helper()
+	return captureAt(t, slog.LevelDebug)
+}
+
+// captureAt 同 capture，handler 只收 level 及以上
+func captureAt(t *testing.T, level slog.Level) func() []map[string]any {
+	t.Helper()
 	var buf strings.Builder
 	old := slog.Default()
-	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: level})))
 	t.Cleanup(func() { slog.SetDefault(old) })
 
 	return func() []map[string]any {

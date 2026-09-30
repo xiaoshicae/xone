@@ -98,9 +98,11 @@ type Config struct {
 	// Log 是否每个逻辑请求记一条日志（所有重试结束之后记一次）。默认关闭。
 	//
 	// 记方法、host、路径、状态码、耗时、尝试次数，失败时加上错误；查询串、片段、userinfo、
-	// Header、body 一律不记，错误原文里 URL 的查询串也去掉。5xx 和传输层错误记 warn。
+	// Header、body 一律不记，错误原文里 URL 的查询串也去掉。resty 返回了错误（传输层错误、
+	// SetResult 解不开、重定向被拒）和 5xx 记 warn。
 	// 开着时 resty 自己在重试路径上的那几行（每次尝试一行 WARN、用完一行 ERROR）不再打，
-	// 一个请求只有这一行。字段和实测见 xhttp/README.md「可观测」「行为与实测」。
+	// 一个请求只有这一行；自己 SetLogger 的不受影响。SetDebug(true) 的请求转储不在此列，
+	// 查询串和 Header 原样进日志。字段和实测见 xhttp/README.md「可观测」「行为与实测」。
 	Log bool `yaml:"Log"`
 
 	// SlowThreshold 整次逻辑请求（含重试和退避）超过这个耗时就记一条 warn 日志。默认 1s，需 Log 开启，配 0 不记。

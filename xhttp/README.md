@@ -98,13 +98,23 @@ TLS 块适合「只调一类内部下游」的客户端；要同时调公网的�
 | 消息 | 级别 | 字段 |
 |---|---|---|
 | `xhttp ready` | INFO | `timeout`、`max_idle_conns_per_host`、`retries` |
-| `xhttp resty log` | resty 的原级别 | `detail`（resty 自己的日志原文，URL 去掉查询串） |
-| `http request` / `slow http request` / `http request failed` | INFO / WARN / WARN | `method`、`host`（`host[:port]`）、`path`（不带查询串）、`status`（没拿到响应时 `0`）、`elapsed_ms`（整次逻辑请求，含重试和退避）、`attempts`；慢请求带 `threshold_ms`；有错误时 `error`（URL 去掉查询串和 userinfo）（需 `XHttp.Log: true`） |
+| `xhttp resty log` | resty 的原级别 | `detail`（resty 自己的日志原文，URL 去掉查询串、片段和 userinfo；`SetDebug(true)` 的请求转储例外，见下） |
+| `http request` / `slow http request` / `http request failed` | INFO / WARN / WARN | `method`、`host`（`host[:port]`）、`path`（转义过的形式，如 `/a%2Fb`；不带查询串）、`status`（没拿到响应时 `0`）、`elapsed_ms`（整次逻辑请求，含重试和退避；一次都没发出去时 `0`）、`attempts`；慢请求带 `threshold_ms`；有错误时 `error`（URL 去掉查询串和 userinfo）（需 `XHttp.Log: true`） |
 
-- **失败**是没拿到响应（传输层错误、ctx 到期）或者下游回了 5xx；4xx 是下游的业务回答，记 INFO。
+- **失败**是 resty 返回了错误，或者下游回了 5xx；4xx 是下游的业务回答，记 INFO。返回错误的不只是没拿到响应（传输层错误、ctx 到期）：
+  200 但 `SetResult` 解不开（`status: 200`、`error: invalid character …`）、`NoRedirectPolicy` 下的 3xx 和 `FlexibleRedirectPolicy`
+  用完（`status: 302`、`error: Get "/b": auto redirect is disabled`）也记 `http request failed`。又慢又失败的记失败，不另记慢。
 - **一个逻辑请求一行**，所有重试结束后才记。`Log: true` 时 resty 自己在重试路径上的那几行 `xhttp resty log`
-  （每次失败的尝试一行 WARN、用完一行 ERROR）不再打，内容就是这一行的 `error`；resty 别的提醒（比如明文 HTTP 上用 Basic Auth）照旧。
+  （每次失败的尝试一行 WARN、用完一行 ERROR）不再打，内容就是这一行的 `error`；resty 别的提醒（比如明文 HTTP 上用 Basic Auth）、
+  配置调用被忽略时的 ERROR 照旧。自己 `client.SetLogger(…)` 或 `R().SetLogger(…)` 的，resty 的日志照 resty 的规矩全交给你的 logger（含重试路径那两种）。
+- **没有日志行的**：发出去之前就被 resty 拒掉的请求（比如 GET 带 multipart，报 `multipart content is not allowed in HTTP verb [GET]`），
+  resty 只调 `OnInvalid`，不调 `OnSuccess` / `OnError`。
+- **`SetDoNotParseResponse(true)` 时 `elapsed_ms` 是到响应头的时间**：body 交给你自己读，resty 拿到响应头就算完。
+  实测下游先回头、150ms 后才写完 body：这样记 `0.25`，照常读 body 记 `151`。
 - 查询串、片段、userinfo、Header、body 一律不记。日志用调用方的 ctx，`trace_id` / `span_id` 是调用方的（出站 Span 这时已经结束）。
+- **警告：`SetDebug(true)` 会把整个请求原样写进日志**。resty 把请求行（带查询串）、全部 Header（`Authorization` 也在）、body 和响应拼成一段文本，
+  经 `xhttp resty log`（DEBUG）写出去；请求行里的路径不带 `http://` 也不在引号里，xhttp 认不出来，实测 `GET  /ok?token=…`、
+  `Authorization: Bearer …` 原样出现。只在本机排查时开，不要在线上开。
 
 日志的全局约定（`trace_id` 注入、`xlog.AddKV`、框架的启停日志）见 [`docs/observability.md`](../docs/observability.md#日志)。
 
@@ -162,14 +172,19 @@ resty v2.17.2、otelhttp v0.71.0、Go 1.25。
 |---|---|---|---|
 | 200 | 1 次 | `OnSuccess` 1 次 | `http request`，`status: 200`、`attempts: 1` |
 | 500 | 1 次（拿到响应不重试） | `OnSuccess` 1 次 | `http request failed`，`status: 500`、`attempts: 1` |
-| 每次都掐断连接 | 4 次 | `OnError` 1 次，`Attempt` 3 | `http request failed`，`status: 0`、`attempts: 3`、`elapsed_ms` 约 12（含两次退避）、`error: Get "http://127.0.0.1:…/cut": EOF` |
+| 每次都掐断连接 | 3 次；池子里有这个下游的空闲连接时 4 次 | `OnError` 1 次，`Attempt` 3 | `http request failed`，`status: 0`、`attempts: 3`、`elapsed_ms` 约 12（含两次退避）、`error: Get "http://127.0.0.1:…/cut": EOF` |
 | 端口没人监听 | — | `OnError` 1 次，`Attempt` 3 | `http request failed`，`attempts: 3`、`error: Get "http://127.0.0.1:1/x/y": dial tcp …: connection refused` |
 
-掐断连接那一行下游收到 4 次、`attempts` 是 3：第一次尝试用的是池子里复用的空闲连接，标准库在它被对端关掉时自己在新连接上重发了一次 GET
-（见上面 `IdleConnTimeout` 那一条），这一次 resty 看不见。`attempts` 数的是 resty 的尝试。
+掐断连接那一行：新建的 client 下游收到 3 次；先发过一个成功的请求、池子里留着一条空闲连接的话收到 4 次、`attempts` 仍是 3——
+第一次尝试用的是复用的空闲连接，标准库在它被对端关掉时自己在新连接上重发了一次 GET（见下面 `IdleConnTimeout` 那一条），
+这一次 resty 看不见。`attempts` 数的是 resty 的尝试。
 
 错误原文是 `*url.Error`：`Get "http://someone:***@host/x?token=…": …`——整条 URL 连查询串都在，标准库只把密码换成 `***`、用户名照留。
-日志里的 `error` 去掉查询串、片段和 userinfo，返回给调用方的错误不变。
+那个 URL 还不一定是绝对的：重定向策略拒绝时放进去的是 `Location` 原样，实测 `Location: /b?token=…` 时原文是
+`Get "/b?token=…": auto redirect is disabled`；查询串里也可能有没转义的空格（`?q=hello world&token=…`）。所以日志里的 `error`
+按结构去：错误链上（`%w` 包的、`errors.Join` 的都算）每个 `*url.Error` 的 URL 解析后去掉查询串、片段和 userinfo 再渲染
+（解析不了的切在第一个 `?` / `#` 上）；链外的自由文本再按文本兜一遍（引号里的到右引号为止）。`Location` 转义不合法时它在
+错误文本里：`failed to parse Location header "/b%zz": …`。resty 自己的日志、出站 Span 的 `url.full` 用的是同一套。返回给调用方的错误不变。
 
 不想跟随重定向：`xhttp.C().SetRedirectPolicy(resty.NoRedirectPolicy())`。
 

@@ -9,7 +9,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"regexp"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -65,7 +65,7 @@ func New(cfg Config) (*resty.Client, io.Closer, error) {
 	client := newResty(&http.Client{
 		Transport: traced(cfg, pool),
 		Timeout:   cfg.Timeout,
-	})
+	}, cfg.Log)
 
 	if cfg.RetryCount > 0 {
 		client.SetRetryCount(cfg.RetryCount).
@@ -102,8 +102,11 @@ func New(cfg Config) (*resty.Client, io.Closer, error) {
 // 同一个 client 发出的所有请求共享它——A 服务种下的会话 cookie
 // 会被带给之后每一次毫不相干的调用。配置出来的实例本来就没有 jar，
 // 兜底实例曾经是 resty.New()，于是两者行为不一致（实测会串 cookie）。
-func newResty(hc *http.Client) *resty.Client {
-	return resty.NewWithClient(hc).SetLogger(restyLogger{})
+//
+// quiet 是 Config.Log：请求日志开着时，resty 重试路径上那两种日志由请求日志的一行代替（见 restyLogger）。
+// 设在 client 的 logger 上而不是每个请求上：使用者自己 SetLogger 的话就整个换掉，照 resty 的规矩来。
+func newResty(hc *http.Client, quiet bool) *resty.Client {
+	return resty.NewWithClient(hc).SetLogger(restyLogger{quiet: quiet})
 }
 
 // traced 在连接池外面包上链路那几层
@@ -156,9 +159,7 @@ type scrubURL struct{ next http.RoundTripper }
 
 func (s scrubURL) RoundTrip(r *http.Request) (*http.Response, error) {
 	if span := trace.SpanFromContext(r.Context()); span.IsRecording() {
-		u := *r.URL
-		u.User, u.RawQuery, u.ForceQuery, u.Fragment, u.RawFragment = nil, "", false, "", ""
-		span.SetAttributes(attribute.String("url.full", u.String()))
+		span.SetAttributes(attribute.String("url.full", bareURL(r.URL)))
 	}
 	return s.next.RoundTrip(r)
 }
@@ -224,22 +225,62 @@ func spanName(_ string, r *http.Request) string {
 // 比如链路开着时 transport 不是 *http.Transport，SetTLSClientConfig 就只打一行错误、
 // 什么也不做——那是使用者唯一能看到的信号，所以级别照搬，不往下降。
 // 不进 slog 就不进日志平台、格式和其余日志对不上；查询串里的令牌还原样落盘。
-// 这里接到 slog，消息里的 URL 去掉查询串和片段。
-type restyLogger struct{}
+// 这里接到 slog，消息里的 URL 去掉查询串、片段和 userinfo（参数里的错误按结构去，见 scrubError）。
+//
+// 调试模式（SetDebug(true)）是例外：resty 把整个请求（请求行带着查询串、全部 Header）
+// 拼成一段文本交给 Debugf，请求行里的路径不带 http://、也不在引号里，这里认不出来，照原样进日志。
+//
+// quiet（Config.Log 开着）时不打重试路径上的那两种，它们就是请求日志那一行的 error。
+// resty v2.17.2 打的日志里，每次失败的尝试是 Warnf("%v, Attempt %v")，按格式串认；
+// 重试用完是 (*Request).Execute 里的 Errorf("%v")，而配置调用被忽略时（比如 SetTLSClientConfig
+// 碰上不是 *http.Transport 的 transport）的 Errorf 格式串也是 "%v"——那是使用者唯一能看到的信号，
+// 不能一起吞掉，所以按调用方认：只挑掉 Execute 里打的那一行。
+type restyLogger struct{ quiet bool }
 
-func (restyLogger) Errorf(format string, v ...any) { logResty(slog.LevelError, format, v) }
-func (restyLogger) Warnf(format string, v ...any)  { logResty(slog.LevelWarn, format, v) }
+func (l restyLogger) Errorf(format string, v ...any) {
+	if l.quiet && calledFromExecute() {
+		return
+	}
+	logResty(slog.LevelError, format, v)
+}
+
+func (l restyLogger) Warnf(format string, v ...any) {
+	if l.quiet && format == "%v, Attempt %v" {
+		return
+	}
+	logResty(slog.LevelWarn, format, v)
+}
+
 func (restyLogger) Debugf(format string, v ...any) { logResty(slog.LevelDebug, format, v) }
 
 func logResty(level slog.Level, format string, v []any) {
-	slog.Log(context.Background(), level, "xhttp resty log", "detail", stripQuery(fmt.Sprintf(format, v...)))
+	args := make([]any, len(v))
+	for i, a := range v {
+		if err, ok := a.(error); ok {
+			a = scrubError(err)
+		}
+		args[i] = a
+	}
+	slog.Log(context.Background(), level, "xhttp resty log", "detail", scrubText(fmt.Sprintf(format, args...)))
 }
 
-// urlQuery 文本里 http(s) URL 的查询串和片段
-var urlQuery = regexp.MustCompile(`(https?://[^\s"?#]*)[?#][^\s"]*`)
+// restyExecute resty 发请求、重试的那个方法（v2.17.2）。重试用完的那行 Errorf 就在它里面
+const restyExecute = "github.com/go-resty/resty/v2.(*Request).Execute"
 
-// stripQuery 去掉文本里每个 URL 的查询串和片段
-func stripQuery(s string) string { return urlQuery.ReplaceAllString(s, "$1") }
+// calledFromExecute 报告调 restyLogger 的是不是 restyExecute。跳过本包自己的栈帧，看第一个外面的
+func calledFromExecute() bool {
+	pcs := make([]uintptr, 8)
+	frames := runtime.CallersFrames(pcs[:runtime.Callers(2, pcs)])
+	for {
+		f, more := frames.Next()
+		if !strings.HasPrefix(f.Function, "github.com/xiaoshicae/xone/xhttp.") {
+			return f.Function == restyExecute
+		}
+		if !more {
+			return false
+		}
+	}
+}
 
 // idempotentMethods 可以安全重试的方法（RFC 9110 的幂等方法）
 var idempotentMethods = map[string]struct{}{
@@ -301,7 +342,7 @@ func (c *clientCloser) Close() error {
 
 // fallback 初始化之前、以及关闭之后用的兜底 client，带超时。建一次就不再变。
 // 与配置出来的实例一样不带 cookie jar，理由见 newResty
-var fallback = newResty(&http.Client{Timeout: fallbackTimeout})
+var fallback = newResty(&http.Client{Timeout: fallbackTimeout}, false)
 
 var (
 	mu      sync.RWMutex

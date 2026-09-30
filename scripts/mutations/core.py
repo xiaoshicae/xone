@@ -50,8 +50,8 @@ mutate("CtxWithKV 带着父 ctx 已有的字段", "xlog/ctx.go", ".", "TestCtxWi
 mutate("片段也有 profile 变体", "internal/config/source.go", ".", "TestLoad",
        swap('nested, err := fileSet(target, d, false, profiles, seen, depth+1)',
      'nested, err := withImports(target, d, profiles, seen, depth+1)'))
-mutate("重试的等待逐次翻倍", "xutil/convert.go", ".", "TestRetry", swap('\t\t\tbackoff = nextBackoff(backoff)\n', ''))
-mutate("预算按退避上界算", "xutil/convert.go", ".", "TestRetryBudget",
+mutate("重试的等待逐次翻倍", "xutil/retry.go", ".", "TestRetry", swap('\t\t\tbackoff = nextBackoff(backoff)\n', ''))
+mutate("预算按退避上界算", "xutil/retry.go", ".", "TestRetryBudget",
        swap('''\tbudget := timeout * time.Duration(attempts)
 \tbackoff := min(interval, maxBackoff) // 与 Retry 一致：第一次也封顶
 \tfor i := 1; i < attempts; i++ {
@@ -60,19 +60,19 @@ mutate("预算按退避上界算", "xutil/convert.go", ".", "TestRetryBudget",
 \t}
 \treturn budget''', '\treturn timeout*time.Duration(attempts) + interval*time.Duration(attempts-1)'))
 # 文档说每次最多等 maxBackoff，第一次等待从前原样用 interval
-mutate("第一次等待也封顶", "xutil/convert.go", ".", "TestRetry_FirstWaitAlsoCapped",
+mutate("第一次等待也封顶", "xutil/retry.go", ".", "TestRetry_FirstWaitAlsoCapped",
        swap('\tvar last error\n\tbackoff := min(interval, maxBackoff)', '\tvar last error\n\tbackoff := interval'))
-mutate("预算里的第一次退避也封顶", "xutil/convert.go", ".", "TestRetryBudget_FirstBackoffAlsoCapped",
+mutate("预算里的第一次退避也封顶", "xutil/retry.go", ".", "TestRetryBudget_FirstBackoffAlsoCapped",
        swap('\tbackoff := min(interval, maxBackoff) // 与 Retry 一致', '\tbackoff := interval // 与 Retry 一致'))
-mutate("重试的等待带抖动", "xutil/convert.go", ".", "TestJitter",
+mutate("重试的等待带抖动", "xutil/retry.go", ".", "TestJitter",
        swap('\treturn time.Duration(rand.Int64N(int64(d) + 1))', '\treturn d - time.Duration(rand.Int64N(2))'))
 # 密码错、库不存在也照样重试满整轮，启动白白拖长几十秒
-mutate("永久错误不再重试", "xutil/convert.go", ".", "TestRetry_NoRetryOnPermanentError|TestRetry_RecognizesWrappedPermanentError",
+mutate("永久错误不再重试", "xutil/retry.go", ".", "TestRetry_NoRetryOnPermanentError|TestRetry_RecognizesWrappedPermanentError",
        swap('errors.As(last, &p) {', 'errors.As(last, &p) && false {'))
-mutate("永久错误返回去掉标记的原错误", "xutil/convert.go", ".", "TestRetry_NoRetryOnPermanentError|TestRetry_RecognizesWrappedPermanentError",
+mutate("永久错误返回去掉标记的原错误", "xutil/retry.go", ".", "TestRetry_NoRetryOnPermanentError|TestRetry_RecognizesWrappedPermanentError",
        swap('\t\t\treturn p.err\n\t\t}\n', '\t\t\treturn last\n\t\t}\n'))
 # 退避期间被取消时只报上一次的「连不上」，启动路径会把按要求退出当成故障
-mutate("退避期间被取消时如实报告取消", "xutil/convert.go", ".", "TestRetry",
+mutate("退避期间被取消时如实报告取消", "xutil/retry.go", ".", "TestRetry",
        swap('return fmt.Errorf("%w, last attempt failed: %w", err, last)', 'return fmt.Errorf("%v, last attempt failed: %w", err, last)'))
 # yaml.v3 对没写 tag 的字段只认全小写：照着字段名写，报的是「field Endpoint not found」，
 # 字段明明就叫这个。提示丢了的话，使用者只能对着一个自相矛盾的报错发愣
@@ -261,7 +261,7 @@ mutate("Is 遇到带类型的 nil 不 panic", "xerror/xerror.go", ".", "TestNewf
        swap('\t\tif xe == nil {\n\t\t\treturn false // 带类型的 nil', '\t\tif false {\n\t\t\treturn false // 带类型的 nil'))
 mutate("同模块再包一层原样返回", "xerror/xerror.go", ".", "TestNew_",
        swap('\t\tif xe.Module == module {\n\t\t\treturn xe\n\t\t}\n', ''))
-mutate("建连重试可以被取消", "xutil/convert.go", ".", "TestRetry",
+mutate("建连重试可以被取消", "xutil/retry.go", ".", "TestRetry",
        swap('\tif err := parent.Err(); err != nil {\n\t\treturn err\n\t}\n\n',''))
 # panic 出来的是 error 时要用 %w 接住，否则 errors.Is 问不出根因。打在两个调用点上
 mutate("建实例 panic 出来的 error 留在链上", "internal/xclient/xclient.go", ".", "TestBuild_new_panic",

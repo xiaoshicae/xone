@@ -8,6 +8,8 @@
 
 ## [未发布]
 
+## [v1.20.0] - 2026-09-30
+
 ### 不兼容变更
 
 - 删除 `xutil.GetOrDefault` 和 `xutil.ToPtr`。迁移：`xutil.GetOrDefault(v, d)` 换成标准库的 `cmp.Or(v, d)`（Go 1.22 起，行为完全相同，还能一次传多个候选值）；`xutil.ToPtr(x)` 在 `go.mod` 声明 `go 1.26` 及以上时换成 `new(x)`，更低的版本写成 `v := x` 再取 `&v`。

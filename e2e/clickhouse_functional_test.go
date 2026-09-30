@@ -139,9 +139,11 @@ func TestClickHouse_SQLLogHasPlaceholdersNotArgs_MatchesSpanDbQueryText(t *testi
 
 	// 两行只有一组占位符：gorm.io/driver/clickhouse v0.7.0 的 Create 按一行预备、逐行 Append 成一个批次
 	// （native 协议的批量写入），发出去的语句就是这一条
-	ids, r := chInsert(t, p, name, 4242, 4343)
+	// 值要够长：mustNotContain 查的是整行日志，4 位数会撞上时间戳（实测撞过 18.434395505 里的 4343）。
+	// 11 位的数在纳秒（9 位）、十六进制的 trace_id / span_id 里都凑不出来
+	ids, r := chInsert(t, p, name, 73914062851, 73914062852)
 	check(t, "POST /ch/events", "gorm.create", "INSERT INTO `"+p.Table+"` (`name`,`value`,`id`) VALUES (?,?,?)", r,
-		name, "4242", "4343", fmt.Sprint(ids[0]))
+		name, "73914062851", "73914062852", fmt.Sprint(ids[0]))
 	check(t, "GET /ch/events/:id", "gorm.query", "SELECT * FROM `"+p.Table+"` WHERE id = ? LIMIT ?",
 		p.Get(t, fmt.Sprintf("/ch/events/%d", ids[0])), fmt.Sprint(ids[0]))
 

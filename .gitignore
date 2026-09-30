@@ -24,3 +24,8 @@
 
 # Python 的字节码缓存（scripts/mutate.py 导入 scripts/mutations/ 时产出）
 __pycache__/
+
+# IDE
+.idea/
+.vscode/
+.DS_Store

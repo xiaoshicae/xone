@@ -114,7 +114,7 @@ func init() { xflow.SetMonitor(nil) } // 不要每一步的监控日志；换成
 | `xflow flow done` / `xflow flow failed` | INFO / WARN | `flow`、`elapsed_ms`（毫秒）、`result` |
 | `xflow rollback did not complete, resources may be left dangling` | ERROR | 同上，加 `uncompensated_steps` |
 | `xflow step process failed` / `xflow step rollback failed` | WARN | `flow`、`step`、`dependency`、`elapsed_ms`、`error`；panic 时加 `stack` |
-| `xflow step process done` / `xflow step rollback done` | DEBUG | `flow`、`step`、`dependency`、`elapsed_ms` |
+| `xflow step process done` / `xflow step rollback done` | INFO | `flow`、`step`、`dependency`、`elapsed_ms` |
 
 ### 链路
 

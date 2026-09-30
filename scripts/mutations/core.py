@@ -306,6 +306,8 @@ mutate("失败的强依赖那一步不回滚", "xflow/xflow.go", ".", "TestExecu
 mutate("被取消的流程不能报成功", "xflow/xflow.go", ".", "TestExecute",
        swap('\t\t\tif ctx.Err() == nil {\n\t\t\t\tcontinue\n\t\t\t}','\t\t\tcontinue'))
 # 两处：notifyStep 和 notifyFlow 各有一个，都去掉才算关掉隔离
+mutate("成功的步骤记 INFO", "xflow/monitor.go", ".", "TestSlogMonitor_StepLogsAtInfoLevel",
+       swap('slog.InfoContext(ctx, "xflow step "+action+" done"', 'slog.DebugContext(ctx, "xflow step "+action+" done"'))
 mutate("监控实现 panic 被隔离", "xflow/monitor.go", ".", "TestMonitor", swap('\tdefer recoverNotify()\n', '', count=2))
 # 一个模块边界一个 xerror：safeProcess 自己再包一层，文本就套成两层 xflow
 mutate("步骤 panic 只包一层 xflow", "xflow/xflow.go", ".", "TestExecute",

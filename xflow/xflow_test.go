@@ -669,41 +669,35 @@ func TestMonitor_CallbackPanicIsolatedDuringRollback(t *testing.T) {
 	}
 }
 
-func TestSlogMonitor_StepLogsPresentAtDebugLevel(t *testing.T) {
-	// 成功的步骤记 debug，而默认级别是 info，所以那一行平时不拼也不写。
-	// 但「需要逐步排查时把级别调到 debug」是这个设计给出的承诺——
-	// 省开销的那个提前返回不能顺手把承诺也省掉
+func TestSlogMonitor_StepLogsAtInfoLevel(t *testing.T) {
+	// 开着 Monitor 就是想看每一步：成功的步骤记 INFO，默认级别下就看得到，流程结果也在
 	withConfig(t, nil)
 	var buf strings.Builder
 	old := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})))
 	t.Cleanup(func() { slog.SetDefault(old) })
 
 	New("下单", ok("扣券"), ok("扣款")).Execute(context.Background(), &data{})
 
 	got := buf.String()
-	for _, want := range []string{"xflow step process done", "扣券", "扣款"} {
+	for _, want := range []string{`"level":"INFO","msg":"xflow step process done"`, "扣券", "扣款", `"msg":"xflow flow done"`} {
 		if !strings.Contains(got, want) {
-			t.Errorf("debug 级别下该看得到每一步，缺 %q\n实际=\n%s", want, got)
+			t.Errorf("默认的 info 级别下该看得到每一步和流程结果，缺 %q\n实际=\n%s", want, got)
 		}
 	}
 }
 
-func TestSlogMonitor_NoStepLogsAtDefaultLevel(t *testing.T) {
-	// 一个五步的流程每次执行会产出六行，默认级别下全打出来日志里就只剩流程编排了
+func TestSlogMonitor_NoStepLogsAtWarnLevel(t *testing.T) {
+	// 日志级别设成 warn 时成功的步骤不写；失败的步骤照样写
 	withConfig(t, nil)
 	var buf strings.Builder
 	old := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
 	t.Cleanup(func() { slog.SetDefault(old) })
 
 	New("下单", ok("扣券")).Execute(context.Background(), &data{})
-
 	if strings.Contains(buf.String(), "xflow step") {
-		t.Errorf("默认级别下不该有逐步日志\n实际=\n%s", buf.String())
-	}
-	if !strings.Contains(buf.String(), "xflow flow done") {
-		t.Errorf("流程结果任何时候都该看得到\n实际=\n%s", buf.String())
+		t.Errorf("warn 级别下不该有成功步骤的日志\n实际=\n%s", buf.String())
 	}
 }
 

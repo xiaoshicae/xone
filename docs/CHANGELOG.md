@@ -8,6 +8,8 @@
 
 ## [未发布]
 
+## [v1.21.0] - 2026-09-30
+
 ### 不兼容变更
 
 - xflow 默认监控把成功步骤的 `xflow step process done` / `xflow step rollback done` 从 DEBUG 改记 INFO：开着 `XFlow.Monitor`（默认开）时，默认日志级别下就能看到每一步，一个 N 步的流程每次执行多写 N 行。不想要逐步日志的：日志级别设成 warn（失败的步骤照样记 WARN），或者 `XFlow.Monitor: false`，或者用 `xflow.SetMonitor` 换成自己的实现。

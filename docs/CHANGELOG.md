@@ -8,6 +8,8 @@
 
 ## [未发布]
 
+## [v1.18.0] - 2026-09-30
+
 ### 不兼容变更
 
 - XGin / XEcho 的 `CertFile`、`KeyFile`、`ClientCAFile`、`MinVersion` 挪进 `TLS:` 块，和 XGorm / XRedis / XHttp 客户端那一侧的 `TLS:` 同一个样子（服务端没有 `Enable`，照旧是证书配了就开），这几项的校验报错也跟着带上 `TLS.` 前缀（如 `TLS.CertFile and TLS.KeyFile must both be set or both be empty`）。

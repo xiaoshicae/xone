@@ -3,7 +3,7 @@ module github.com/xiaoshicae/xone/xtrace
 go 1.25.0
 
 require (
-	github.com/xiaoshicae/xone v1.17.0
+	github.com/xiaoshicae/xone v1.18.0
 	go.opentelemetry.io/contrib/propagators/b3 v1.46.0
 	go.opentelemetry.io/otel v1.46.0
 	go.opentelemetry.io/otel/exporters/stdout/stdouttrace v1.46.0

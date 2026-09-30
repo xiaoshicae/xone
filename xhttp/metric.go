@@ -29,23 +29,28 @@ func newDurationHistogram() *prometheus.HistogramVec {
 // startKey 整次逻辑请求的起点在 context 里的 key
 type startKey struct{}
 
-// installMetrics 挂上记录指标的钩子
+// markStart 在第一次尝试之前记下整次逻辑请求的起点，指标和日志的耗时都从这里算。
+// 指标和日志各挂一次也没关系：起点已经在 ctx 里了，后挂的那个什么都不做。
 //
-// 用 OnSuccess / OnError 而不是中间件：它们在所有重试结束后只调用一次，
-// 挂在中间件上会把每次重试都记一遍，请求量和耗时分布都虚高。
-func installMetrics(client *resty.Client, hist *prometheus.HistogramVec) {
-	// 自己记一个起点，不能用 resp.Time()。
-	//
-	// resty 每次尝试都会重置 Request.Time，于是 resp.Time() 只是最后一次
-	// 尝试的耗时——前面几次失败的尝试和它们之间的退避等待全都不算。
-	// 计数是按「一次逻辑请求」记的，耗时也必须是，否则故障时
-	// 请求数照涨、耗时却纹丝不动，监控看上去异常地健康。
+// 不能用 resp.Time()：resty 每次尝试都会重置 Request.Time，于是 resp.Time() 只是最后一次
+// 尝试的耗时——前面几次失败的尝试和它们之间的退避等待全都不算。
+// 计数是按「一次逻辑请求」记的，耗时也必须是，否则故障时
+// 请求数照涨、耗时却纹丝不动，监控看上去异常地健康。
+func markStart(client *resty.Client) {
 	client.OnBeforeRequest(func(_ *resty.Client, req *resty.Request) error {
 		if _, ok := req.Context().Value(startKey{}).(time.Time); !ok {
 			req.SetContext(context.WithValue(req.Context(), startKey{}, time.Now()))
 		}
 		return nil
 	})
+}
+
+// installMetrics 挂上记录指标的钩子
+//
+// 用 OnSuccess / OnError 而不是中间件：它们在所有重试结束后只调用一次，
+// 挂在中间件上会把每次重试都记一遍，请求量和耗时分布都虚高。
+func installMetrics(client *resty.Client, hist *prometheus.HistogramVec) {
+	markStart(client)
 	client.OnSuccess(func(_ *resty.Client, resp *resty.Response) {
 		if resp == nil || resp.Request == nil || resp.Request.RawRequest == nil {
 			return

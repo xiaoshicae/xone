@@ -559,3 +559,111 @@ func TestFunctional_SQLLogHasPlaceholdersNotArgs(t *testing.T) {
 		}
 	})
 }
+
+// xredis/README.md XRedis.Log：「只记命令名和第一个 key，不记值、不记其余参数」「key 不存在（redis.Nil）不算失败」
+//
+// GET /users/:id 读穿：Redis 里没有 → GET 拿到 nil → 读 PG → SET 把整个用户（带 name、email）写回 Redis。
+// 值就是那段 JSON，进程的整段输出里都不该有它
+func TestFunctional_RedisLogHasKeysNotValues(t *testing.T) {
+	harness.Require(t)
+	t.Parallel()
+
+	p := harness.Start(t, harness.Options{Overlay: "XRedis:\n  Log: true\n"})
+	name, email := "redis-name-"+harness.NewID()+harness.NewID(), "redis-email-"+harness.NewID()+harness.NewID()+"@example.com"
+	var u user
+	p.PostJSON(t, "/users", map[string]string{"name": name, "email": email}).JSON(t, &u)
+	r := p.Get(t, fmt.Sprintf("/users/%d", u.ID))
+	if r.Status != http.StatusOK {
+		t.Fatalf("GET /users/:id 该 200，实际 %v", r)
+	}
+	tid := traceIDOf(t, r)
+	key := p.KeyPrefix + "user:" + fmt.Sprint(u.ID)
+
+	cmd := func(c string) harness.Log {
+		return p.WaitLog(t, waitFor, func(l harness.Log) bool {
+			return l.Msg() == "redis command" && l.Str("cmd") == c && l.Str("trace_id") == tid
+		})
+	}
+	get, set := cmd("get"), cmd("set")
+	for _, l := range []harness.Log{get, set} {
+		if l.Str("key") != key || l.Str("name") != "default" || l.Level() != "INFO" {
+			t.Errorf("命令日志该带实例名 default、key %s，级别 INFO，实际 %s", key, l.Line)
+		}
+		if _, ok := num(l, "elapsed_ms"); !ok {
+			t.Errorf("命令日志该带 elapsed_ms，实际 %s", l.Line)
+		}
+	}
+	if v, _ := get.Get("nil"); v != true {
+		t.Errorf("缓存没命中的 GET 该带 nil=true（不是失败），实际 %s", get.Line)
+	}
+	if n := len(p.FindLogs(func(l harness.Log) bool { return l.Msg() == "redis command failed" })); n != 0 {
+		t.Errorf("redis.Nil 不该记成 redis command failed，实际 %d 行", n)
+	}
+	mustNotContain(t, "进程的 stdout / stderr", p.Output(), name, email)
+}
+
+// xhttp/README.md XHttp.Log：「每个逻辑请求记一条日志」「查询串……一律不记，错误原文里 URL 的查询串也去掉」
+//
+// /proxy?token=… 把 token 放进出站 URL 的查询串。成功、下游 5xx（配了重试也只一次尝试）、
+// 传输层错误（重试用完）三种各看一遍：xhttp 的那一行里有路径和尝试次数，没有 token
+func TestFunctional_HTTPClientLogHasNoQuery(t *testing.T) {
+	harness.Require(t)
+	t.Parallel()
+
+	const overlay = "XHttp:\n  Timeout: 2s\n  Log: true\n  RetryCount: 2\n  RetryWaitTime: 10ms\n  RetryMaxWaitTime: 10ms\n"
+	for _, c := range []struct {
+		name     string
+		status   int // 下游回的状态码；0 表示下游连不上
+		msg      string
+		attempts float64
+	}{
+		{"下游 200", http.StatusOK, "http request", 1},
+		{"下游 500_拿到响应不重试", http.StatusInternalServerError, "http request failed", 1},
+		{"下游连不上_重试用完", 0, "http request failed", 3},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			downstream := fmt.Sprintf("http://127.0.0.1:%d", harness.FreePort(t)) // 没人监听
+			if c.status != 0 {
+				stub := harness.NewStub(t)
+				stub.SetStatus(c.status)
+				downstream = stub.URL
+			}
+			p := harness.Start(t, harness.Options{Downstream: downstream, Overlay: overlay})
+			token := "tok-" + harness.NewID() + harness.NewID()
+			r := p.Get(t, "/proxy?token="+token)
+			tid := traceIDOf(t, r)
+
+			l := p.WaitLog(t, waitFor, func(l harness.Log) bool {
+				return strings.HasPrefix(l.Msg(), "http request") && l.Str("trace_id") == tid
+			})
+			if l.Msg() != c.msg || l.Str("method") != http.MethodGet || l.Str("path") != "/echo" {
+				t.Errorf("该是一行 %s、GET /echo，实际 %s", c.msg, l.Line)
+			}
+			if got, _ := num(l, "attempts"); got != c.attempts {
+				t.Errorf("attempts 该是 %v，实际 %s", c.attempts, l.Line)
+			}
+			if got, _ := num(l, "status"); int(got) != c.status {
+				t.Errorf("status 该是 %d，实际 %s", c.status, l.Line)
+			}
+			if c.status == 0 && !strings.Contains(l.Str("error"), "connection refused") {
+				t.Errorf("连不上时 error 该说清原因，实际 %s", l.Line)
+			}
+			if n := len(p.FindLogs(func(l harness.Log) bool { return strings.HasPrefix(l.Msg(), "http request") })); n != 1 {
+				t.Errorf("一个逻辑请求一行，实际 %d 行", n)
+			}
+			if n := len(p.FindLogs(func(l harness.Log) bool { return l.Msg() == "xhttp resty log" })); n != 0 {
+				t.Errorf("Log 开着时 resty 的重试日志不再打，实际 %d 行", n)
+			}
+			// 框架写的每一行都不该有它。业务代码自己那句 downstream call failed 把 err 原样记下（带整条 URL），
+			// 那是 service/routes.go 的写法，不归 xhttp 管，这里跳过
+			for _, fl := range p.Logs() {
+				if fl.Msg() != "downstream call failed" {
+					mustNotContain(t, "日志 "+fl.Msg(), fl.Line, token)
+				}
+			}
+			mustNotContain(t, "进程的 stderr", p.Stderr(), token)
+			t.Logf("数字：%s：%s", c.name, l.Line)
+		})
+	}
+}

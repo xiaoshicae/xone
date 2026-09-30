@@ -8,6 +8,11 @@
 
 ## [未发布]
 
+### 新增
+
+- xredis 新增配置项 `Log`（默认 false）和 `SlowThreshold`（默认 100ms，需 `Log` 开启，0 不记，负数启动失败）：每条命令一行 `redis command`（pipeline 整个一行 `redis pipeline`），带实例名、命令名、第一个 key 和耗时，不记值和其余参数；key 不存在（`redis.Nil`）记 INFO 并带 `nil: true`，失败和慢命令记 WARN，失败时只记服务端的错误码。
+- xhttp 新增配置项 `Log`（默认 false）和 `SlowThreshold`（默认 1s，需 `Log` 开启，0 不记，负数启动失败）：每个逻辑请求在重试结束后记一行 `http request`，带方法、host、路径、状态码、耗时和尝试次数，不记查询串、Header、body；传输层错误和 5xx 记 WARN（`http request failed`），开着时 resty 在重试路径上的 `xhttp resty log` 不再重复打。
+
 ## [v1.18.0] - 2026-09-30
 
 ### 不兼容变更

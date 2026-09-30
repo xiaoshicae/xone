@@ -680,9 +680,7 @@ func keepGlobals(t *testing.T) {
 		closer = oldCloser
 		custom.Store(nil)
 		installed.Store(false)
-		if oldLoc != nil {
-			location.Store(oldLoc)
-		}
+		location.Store(oldLoc)
 	})
 }
 
@@ -753,6 +751,50 @@ func TestInitXLog_TimezoneAppliedGlobally(t *testing.T) {
 	}
 	if got := location.Load(); got == nil || got.String() != "Asia/Tokyo" {
 		t.Errorf("时区没装上，got=%v", got)
+	}
+}
+
+func TestInitXLog_TimezoneClearedWhenLaterRunLeavesItUnset(t *testing.T) {
+	// 同一个进程里再跑一次 Run（测试里常见）：从前 location 只在配了时区时才写，
+	// 上一次的时区一直留着，xlog.Location() 和这一次的日志时间戳对不上
+	keepGlobals(t)
+	if _, err := time.LoadLocation("Asia/Tokyo"); err != nil {
+		t.Skip("本机没有时区库")
+	}
+	xonetest.UseConfigYAML(t, "XLog:\n  Timezone: Asia/Tokyo\n")
+	if err := initXLog(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := closeXLog(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	xonetest.UseConfigYAML(t, "XLog:\n  Level: info\n")
+	if err := initXLog(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := Location(); got != time.Local {
+		t.Errorf("这一次没配 Timezone，该回到 time.Local，got=%v", got)
+	}
+	if err := closeXLog(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	// UseHandler 那一支同样
+	xonetest.UseConfigYAML(t, "XLog:\n  Timezone: Asia/Tokyo\n")
+	if err := initXLog(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := closeXLog(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	UseHandler(slog.NewTextHandler(io.Discard, nil))
+	xonetest.UseConfigYAML(t, "XApp:\n  Name: demo\n")
+	if err := initXLog(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := Location(); got != time.Local {
+		t.Errorf("UseHandler 时没有 xlog 的时区，该回到 time.Local，got=%v", got)
 	}
 }
 

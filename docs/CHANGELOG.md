@@ -8,6 +8,21 @@
 
 ## [未发布]
 
+### 不兼容变更
+
+- 配置文件里用 `---` 隔开的多份 YAML 文档现在启动失败，报 `multiple YAML documents in one file are not supported ... put per-environment settings in application-{profile}.yml instead`；原来只读第一份，后面的整段静默丢掉（也不算「没人读的配置块」）。开头一个 `---`、结尾多写的空 `---` 照常加载。迁移：把 `---` 之后的内容并进第一份；按环境区分的那几段挪进 `application-{profile}.yml`，用 `XApp.Profiles` / `--profile` 激活。
+
+### 修复
+
+- `xone.Run`：收到退出信号后，服务的 `Stop` 恰好在截止时间返回、`Start` 紧跟着带错误返回时，`Start` 的错误约有一半的概率丢掉，还多打一条 `server did not exit within its share of the stop budget` 告警；现在错误照常返回，服务已经退出时不再告警。
+- profile 文件和 import 进来的文件里用合并键 `<<: *x` 写的值，现在照常压过低优先级文件里写明的同名 key；原来输给了它们（YAML「写明的压过并进来的」被套到了跨文件合并上）。同一个文件里的 `<<` 规矩不变。
+- `XONE_DEBUG` 打出的最终配置：凭证 key 下的列表和 map 整个遮成 `***`（原来只遮标量）；密码里带 `@`、`/` 的 URL / MySQL DSN 遮到最后一个 `@`（原来后半截连同主机原样打出）；查询串里的 `token=`、`api_key=`、`access_token=` 这类也遮（原来只遮 `password=` / `passwd=` / `pwd=`）；来自 `${VAR}` 的值显示原文 `${VAR}`，不再显示展开出来的值。
+- 没设置的环境变量报错（`environment variables not set: ...`）按名字排序、每个只列一次；原来同一个变量用了几处就列几遍。
+- `--config`、`--profile` 写在命令行最后却没带值时启动失败（`--config needs a value`）；原来被静默忽略，接着按 `XONE_CONFIG`、约定路径找文件。
+- `xconfig.Unmarshal`、`xconfig.DecodeStrict` 传了非指针或 nil 时返回 `xconfig` 的 `config` 错误（`decode target must be a non-nil pointer`），不再 panic；`Unmarshal` 在这一块没配时也照样报。
+- `xlog.Location()`：同一个进程里后一次 `Run` 没配 `XLog.Timezone`（或用了 `xlog.UseHandler`）时回到 `time.Local`；原来一直留着上一次配的时区。
+- xgorm、xredis、xcache 多实例建到一半失败时，回头关已建好的实例失败的错误并进启动错误里返回；原来被丢掉。
+
 ## [v1.21.0] - 2026-09-30
 
 ### 不兼容变更

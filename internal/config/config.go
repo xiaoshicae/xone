@@ -104,6 +104,9 @@ func ensureLocked() error {
 // 失败也记下来：一份写坏了的配置，之后每一次读都该报同一个错，
 // 而不是每次重读一遍、或者第二次读时悄悄当成没配。
 func loadLocked(path string, log *slog.Logger) error {
+	if failed = danglingArg(); failed != nil {
+		return failed
+	}
 	from := "xone.WithConfigPath"
 	if path == "" {
 		path, from = locate()
@@ -193,10 +196,10 @@ func load(path string) (map[string]*yaml.Node, *report, error) {
 	values := map[*yaml.Node]string{}
 	expand(root, &missing, values)
 	if len(missing) > 0 {
-		return nil, nil, xerror.Newf("xconfig", "config", "environment variables not set: %s", strings.Join(missing, ", "))
+		return nil, nil, xerror.Newf("xconfig", "config", "environment variables not set: %s", missingNames(missing))
 	}
 	expanded.Store(&values)
-	r.root = root
+	r.root, r.raw = root, values
 
 	s, err := topLevel(root)
 	return s, r, err
@@ -210,6 +213,9 @@ func load(path string) (map[string]*yaml.Node, *report, error) {
 // 在 Start 之前任何时候调都行：还没加载的话先加载，读到的永远是配置文件里的最终值，
 // 不会因为读得早就静默拿到一份默认值。
 func Unmarshal(key string, into any) error {
+	if err := checkTarget(into); err != nil {
+		return err
+	}
 	mu.Lock()
 	defer mu.Unlock()
 
@@ -378,6 +384,13 @@ func expand(n *yaml.Node, missing *[]string, values map[*yaml.Node]string) {
 	}
 }
 
+// missingNames 没设的变量，按名字排好、每个只列一次：同一个变量用在好几处时
+// 不必在报错里读到好几遍
+func missingNames(missing []string) string {
+	slices.Sort(missing)
+	return strings.Join(slices.Compact(missing), ", ")
+}
+
 // retag 让替换过的标量按新内容重新判定类型。
 //
 // 解析的时候整个 ${PORT:8080} 是一段文本，所以这个标量被打上了 !!str。
@@ -435,7 +448,7 @@ func profilesOf(doc *yaml.Node, path string) ([]string, error) {
 	expand(node, &missing, nil)
 	if len(missing) > 0 {
 		return nil, xerror.Newf("xconfig", "config",
-			"environment variables not set in %s.%s of %s: %s", AppKey, ProfilesKey, path, strings.Join(missing, ", "))
+			"environment variables not set in %s.%s of %s: %s", AppKey, ProfilesKey, path, missingNames(missing))
 	}
 
 	active, ok := scalarList(node)

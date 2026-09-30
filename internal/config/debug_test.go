@@ -47,7 +47,7 @@ DB:
 	if err := yaml.Unmarshal([]byte(src), &doc); err != nil {
 		t.Fatal(err)
 	}
-	out, err := yaml.Marshal(redacted(&doc))
+	out, err := yaml.Marshal(redacted(&doc, nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,5 +136,105 @@ func TestEnsure_PrintsNothingWithoutXONE_DEBUG(t *testing.T) {
 	out := debugLoad(t, t.TempDir(), map[string]string{"application.yml": "XLog:\n  Level: info\n"}, "application.yml")
 	if out != "" {
 		t.Errorf("没开 XONE_DEBUG 不该有调试输出，got=\n%s", out)
+	}
+}
+
+// redactedYAML 解析 src、遮掉凭证，返回渲染出来的文本
+func redactedYAML(t *testing.T, src string) string {
+	t.Helper()
+	var doc yaml.Node
+	if err := yaml.Unmarshal([]byte(src), &doc); err != nil {
+		t.Fatal(err)
+	}
+	out, err := yaml.Marshal(redacted(&doc, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(out)
+}
+
+func TestRedacted_MasksWholeValueOfAnyShapeUnderSensitiveKey(t *testing.T) {
+	// 从前只遮标量：凭证写成列表或 map 时原样打了出来
+	got := redactedYAML(t, `
+Tokens: [tok-a, tok-b]
+Secrets:
+  Stripe: sk-live-1
+  Nested: {Deep: sk-live-2}
+Password: 12345
+Credentials: {}
+TokenList: []
+`)
+	for _, secret := range []string{"tok-a", "tok-b", "sk-live-1", "sk-live-2", "Stripe", "12345"} {
+		if strings.Contains(got, secret) {
+			t.Errorf("%q 该被遮掉，got=\n%s", secret, got)
+		}
+	}
+	for _, keep := range []string{"Tokens: '***'", "Secrets: '***'", "Password: '***'", "Credentials: {}", "TokenList: []"} {
+		if !strings.Contains(got, keep) {
+			t.Errorf("该有 %q（空的不遮），got=\n%s", keep, got)
+		}
+	}
+}
+
+func TestRedacted_DSNPasswordMaskedUpToLastAt(t *testing.T) {
+	// 密码里带 @ 或 / 时从前只遮到第一个 @，后半截连同主机原样打出来
+	got := redactedYAML(t, `
+A: "postgres://u:p@ss@db:5432/app"
+B: "postgres://u:p/ss@db:5432/app"
+C: "u:p@ss@tcp(db:3306)/app"
+D: "redis://:r@dis/pw@cache:6379/0"
+`)
+	for _, secret := range []string{"p@ss", "ss@", "p/ss", "r@dis"} {
+		if strings.Contains(got, secret) {
+			t.Errorf("%q 该被遮掉，got=\n%s", secret, got)
+		}
+	}
+	for _, keep := range []string{"postgres://u:***@db:5432/app", "u:***@tcp(db:3306)/app", "redis://:***@cache:6379/0"} {
+		if !strings.Contains(got, keep) {
+			t.Errorf("该有 %q，got=\n%s", keep, got)
+		}
+	}
+}
+
+func TestRedacted_SensitiveQueryParamsMasked(t *testing.T) {
+	// 查询串里的 token=、api_key= 从前原样打出来，只有 password= 一种写法被遮
+	got := redactedYAML(t, `
+URL: "https://api.example.com/x?token=q-tok&api_key=q-key&access_token=q-at&sslpassword=q-ssl&pwd=q-pwd&page=2"
+Keyword: "host=db user=app client_secret=kw-sec dbname=app"
+`)
+	for _, secret := range []string{"q-tok", "q-key", "q-at", "q-ssl", "q-pwd", "kw-sec"} {
+		if strings.Contains(got, secret) {
+			t.Errorf("%q 该被遮掉，got=\n%s", secret, got)
+		}
+	}
+	for _, keep := range []string{"token=***&api_key=***", "page=2", "user=app", "dbname=app"} {
+		if !strings.Contains(got, keep) {
+			t.Errorf("该有 %q，got=\n%s", keep, got)
+		}
+	}
+}
+
+func TestEnsure_XONE_DEBUGShowsPlaceholderTextNotExpandedValue(t *testing.T) {
+	// 展开出来的值从前原样打出来：${VAR} 恰恰是凭证的推荐写法，
+	// 放在一个不叫 password 的 key 下面（DSN、Webhook）就进了调试输出
+	t.Setenv(DebugEnvKey, "1")
+	t.Setenv("XONE_T_WEBHOOK", "https://hooks.example.com/services/T0/B0/s3cr3t")
+	t.Setenv("XONE_T_PORT", "8081")
+	out := debugLoad(t, t.TempDir(), map[string]string{
+		"application.yml": "Demo:\n  Webhook: ${XONE_T_WEBHOOK}\n  Port: ${XONE_T_PORT}\n" +
+			"  DSN: ${XONE_T_UNSET_DSN:postgres://u:def-pw@db/app}\n  Password: ${XONE_T_UNSET_PW:}\n  Token: ${XONE_T_PORT}\n",
+	}, "application.yml")
+	if strings.Contains(out, "Password: '***'") || !strings.Contains(out, "Token: '***'") {
+		t.Errorf("凭证 key 下展开为空的不遮、有值的遮，got=\n%s", out)
+	}
+	for _, secret := range []string{"s3cr3t", "8081", "def-pw"} {
+		if strings.Contains(out, secret) {
+			t.Errorf("%q 不该出现在调试输出里，got=\n%s", secret, out)
+		}
+	}
+	for _, want := range []string{"Webhook: ${XONE_T_WEBHOOK}", "Port: ${XONE_T_PORT}", "DSN: ${XONE_T_UNSET_DSN:postgres://u:***@db/app}"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("调试输出里该有 %q，got=\n%s", want, out)
+		}
 	}
 }

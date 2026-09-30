@@ -983,3 +983,50 @@ func TestDecodeStrict_FieldRulesMatchYAML(t *testing.T) {
 		}
 	}
 }
+
+func TestLoad_MultipleDocumentsIsError(t *testing.T) {
+	// 从前只读第一份文档，--- 之后的整段静默丢掉，连 Unclaimed 都看不见它
+	for _, body := range []string{
+		"Demo:\n  Addr: a:1\n---\nDemo:\n  Addr: b:1\n",
+		"Demo:\n  Addr: a:1\n---\nOther: 1\n---\n",
+		"---\n---\nDemo:\n  Addr: a:1\n---\nDemo:\n  Addr: b:1\n",
+	} {
+		err := LoadInto(write(t, body), "Demo", comps(t))
+		if err == nil || !strings.Contains(err.Error(), "multiple YAML documents") ||
+			!strings.Contains(err.Error(), "application-{profile}.yml") {
+			t.Errorf("%q: 多份文档该启动失败，got=%v", body, err)
+		}
+	}
+}
+
+func TestLoad_LeadingOrTrailingDocumentMarkerStillLoads(t *testing.T) {
+	// 空文档（--- 后面什么都没写、只有注释、~）不算一份：开头一个 ---、结尾多一个 --- 照常加载
+	for _, body := range []string{
+		"---\n---\nDemo:\n  Addr: a:1\n",
+		"---\nDemo:\n  Addr: a:1\n",
+		"# head\n---\nDemo:\n  Addr: a:1\n",
+		"Demo:\n  Addr: a:1\n---\n",
+		"Demo:\n  Addr: a:1\n---\n# nothing here\n",
+		"Demo:\n  Addr: a:1\n--- ~\n",
+		"Demo:\n  Addr: a:1\n...\n",
+		"---\nDemo:\n  Addr: a:1\n---\n---\n",
+	} {
+		c := comps(t)
+		if err := LoadInto(write(t, body), "Demo", c); err != nil {
+			t.Errorf("%q: %v", body, err)
+			continue
+		}
+		if c.Addr != "a:1" {
+			t.Errorf("%q: Addr=%q", body, c.Addr)
+		}
+	}
+}
+
+func TestLoad_MissingVariablesListedOnceSorted(t *testing.T) {
+	// 同一个变量用了好几处时从前报成 ZZMISS_B, ZZMISS_A, ZZMISS_B
+	body := "Demo:\n  Addr: ${ZZMISS_B}\n  Retries: ${ZZMISS_A}\nOther:\n  A: ${ZZMISS_B}\n  B: ${ZZMISS_B}-${ZZMISS_A}\n"
+	err := LoadInto(write(t, body), "Demo", comps(t))
+	if err == nil || !strings.HasSuffix(err.Error(), "environment variables not set: ZZMISS_A, ZZMISS_B]") {
+		t.Errorf("没设的变量该按名字排好、每个只报一次，got=%v", err)
+	}
+}

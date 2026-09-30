@@ -4,6 +4,12 @@ from . import cut, mutate, section, swap
 section("配置")
 mutate("日志按配置的时区渲染", "xlog/xlog.go", ".", "TestNew_RendersTimeInConfiguredTimezone|TestNew_FailsWhenTimezoneCannotLoad",
        swap('ReplaceAttr: inLocation(loc)}', 'ReplaceAttr: nil}\n\t_ = loc'))
+# 同一个进程里再跑一次 Run：location 只在配了时才写的话，上一次的时区一直留着
+mutate("没配时区时清掉上一次的", "xlog/xlog.go", ".", "TestInitXLog_TimezoneClearedWhenLaterRunLeavesItUnset",
+       swap('\tloc, _ := parseLocation(c.Timezone)\n\tlocation.Store(loc)\n',
+            '\tif loc, _ := parseLocation(c.Timezone); loc != nil {\n\t\tlocation.Store(loc)\n\t}\n'))
+mutate("UseHandler 时清掉上一次的时区", "xlog/xlog.go", ".", "TestInitXLog_TimezoneClearedWhenLaterRunLeavesItUnset",
+       swap('\t\tlocation.Store(nil) // 时间戳由你的 handler 决定，xlog 没有时区\n', ''))
 mutate("时区加载不到直接失败", "xlog/xlog.go", ".", "TestNew_FailsWhenTimezoneCannotLoad",
        swap('''\tloc, err := time.LoadLocation(name)
 \tif err != nil {''', '''\tloc, err := time.LoadLocation(name)
@@ -106,9 +112,23 @@ mutate("合并出来的块跟着第一个 key 认文件", "internal/config/stric
 mutate("字段拼错要启动失败", "internal/config/strict.go", ".", "TestLoad",
        swap('\t\tif ft == nil {\n\t\t\tc.errs = append(c.errs, c.at(k)+": "+s.notFound(k.Value, t))\n',
             '\t\tif ft == nil {\n'))
+# 「写明的 key 压过 << 并进来的」从前在几个文件合并完之后才由解码器套用，
+# profile 文件用 << 写的值于是输给了 base 里写明的同名 key。打在调用点和两条规则上
+mutate("<< 在每个文件里就摊平", "internal/config/source.go", ".", "MergeKey|TestLoad_Anchor|TestLoad_TypoInMerged",
+       cut('\tif err := flattenMerges(out); err != nil {', 'return nil, xerror.Newf("xconfig", "config", "config %s: %w", path, err)\n\t}\n'))
+mutate("写明的 key 压过 << 并进来的", "internal/config/source.go", ".", "TestLoad_MergeKeyRulesWithinOneFile",
+       swap('\t\t\town[n.Content[i].Value] = true\n', '\t\t\t_ = own\n'))
+mutate("<< 的列表里靠前的压过靠后的", "internal/config/source.go", ".", "TestLoad_MergeKeyRulesWithinOneFile",
+       swap('\t\t\t\t\town[key] = true // 靠前的来源压过靠后的\n', ''))
+# 一个文件里 --- 隔开的第二份文档从前被 yaml.Unmarshal 静默丢掉，连 Unclaimed 都看不见。
+# 调用点、报错、「空文档不算一份」各打一条
+mutate("每个文件都查多份文档", "internal/config/source.go", ".", "MultipleDocuments",
+       swap('\tdoc, err := onlyDocument(raw)\n', '\tvar doc yaml.Node\n\terr := yaml.Unmarshal(raw, &doc)\n'))
+mutate("第二份文档启动失败", "internal/config/source.go", ".", "MultipleDocuments",
+       swap('\t\tif found {\n\t\t\treturn yaml.Node{}, fmt.Errorf("multiple', '\t\tif false {\n\t\t\treturn yaml.Node{}, fmt.Errorf("multiple'))
+mutate("结尾多一个空的 --- 照常加载", "internal/config/source.go", ".", "TestLoad_LeadingOrTrailingDocumentMarkerStillLoads",
+       swap('if len(d.Content) == 0 || isNull(d.Content[0]) {', 'if len(d.Content) == 0 {'))
 # 未知字段是自己按类型查的，认字段的规则一处和 yaml.v3 不一样，要么拼错放行、要么合法的配置起不来
-mutate("<< 并进来的字段照样认", "internal/config/strict.go", ".", "TestLoad_Anchor",
-       swap('if k.Kind == yaml.ScalarNode && k.Value == "<<" && k.ShortTag() == "!!merge" {', 'if false {'))
 mutate(",inline 的结构体摊平来认", "internal/config/strict.go", ".", "TestDecodeStrict_FieldRulesMatchYAML",
        swap('\t\t\t\ts.add(ft) //', '\t\t\t\t_ = ft //'))
 mutate(",inline 的 map 收下认不出的 key", "internal/config/strict.go", ".", "TestDecodeStrict_FieldRulesMatchYAML",
@@ -140,7 +160,7 @@ mutate("XApp.Profiles 里的占位符会展开", "internal/config/config.go", ".
 \texpand(node, &missing, nil)
 \tif len(missing) > 0 {
 \t\treturn nil, xerror.Newf("xconfig", "config",
-\t\t\t"environment variables not set in %s.%s of %s: %s", AppKey, ProfilesKey, path, strings.Join(missing, ", "))
+\t\t\t"environment variables not set in %s.%s of %s: %s", AppKey, ProfilesKey, path, missingNames(missing))
 \t}
 ''', ''))
 mutate("被引进来的文件里写了 XApp.Profiles 就报错", "internal/config/config.go", ".", "TestLoad",
@@ -173,6 +193,11 @@ mutate("Stop 签名写错时直接报错", "xone.go", ".", "TestRun_StopWithWron
        swap('if m, ok := t.MethodByName("Stop"); ok {', 'if m, ok := t.MethodByName("NoSuchMethod"); ok {'))
 mutate("Stop 写在指针上却传了值时直接报错", "xone.go", ".", "TestRun_StopOnPointerButValuePassedFails",
        swap('reflect.PointerTo(t).MethodByName("Stop")', 'reflect.PointerTo(t).MethodByName("NoSuchMethod")'))
+# Stop 看着截止时间返回、Start 紧跟着返回时两边同时就绪，select 随机挑：
+# 挑中 Done 那一支就丢了 Start 的错误，还白告警一条「服务没退出」
+mutate("到点时先看一眼 Start 返回了没有", "xone.go", ".", "TestRun_StartErrorKeptWhenStopReturnsAtDeadline",
+       swap('\t\t\tselect {\n\t\t\tcase e := <-runErr:\n\t\t\t\tfirst = errors.Join(first, e)\n\t\t\tdefault:\n',
+            '\t\t\tselect {\n\t\t\tdefault:\n'))
 mutate("列表整体替换不逐元素合并", "internal/config/merge.go", ".", "TestLoad",
        swap('''\tif base.Kind != yaml.MappingNode || override.Kind != yaml.MappingNode {
 \t\treturn override
@@ -456,6 +481,10 @@ mutate("对端的证书告警也算证书被拒", "internal/xclient/probe.go", "
        swap('if errors.As(err, &op) && op.Op == "remote error" && op.Err != nil {', 'if false {'))
 # 建到一半失败时把半套实例发布出去，比一个都没有更糟：C() 取得到 a
 # 取不到 b，而启动其实已经失败了
+# 建到一半失败、回头关已建好的时，关不掉的错误从前被丢掉，漏着的连接池在日志里一个字都没有
+mutate("关不掉的错误并进 Build 的错误", "internal/xclient/xclient.go", ".", "TestBuild_CloseErrorsOfBuiltOnesJoinedIntoBuildError",
+       swap('\t\tif cerr := closeAll(r.module, closers); cerr != nil {\n\t\t\treturn errors.Join(err, cerr)\n\t\t}\n',
+            '\t\tcloseAll(r.module, closers)\n'))
 mutate("建失败时注册表保持原样", "internal/xclient/xclient.go", ".", "TestBuild",
        swap('''\t\tbuilt[name] = v
 \t\tclosers = append(closers, closer)''', '''\t\tbuilt[name] = v
@@ -508,6 +537,19 @@ mutate("同一个文件换一种写法也认得出", "internal/config/config.go"
        swap('\tif path != "" && !sameFile(path, source) {', '\tif path != "" && path != source {'))
 mutate("经符号链接点名的也是同一个文件", "internal/config/config.go", ".", "TestEnsure_SameFileSpelledDifferentlyIsFine",
        swap('errB == nil && os.SameFile(infoA, infoB)', 'errB == nil && false && os.SameFile(infoA, infoB)'))
+# 同一个变量用了好几处时从前报成 A, B, A, A：排好、去重打在调用点上
+mutate("没设的变量排好、每个只报一次", "internal/config/config.go", ".", "TestLoad_MissingVariablesListedOnceSorted",
+       swap('"environment variables not set: %s", missingNames(missing))', '"environment variables not set: %s", strings.Join(missing, ", "))'))
+# ./app --config 忘了带值时从前被静默忽略，起来的是另一份配置
+mutate("启动参数没带值时报错", "internal/config/config.go", ".", "TestEnsure_FlagWithoutValueIsError",
+       swap('\tif failed = danglingArg(); failed != nil {', '\tif failed = nil; failed != nil {'))
+# 传了值或 nil 从前当场 panic；Unmarshal 在找块之前就查，块没配时照样报
+mutate("Unmarshal 的目标不是指针时报错", "internal/config/config.go", ".", "TestUnmarshalAndDecodeStrict_BadTargetIsErrorNotPanic",
+       swap('func Unmarshal(key string, into any) error {\n\tif err := checkTarget(into); err != nil {',
+            'func Unmarshal(key string, into any) error {\n\tif err := error(nil); err != nil {'))
+mutate("DecodeStrict 的目标不是指针时报错", "internal/config/strict.go", ".", "TestUnmarshalAndDecodeStrict_BadTargetIsErrorNotPanic",
+       swap('func DecodeStrict(node *yaml.Node, target any) error {\n\tif err := checkTarget(target); err != nil {',
+            'func DecodeStrict(node *yaml.Node, target any) error {\n\tif err := error(nil); err != nil {'))
 mutate("写坏的配置每次读都报同一个错", "internal/config/config.go", ".", "TestUnmarshal_SameErrorOnEveryReadAfterLoadFailure",
        swap('\t\tfailed = err\n\t\treturn err', '\t\treturn err'))
 mutate("Run 结束时交还配置", "xone.go", ".", "TestRun_CanRunAgainAfterReturn", swap('\tdefer config.Reset()\n', ''))
@@ -546,11 +588,28 @@ mutate("URL 里的密码遮掉", "internal/config/debug.go", ".", "TestRedacted"
 mutate("MySQL DSN 里的密码遮掉", "internal/config/debug.go", ".", "TestRedacted",
        swap('s = mysqlDSN.ReplaceAllString(s, "$1:"+redactedValue+"@")', 's = s'))
 mutate("password= 写法的密码遮掉", "internal/config/debug.go", ".", "TestRedacted",
-       swap('return kvPassword.ReplaceAllString(s, "$1="+redactedValue)', 'return s'))
+       swap('\treturn kvPair.ReplaceAllStringFunc(s, func(m string) string {', '\treturn s\n\treturn kvPair.ReplaceAllStringFunc(s, func(m string) string {'))
+# 查询串里的 token=、api_key= 从前原样打出来：只认 password / passwd / pwd 三个名字
+mutate("查询串里按凭证词表遮", "internal/config/debug.go", ".", "TestRedacted_SensitiveQueryParamsMasked",
+       swap('if sensitiveKey(name) || strings.EqualFold(name, "pwd") {', 'if strings.EqualFold(name, "password") || strings.EqualFold(name, "pwd") {'))
+# 密码里带 @ 或 / 时从前只遮到第一个 @，后半截连同主机原样打出来
+mutate("URL 的密码遮到最后一个 @", "internal/config/debug.go", ".", "TestRedacted_DSNPasswordMaskedUpToLastAt",
+       swap('`(://[^:/?#@\\s]*):\\S*@`', '`(://[^:/?#@\\s]*):[^@/\\s]+@`'))
+mutate("MySQL DSN 的密码遮到最后一个 @", "internal/config/debug.go", ".", "TestRedacted_DSNPasswordMaskedUpToLastAt",
+       swap('`^([^:@/\\s]+):\\S*@`', '`^([^:@/\\s]+):[^@\\s]+@`'))
+# 凭证写成列表或 map 时从前原样打出来：只遮了标量
+mutate("凭证 key 下的值不论形状整个遮掉", "internal/config/debug.go", ".", "TestRedacted_MasksWholeValueOfAnyShapeUnderSensitiveKey",
+       swap('\t\t\t\tc.Content[i+1] = &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: redactedValue}\n',
+            '\t\t\t\tif v.Kind == yaml.ScalarNode {\n\t\t\t\t\tc.Content[i+1] = &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: redactedValue}\n\t\t\t\t}\n'))
+# ${VAR} 展开出来的值从前原样打出来，放在不叫 password 的 key 下面（DSN、Webhook）就漏了。打在两个调用点上
+mutate("调试输出里占位符显示原文", "internal/config/debug.go", ".", "TestEnsure_XONE_DEBUGShowsPlaceholderTextNotExpandedValue",
+       swap('redacted(r.root, r.raw)', 'redacted(r.root, nil)'))
+mutate("加载时把占位符原文交给调试输出", "internal/config/config.go", ".", "TestEnsure_XONE_DEBUGShowsPlaceholderTextNotExpandedValue",
+       swap('\tr.root, r.raw = root, values\n', '\tr.root = root\n'))
 mutate("遮的是拷贝，真正的配置不动", "internal/config/debug.go", ".", "TestRedacted",
-       swap('\t\tc.Content[i] = redacted(ch)\n', '\t\tc.Content[i] = ch\n\t\tredacted(ch)\n'))
+       swap('\t\tc.Content[i] = redacted(ch, raw)\n', '\t\tc.Content[i] = ch\n\t\tredacted(ch, raw)\n'))
 mutate("空的凭证不遮：看得出没配", "internal/config/debug.go", ".", "TestRedacted",
-       swap(' && v.Value != ""', ''))
+       swap('; isEmptyNode(v) || v.Kind == yaml.ScalarNode && v.Value == "" {', '; false {'))
 mutate("最终配置里不带注释", "internal/config/debug.go", ".", "TestRedacted",
        swap('\tc.HeadComment, c.LineComment, c.FootComment = "", "", ""\n', ''))
 # UseHandler：换了后端，xlog 那一层（AddKV、trace_id、观察者）照样包在外面

@@ -4,6 +4,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/xiaoshicae/xone/xerror"
 	"github.com/xiaoshicae/xone/xutil"
 )
 
@@ -91,4 +92,22 @@ func fromArgs(key string) string {
 		}
 	}
 	return ""
+}
+
+// danglingArg 框架认的启动参数写在了最后、没带值时报错。
+//
+// fromArgs 对这种写法取不到值，于是当它没写：`./app --config` 接着按 XONE_CONFIG、
+// 约定路径找，起来的是另一份配置，或者一份全是默认值的——写的人以为自己点名了。
+func danglingArg() error {
+	args := os.Args[1:]
+	if len(args) == 0 {
+		return nil
+	}
+	last := args[len(args)-1]
+	for _, key := range []string{ArgKey, ProfileArgKey} {
+		if strings.HasPrefix(last, "-") && strings.TrimLeft(last, "-") == key {
+			return xerror.Newf("xconfig", "config", "--%s needs a value: write --%s=<value> or --%s <value>", key, key, key)
+		}
+	}
+	return nil
 }

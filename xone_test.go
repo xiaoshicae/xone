@@ -1603,3 +1603,39 @@ func TestRun_FrameworkLogsFollowGlobalLoggerSwappedByHook(t *testing.T) {
 		t.Errorf("换掉全局 logger 之后的框架日志该写到新的那个上，实际=\n%s", buf.String())
 	}
 }
+
+func TestRun_StartErrorKeptWhenStopReturnsAtDeadline(t *testing.T) {
+	// 回归用例。守规矩的 Stop 看着截止时间返回，它一返回 Start 也跟着带错误返回：
+	// 到了「等 Start 返回」那一步，runErr 和 serverCtx.Done() 同时就绪。
+	// select 随机挑一个，挑中 Done 时 Start 的错误丢了，还白打一条「服务没按时退出」的告警。
+	// 两边就绪的先后由调度决定，所以跑很多次：挑错一次的概率是一半，二十次全躲过去不可能
+	for i := range 20 {
+		wantErr := fmt.Errorf("serve failed #%d", i)
+		stop := make(chan struct{})
+		startReturned := make(chan struct{})
+		r := &lateRunnable{
+			start: func(context.Context) error {
+				syscallSelfInterrupt(t)
+				<-stop
+				defer close(startReturned)
+				return wantErr
+			},
+			stop: func(ctx context.Context) error {
+				<-ctx.Done() // 用满服务那一段
+				close(stop)
+				<-startReturned
+				time.Sleep(5 * time.Millisecond) // 让 Start 的返回值先落进 channel
+				return nil
+			},
+		}
+		var logs bytes.Buffer
+		log := slog.New(slog.NewTextHandler(&logs, nil))
+		err := Run(r, WithConfigPath(emptyConf(t)), WithLogger(log), WithStopTimeout(90*time.Millisecond))
+		if !errors.Is(err, wantErr) {
+			t.Fatalf("第 %d 次：Start 的错误丢了，got=%v", i, err)
+		}
+		if strings.Contains(logs.String(), "server did not exit") {
+			t.Fatalf("第 %d 次：服务已经退出了，不该告警它没退出：\n%s", i, logs.String())
+		}
+	}
+}

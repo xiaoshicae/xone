@@ -182,7 +182,7 @@ func (x *XEcho) build() {
 		}
 		// Trace 只管 Span：关掉时照样接上游的链路标识和透传 Header，只是不开 Span
 		if c.Trace {
-			e.Pre(middleware.Trace())
+			e.Pre(skipMetrics(c, middleware.Trace()))
 		} else {
 			e.Pre(middleware.Propagate())
 		}
@@ -227,6 +227,24 @@ func (x *XEcho) build() {
 func serveMetrics(c echo.Context) error {
 	xmetric.Handler().ServeHTTP(c.Response(), c.Request())
 	return nil
+}
+
+// skipMetrics 指标端点不进 m：抓取系统按秒轮询它，每次开一个 Span 只是在链路后端刷屏，
+// 访问日志也是同样的理由跳过它的。挂在 Pre 上的中间件这时还没路由，按路径判断，
+// 和访问日志的 SkipPaths 一样只比 URL.Path
+func skipMetrics(c Config, m echo.MiddlewareFunc) echo.MiddlewareFunc {
+	if !c.Metric {
+		return m
+	}
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		h := m(next)
+		return func(ctx echo.Context) error {
+			if ctx.Request().URL.Path == c.MetricPath {
+				return next(ctx)
+			}
+			return h(ctx)
+		}
+	}
 }
 
 // applyConfig 把配置里管 echo 的两件事落到 e 上：client_ip 信谁、echo 自己的日志往哪写

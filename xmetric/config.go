@@ -95,9 +95,9 @@ var reservedLabels = map[string]string{
 	"quantile": "summary quantiles",
 	"level":    "log_errors_total",
 	"caller":   "log_errors_total",
-	"method":   "the xgin and xhttp request metrics",
-	"status":   "the xgin and xhttp request metrics",
-	"route":    "the xgin request metrics",
+	"method":   "the xgin / xecho and xhttp request metrics",
+	"status":   "the xgin / xecho and xhttp request metrics",
+	"route":    "the xgin / xecho request metrics",
 	"host":     "the xhttp request metrics",
 	"name":     "the xgorm, xredis and xcache instance metrics",
 	// go_info 自带常量标签 version，常量标签也附加在 Go 运行时指标上，

@@ -5,6 +5,7 @@ package web
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -75,5 +76,13 @@ func TestServer_ErrorLogRoutedToSlog(t *testing.T) {
 	srv.ErrorLog.Printf("http: TLS handshake error from %s: EOF", "203.0.113.9:1234")
 	if want := `"level":"WARN","msg":"xtest http server error","error":"http: TLS handshake error from 203.0.113.9:1234: EOF"`; !strings.Contains(buf.String(), want) {
 		t.Errorf("该记成 %s，got=%s", want, buf.String())
+	}
+}
+
+func TestServerTLS_EmptyMinVersionMeansTLS12(t *testing.T) {
+	// MinVersion 留空取默认：写明 1.2，不落到 tls.Config 的零值（那是随 Go 版本变的默认）
+	cfg, err := ServerConfig{CertFile: "c", KeyFile: "k"}.serverTLS()
+	if err != nil || cfg.MinVersion != tls.VersionTLS12 {
+		t.Errorf("留空该是 TLS 1.2，got=%v err=%v", cfg, err)
 	}
 }

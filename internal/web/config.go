@@ -45,7 +45,8 @@ func (c ServerConfig) ValidateListen() error {
 	if c.ClientCAFile != "" && !c.tlsEnabled() {
 		return fmt.Errorf("TLS.ClientCAFile requires TLS.CertFile and TLS.KeyFile, mutual TLS runs on top of TLS")
 	}
-	if _, ok := tlsVersions[c.MinVersion]; !ok {
+	// 只在开了 TLS 时查：明文服务上它不起作用，一个用不上的值不该让服务起不来
+	if _, ok := tlsVersions[c.MinVersion]; c.tlsEnabled() && !ok {
 		return fmt.Errorf("unknown TLS.MinVersion=%q, supported: 1.2 / 1.3", c.MinVersion)
 	}
 	return nil
@@ -82,8 +83,8 @@ func (c ServerConfig) ValidateTimeouts() error {
 // tlsEnabled 是否配了 TLS
 func (c ServerConfig) tlsEnabled() bool { return c.CertFile != "" && c.KeyFile != "" }
 
-// tlsVersions MinVersion 收的写法
-var tlsVersions = map[string]uint16{"1.2": tls.VersionTLS12, "1.3": tls.VersionTLS13}
+// tlsVersions MinVersion 收的写法。留空取默认的 1.2，和不写这一项一样
+var tlsVersions = map[string]uint16{"": tls.VersionTLS12, "1.2": tls.VersionTLS12, "1.3": tls.VersionTLS13}
 
 // serverTLS 服务端的 TLS 设置，没配证书时是 nil。证书本身由 Server.Start 在监听前读（见 listen）。
 //

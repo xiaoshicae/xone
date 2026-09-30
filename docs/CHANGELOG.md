@@ -8,6 +8,22 @@
 
 ## [未发布]
 
+### 不兼容变更
+
+- xgin 关掉了 gin 的 `RedirectTrailingSlash`：只注册了 `/users` 时，`/users/` 不再被 301 / 307 重定向到 `/users`，而是 404，并且和别的 404 一样进访问日志、指标和链路（`route` 是 `unmatched`）；原先重定向的请求不经过任何中间件，哪里都看不到。依赖这个重定向的：两条路由都注册（`e.GET("/users", h)` 和 `e.GET("/users/", h)`），或者在 `WithRoutes` 里设回 `e.RedirectTrailingSlash = true`（重定向的请求照旧不进访问日志、指标和链路）。
+
+### 修复
+
+- xgin / xecho 的 `Stop`：劫持了连接的 handler（WebSocket、自己 `Hijack` 的）在 `Shutdown` / 强制断连之后看得到请求 ctx 取消，原先等满整份停止预算再报 `1 handler(s) still running`；handler 的读循环要看 `c.Request.Context()`（xecho 是 `c.Request().Context()`）才退得出来。
+- xgin / xecho 的 `Start`：监听失败（端口被占、证书读不出来）之后可以再调 `Start`，不再一直报 `server is already running`。
+- xgin 里把 `*gin.Context` 当 `context.Context` 传（`xlog.AddKV(c, ...)`、`db.WithContext(c)`、`otel.Tracer(...).Start(c, ...)`）不再丢掉日志作用域、父 Span 和取消：engine 开了 `ContextWithFallback`。
+- 访问日志的 `response_headers` / `request_headers`：`Location`、`Content-Location`、`Refresh` 和 `Referer` 那几个一样去掉查询串和片段（OAuth 回调的 `?code=`、`#access_token=`），这几个 URL 头里的 userinfo 也去掉；别的头的值里夹着的 DSN 密码（`postgres://app:pw@db`、`app:pw@tcp(db:3306)`）遮掉，其余照原样（`Vary: Cookie` 不受影响）。
+- 访问日志的 `request_body` / `response_body`：Content-Type 是 `text/plain` 或者没带、内容却是 JSON 的 body 按 JSON 字段脱敏（gin 的 `ShouldBindJSON` 不看 Content-Type），原先用 Unicode 转义写的键名认不出来、原样进日志；JSON 的字符串值里夹着的 DSN 密码也遮掉了。
+- xgin / xecho 抓 `MetricPath` 的请求不再开 Span（抓取系统按秒轮询，原先每次一个 Span）。
+- xgin 在 `WithRoutes` 里设了 gin 自己的 `e.UseH2C = true` 时不再绕过优雅退出：服务交给 net/http 的是 engine 本身，h2c 只看 `XGin.UseH2C`。
+- xgin / xecho 的 Recover：客户端断开导致的 `connection broken` 从 ERROR 改记 WARN。
+- xgin / xecho 没配证书时不再校验 `TLS.MinVersion`（用不上的值不再让服务起不来）；配了证书时 `MinVersion` 留空按 `"1.2"`，原先是启动失败。
+
 ## [v1.21.0] - 2026-09-30
 
 ### 不兼容变更

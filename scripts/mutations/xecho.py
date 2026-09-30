@@ -256,7 +256,7 @@ mutate("访问日志挂在 Pre 上", "xecho/xecho.go", "./xecho", "TestBuild_Pre
 mutate("指标挂在 Pre 上", "xecho/xecho.go", "./xecho", "TestBuild_PreRejectionLoggedMeasuredAndTraced",
        swap('\t\t\te.Pre(middleware.Metric())', '\t\t\te.Use(middleware.Metric())'))
 mutate("链路挂在 Pre 上", "xecho/xecho.go", "./xecho", "TestBuild_PreRejectionLoggedMeasuredAndTraced",
-       swap('e.Pre(middleware.Trace())', 'e.Use(middleware.Trace())'))
+       swap('e.Pre(skipMetrics(c, middleware.Trace()))', 'e.Use(skipMetrics(c, middleware.Trace()))'))
 mutate("Recover 挂在 Pre 上", "xecho/xecho.go", "./xecho", "TestBuild_PrePanicRecovered",
        swap('\t\te.Pre(middleware.Recover(x.recover))\n', '\t\te.Use(middleware.Recover(x.recover))\n'))
 # 交进来的 *http.Request 不改：echo 按它找路由，使用者的 Pre（MethodOverride、RemoveTrailingSlash、Rewrite）改的也是它。
@@ -318,3 +318,15 @@ section("标准库 log")
 # e.StdLogger 在 echo.New 里就绑定了 os.Stdout，换 e.Logger 的输出改不到它
 mutate("e.StdLogger 接到 slog", "xecho/xecho.go", "./xecho", "TestEchoStdLogger_RoutedToSlog",
        swap('\te.StdLogger = web.ErrorLog("xecho")\n', ''))
+
+section("链路、Recover 与停止")
+# 调用点：抓 /metrics 每次开一个 Span
+mutate("抓指标不开 Span（xecho）", "xecho/xecho.go", "./xecho", "TestTrace_MetricsScrapeNotTraced",
+       swap('skipMetrics(c, middleware.Trace())', 'middleware.Trace()'))
+mutate("断连记 WARN（xecho）", "xecho/middleware/middleware.go", "./xecho", "TestRecover_BrokenPipe",
+       swap('slog.WarnContext(ctx, "connection broken"', 'slog.ErrorContext(ctx, "connection broken"'))
+# 服务启停和 xgin 共用 web.Server，这里验 xecho 走的也是它：劫持连接的 handler 看得到取消，监听失败之后能再起
+mutate("Stop 之后取消劫持连接的 ctx（xecho）", "internal/web/server.go", "./xecho", "TestStop_HijackedConnGetsCancelled",
+       swap('\tcancelBase()\n', '\t_ = cancelBase\n'))
+mutate("监听失败之后可以再 Start（xecho）", "internal/web/server.go", "./xecho", "TestStart_RetryAfterListenFailure",
+       swap('\t\t\ts.srv, s.cancel = nil, nil\n', ''))

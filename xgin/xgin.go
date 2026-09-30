@@ -157,6 +157,11 @@ func (g *XGin) build() {
 		gin.SetMode(c.Mode)
 		e := gin.New()
 		e.HandleMethodNotAllowed = true // 不开的话，方法不对会返回 404 而不是 405
+		// *gin.Context 本身就是 context.Context，业务里常直接传它：xlog.AddKV(c, ...)、db.WithContext(c)、
+		// otel.Tracer(...).Start(c, ...)。不开这一项时它的 Value 只查 c.Keys、Done 返回 nil、Err 永远是 nil
+		// （v1.12.0 context.go 的 hasRequestContext）：日志作用域、父 Span 全丢，客户端走了也取消不下去。
+		// 开了之后这几样都转到 c.Request.Context()，和传 c.Request.Context() 一样
+		e.ContextWithFallback = true
 		applyConfig(e, c)
 		g.trusted = web.ParseProxies(c.TrustedProxies)
 
@@ -172,7 +177,7 @@ func (g *XGin) build() {
 		// 先判对端可不可信，Trace / Propagate 才知道收不收透传 Header 和 baggage。
 		// Trace 只管 Span：关掉时照样接上游的链路标识和透传 Header，只是不开 Span
 		if c.Trace {
-			e.Use(g.markTrustedPeer, middleware.Trace())
+			e.Use(g.markTrustedPeer, skipMetrics(c, middleware.Trace()))
 		} else {
 			e.Use(g.markTrustedPeer, middleware.Propagate())
 		}
@@ -228,9 +233,32 @@ func (g *XGin) build() {
 // /metrics 会一直是空的
 func serveMetrics(c *gin.Context) { xmetric.Handler().ServeHTTP(c.Writer, c.Request) }
 
-// applyConfig 把配置里管 engine 的那两项落到 e 上
+// skipMetrics 指标端点不进 h：抓取系统按秒轮询它，每次开一个 Span 只是在链路后端刷屏，
+// 访问日志也是同样的理由跳过它的。gin 的处理链在注册路由时定死、没法按路由摘掉一个中间件，
+// 所以在中间件里按路径判断，和访问日志的 SkipPaths 一样只比 URL.Path
+func skipMetrics(c Config, h gin.HandlerFunc) gin.HandlerFunc {
+	if !c.Metric {
+		return h
+	}
+	return func(ctx *gin.Context) {
+		if ctx.Request.URL.Path == c.MetricPath {
+			ctx.Next()
+			return
+		}
+		h(ctx)
+	}
+}
+
+// applyConfig 把配置里管 engine 的几项落到 e 上
 func applyConfig(e *gin.Engine, c Config) {
 	e.MaxMultipartMemory = c.MaxMultipartMemory
+
+	// gin 默认开着 RedirectTrailingSlash：/users/ 对不上 /users 时直接回 301（GET）/ 307（其余方法），
+	// 整条中间件链都不跑——不进访问日志、指标和链路（实测 v1.12.0，gin.go 的 handleHTTPRequest）。
+	// 关掉之后它和别的对不上的路径一样走 NoRoute，记成 404 unmatched。
+	// 要重定向的在 WithRoutes 里设回 e.RedirectTrailingSlash = true（重定向的请求照旧不经过中间件）。
+	// RedirectFixedPath 在 gin.New 里默认就是 false，不用动
+	e.RedirectTrailingSlash = false
 
 	// 默认只信私有网段。gin 的默认是全都信，于是任何人发一个
 	// X-Forwarded-For 就能决定访问日志里的 client_ip 是什么。
@@ -290,7 +318,10 @@ func (g *XGin) Start(ctx context.Context) error {
 		return xerror.New("xgin", "config", g.confErr)
 	}
 	c := g.conf
-	return g.server.Start("xgin", c.server(), g.engine.Handler())
+	// 交 engine 本身，不交 g.engine.Handler()：使用者在回调里开了 gin 自己的 UseH2C 的话，
+	// 后者包一层 x/net 的 h2c.NewHandler，连接被劫持走，优雅关闭等不到它们（理由见 web.Server 的 protocols）。
+	// h2c 要开就开 XGin.UseH2C，走标准库
+	return g.server.Start("xgin", c.server(), g.engine)
 }
 
 // Stop 优雅关闭服务：等在途请求做完，最多等到 ctx 的截止时间。由 xone.Run 调用。

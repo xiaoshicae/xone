@@ -190,7 +190,7 @@ mutate("private 和别的网段一起写时别的网段也算", "internal/web/pr
 mutate("gin 拿到的是展开后的网段", "xgin/xgin.go", "./xgin", "TestBuild_TrustsOnlyPrivateProxiesByDefault",
        swap('e.SetTrustedProxies(web.ExpandProxies(c.TrustedProxies))', 'e.SetTrustedProxies(c.TrustedProxies)'))
 mutate("装配时先判对端再开链路", "xgin/xgin.go", "./xgin", "TestBuild_PassthroughHeadersOnlyFromTrustedProxies",
-       swap('e.Use(g.markTrustedPeer, middleware.Trace())', 'e.Use(middleware.Trace())'))
+       swap('e.Use(g.markTrustedPeer, skipMetrics(c, middleware.Trace()))', 'e.Use(skipMetrics(c, middleware.Trace()))'))
 # XGin.Trace 只管 Span。原先关掉它连提取一起摘了，上游的链路标识和透传头都不收
 mutate("XGin.Trace 关掉照样接上游的链路和透传", "xgin/xgin.go", "./xgin", "TestBuild_TraceDisabledOnlySkipsSpan_StillPropagates",
        swap('e.Use(g.markTrustedPeer, middleware.Propagate())', 'e.Use(g.markTrustedPeer)'))
@@ -212,7 +212,10 @@ mutate("XGin MinVersion 生效", "internal/web/config.go", "./xgin", "TestStart_
 mutate("XGin ClientCAFile 要和证书一起配", "internal/web/config.go", "./xgin", "TestValidate_ServerTLSNewFields|TestConfig_ServerTLSLoadedFromFile",
        swap('if c.ClientCAFile != "" && !c.tlsEnabled() {', 'if false {'))
 mutate("XGin MinVersion 只收 1.2 / 1.3", "internal/web/config.go", "./xgin", "TestValidate_ServerTLSNewFields",
-       swap('if _, ok := tlsVersions[c.MinVersion]; !ok {', 'if false {'))
+       swap('if _, ok := tlsVersions[c.MinVersion]; c.tlsEnabled() && !ok {', 'if false {'))
+# 明文服务上 MinVersion 不起作用：原先照样校验，一个用不上的值让服务起不来
+mutate("没开 TLS 不校验 MinVersion", "internal/web/config.go", "./xgin", "TestValidate_ServerTLSNewFields",
+       swap('c.tlsEnabled() && !ok', '!ok'))
 # 调用点：TLS 这几项从 XGin 的配置抄给 web.Server，漏抄一项就是以为开了、实际没开
 mutate("ClientCAFile 交给了 web.Server", "xgin/config.go", "./xgin", "TestStart_ClientCAFileEnablesMutualTLS",
        swap('\t\tClientCAFile:      c.TLS.ClientCAFile,\n', ''))
@@ -269,7 +272,7 @@ mutate("panic 的值脱过敏", "xgin/middleware/middleware.go", "./xgin", "Test
        swap('"error", web.RedactText(fmt.Sprint(err)),', '"error", fmt.Sprint(err),'))
 # 规则在 internal/web（core.py 有它自己的变异），这里验 xgin 的访问日志和 Span 真的是那个样子
 mutate("多条错误用分号隔开（xgin）", "internal/web/redact.go", "./xgin", "TestLog_MultipleErrorsStaySeparated|TestTrace_ErrorTextKeepsSeparationAndMasksDSNOnSpan",
-       swap('return textNewlines.Replace(strings.TrimRight(s, "\\r\\n"))', 'return newlines.Replace(s)'))
+       swap('return textNewlines.Replace(strings.TrimRight(redactCredentials(s), "\\r\\n"))', 'return newlines.Replace(redactCredentials(s))'))
 mutate("errors 里 DSN 的密码被遮掉（xgin）", "internal/web/redact.go", "./xgin", "TestLog_DSNPasswordInErrorIsMasked|TestTrace_ErrorTextKeepsSeparationAndMasksDSNOnSpan",
        swap('\ts = urlUserinfo.ReplaceAllString(s, "$1:"+Redacted+"@")\n', ''))
 
@@ -287,3 +290,29 @@ mutate("listening 在证书读好之后才打", "internal/web/server.go", "./xgi
 # 调用点：规矩在 internal/web，XGin 块读配置时真的拦住了映射写法
 mutate("XGin 拦住 IPv4 映射写法的代理", "internal/web/proxy.go", "./xgin", "TestLoadConfig_IPv4MappedProxyFailsStartup",
        swap('\t\tif plain, ok := unmapped(p); ok {', '\t\tif plain, ok := unmapped(p); ok && false {'))
+
+section("停止、路由与请求上下文")
+# 被劫持走的连接 Shutdown 不等、Close 断不掉：不取消根 ctx 的话，等着请求 ctx 的 WebSocket handler
+# 让 Stop 等满整份预算再报 still running
+mutate("Stop 之后取消劫持连接的 ctx", "internal/web/server.go", "./xgin", "TestStop_HijackedConnGetsCancelled",
+       swap('\tcancelBase()\n', '\t_ = cancelBase\n'))
+mutate("请求 ctx 挂在可取消的根上", "internal/web/server.go", "./xgin", "TestStop_HijackedConnGetsCancelled",
+       swap('{ return base }', '{ return context.WithoutCancel(base) }'))
+# 监听失败还记着「在跑」的话，端口空出来之后每次 Start 都说 already running
+mutate("监听失败之后可以再 Start", "internal/web/server.go", "./xgin", "TestStart_RetryAfterListenFailure",
+       swap('\t\t\ts.srv, s.cancel = nil, nil\n', ''))
+# gin 默认的 301 / 307 不跑中间件：/users/ 不进访问日志、指标和链路
+mutate("末尾斜杠不重定向", "xgin/xgin.go", "./xgin", "TestBuild_TrailingSlashGoesThroughMiddlewareAs404",
+       swap('\te.RedirectTrailingSlash = false\n', ''))
+# 不开的话 xlog.AddKV(c, ...)、Start(c, ...) 丢掉日志作用域和父 Span
+mutate("*gin.Context 当 ctx 传转到请求的 ctx", "xgin/xgin.go", "./xgin", "TestBuild_GinContextAsContext",
+       swap('\t\te.ContextWithFallback = true\n', ''))
+# 调用点：抓 /metrics 每次开一个 Span
+mutate("抓指标不开 Span", "xgin/xgin.go", "./xgin", "TestTrace_MetricsScrapeNotTraced",
+       swap('skipMetrics(c, middleware.Trace())', 'middleware.Trace()'))
+# engine.Handler() 在 gin 的 UseH2C 开着时包一层 x/net 的 h2c.NewHandler，连接被劫持走
+mutate("交给 net/http 的是 engine 本身", "xgin/xgin.go", "./xgin", "TestStart_GinUseH2CDoesNotBypassShutdown",
+       swap('c.server(), g.engine)', 'c.server(), g.engine.Handler())'))
+# 客户端走了不是服务的故障：ERROR 会让告警跟着客户端的网络抖动响
+mutate("断连记 WARN", "xgin/middleware/middleware.go", "./xgin", "TestRecover_BrokenPipe",
+       swap('slog.WarnContext(ctx, "connection broken"', 'slog.ErrorContext(ctx, "connection broken"'))

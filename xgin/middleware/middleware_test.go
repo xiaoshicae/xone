@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -714,5 +715,26 @@ func TestLog_EncodedResponseBodyOmitted(t *testing.T) {
 	// gin 这边 bytes_out 是线上的（压缩后的）字节数：Log 读的是压缩中间件下面那个 writer
 	if l["bytes_out"] != float64(w.Body.Len()) {
 		t.Errorf("bytes_out 该是压缩后的 %d 字节，got=%v", w.Body.Len(), l["bytes_out"])
+	}
+}
+
+func TestRecover_BrokenPipeLoggedAsWarnWithoutStack(t *testing.T) {
+	// 客户端提前断开不算故障：记一条 WARN 的 connection broken，不打栈。
+	// 原先记 ERROR，告警跟着客户端的网络抖动响
+	lines := capture(t)
+	broken := &net.OpError{Op: "write", Err: &os.SyscallError{Syscall: "write", Err: errors.New("broken pipe")}}
+	serve(t, get("/hello"), []gin.HandlerFunc{Recover(nil)}, func(c *gin.Context) { panic(broken) })
+
+	var sawBroken bool
+	for _, l := range lines() {
+		if l["msg"] == "panic while handling request" {
+			t.Errorf("断连不该当成 panic 打栈，got=%v", l)
+		}
+		if l["msg"] == "connection broken" {
+			sawBroken = l["level"] == "WARN"
+		}
+	}
+	if !sawBroken {
+		t.Error("应记一条 WARN 级别的 connection broken")
 	}
 }

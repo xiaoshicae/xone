@@ -177,7 +177,7 @@ panic 由 Recover 中间件记一条 `panic while handling request`（ERROR，�
 
 客户端提前断开之后的写失败，echo 是**返回**错误而不是 panic：访问日志照常一条，`status` 是已经发出去的那个（通常 200），
 `errors` 是 `write tcp …: write: broken pipe`（或 `connection reset by peer`），不打栈；错误响应已经写不出去，echo 的错误处理见 `Committed` 什么都不做。
-只有 handler 自己把这样的错误 panic 出来时才记 `connection broken`（ERROR，不打栈，规则同 xgin）。
+只有 handler 自己把这样的错误 panic 出来时才记 `connection broken`（WARN，不打栈，规则同 xgin）。
 
 ### 日志
 
@@ -208,6 +208,7 @@ panic 由 Recover 中间件记一条 `panic while handling request`（ERROR，�
 | xecho（入站） | `GET /users/:id`：方法 + 路由模板；没匹配上是 `GET unmatched` | `http.request.method`（收敛过的）、`http.request.method_original`（原始值和收敛值不同时）、`http.route`、`url.path`、`http.response.status_code`、`echo.errors`（handler 返回的错误） |
 
 5xx 和中止标成错误，4xx 不算。`XEcho.Trace` 开着时每个响应（包括 echo 渲染的错误响应）带 `X-Trace-Id`。
+`Metric` 开着时抓 `MetricPath` 的请求不开 Span、不回带 `X-Trace-Id`，同 xgin。
 链路的全貌、传播与信任边界见 [`docs/observability.md`「链路」](../docs/observability.md#链路)。
 
 ### 499：中止的请求
@@ -290,7 +291,11 @@ handler 不改交进来的 `Request`，handler 把请求交给活得比它久的
 
 **服务器**：`e.Server` 的 `ReadHeaderTimeout`、`ReadTimeout`、`WriteTimeout`、`IdleTimeout` 全是 0，banner 只在 `e.Start` 时打。
 这里不用 `e.Start`，服务由和 xgin 共用的 `web.Server` 按配置起，超时、TLS、h2c、优雅退出的实测见
-[xgin「行为与实测」](../xgin/README.md#行为与实测)。
+[xgin「行为与实测」](../xgin/README.md#行为与实测)：劫持了连接（WebSocket）的 handler 在停止时同样看得到请求 ctx 取消，
+监听失败之后同样可以再 `Start`。
+
+**`echo.Context` 不是 `context.Context`**（没有 `Deadline` / `Done` / `Err`），传不进要 ctx 的函数，也就没有 xgin 那种
+「传了 `*gin.Context` 却丢了父 Span」的问题：一律传 `c.Request().Context()`。
 
 **`MetricPath`** echo 不拒绝不以 `/` 开头的写法：`metrics` 注册成 `/metrics`，访问日志却跳不过它；留空注册在根路径 `/` 上，
 业务再注册首页时后注册的那个悄悄盖掉前一个（不报错，也不 panic）。所以读配置时就失败。

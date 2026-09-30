@@ -26,6 +26,9 @@
 | [`XGin.MaxMultipartMemory`](../xgin/README.md#行为与实测) | 32MB | 8MB | 它是落盘阈值不是请求体上限，堆开销约为它的三倍 |
 | [`XGin.ReadHeaderTimeout: 0`](../xgin/README.md#行为与实测) | 退到 `ReadTimeout`（默认 0），即不限时 | 启动失败 | 发半个请求头就能一直占着连接 |
 | [`XGin.UseH2C`](../xgin/README.md#行为与实测) | x/net 的 `h2c.NewHandler` | 标准库的 `Protocols.SetUnencryptedHTTP2` | 前者劫持连接，`Shutdown` 管不到在途请求 |
+| [gin `RedirectTrailingSlash`](../xgin/README.md#行为与实测) | 开着：`/users/` 回 301（POST 307）到 `/users` | 关掉，走 `NoRoute` 记 404 `unmatched` | 重定向的请求不跑任何中间件，访问日志、指标、链路里都没有 |
+| [gin `ContextWithFallback`](../xgin/README.md#行为与实测) | 关着：`*gin.Context` 的 `Value` 只查 `c.Keys`、`Done()` 是 nil | 开着，转到 `c.Request.Context()` | 否则 `xlog.AddKV(c, ...)`、`Start(c, ...)` 丢掉日志作用域和父 Span，取消也传不下去 |
+| [`http.Server` 劫持的连接](../xgin/README.md#行为与实测) | `Shutdown` 不等、`Close()` 断不掉，请求 ctx 不取消 | `Shutdown` / `Close()` 之后取消 `BaseContext` | 否则等着 ctx 的 WebSocket handler 让 `Stop` 等满预算再报错 |
 | [`XEcho.TrustedProxies`](../xecho/README.md#行为与实测) | `IPExtractor` 为 nil：`X-Forwarded-For` / `X-Real-IP` 谁发来的都信 | 只信私有网段（`private`），算法同 xgin | 实测公网对端发 `X-Forwarded-For: 1.2.3.4`，`c.RealIP()` 就是 `1.2.3.4` |
 | [`XEcho` 错误响应](../xecho/README.md#行为与实测) | 整条中间件链返回之后才由 `HTTPErrorHandler` 渲染 | 内置中间件在自己这一层渲染 | 否则 404 / 405 / 500 在访问日志、指标、链路里都是 `bytes_out` 为 0 的 200 |
 | [`XEcho` panic](../xecho/README.md#行为与实测) | 不兜：连接断掉，栈由 net/http 写 stderr | 兜住，记 ERROR 日志、回 500 | 栈进不了日志平台，客户端只看到 EOF |

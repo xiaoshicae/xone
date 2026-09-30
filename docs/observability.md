@@ -105,6 +105,9 @@ xtrace 装好全局的 TracerProvider 和 Propagator。会产生 Span 的集成�
 | `baggage` | W3C `baggage` | **只收可信对端的** | 带上本进程 ctx 里的 baggage |
 | 透传 Header | `XTrace.ForwardHeaders` / `ForwardHeaderRules` 里列的 | **只收可信对端的** | `ForwardHeaders` 发给所有下游，`ForwardHeaderRules` 只发给匹配域名的 |
 
+- **链路标识谁的都接，采样决定也跟着接**：采样器是 `ParentBased`（见 [xtrace「行为与实测」](../xtrace/README.md#行为与实测)），
+  上游带着 `sampled=01` 来的请求一律采样、导出，`SampleRatio` 管不到它们。公网客户端在每个请求上带一个 `traceparent: 00-…-01`，
+  就能让这一跳和它往下的每一跳都记满 Span——代价落在链路后端的存储和导出带宽上。要限就在入口（网关、负载均衡）剥掉或重写外来的 `traceparent`。
 - **可信对端 = 直连的那一跳在 `XGin.TrustedProxies`（用 xecho 时是 `XEcho.TrustedProxies`）里**（TCP 那一跳，不是从 `X-Forwarded-For` 推出来的 client IP）。
   `TrustedProxies` 默认只信私有网段（负载均衡、K8s 的 Ingress 和 Pod、sidecar），公网直连的对端发来的一个都不收。
   「谁是自己人」只在这一处说。

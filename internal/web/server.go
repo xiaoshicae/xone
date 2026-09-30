@@ -37,6 +37,11 @@ type Server struct {
 	srv      *http.Server
 	stopping bool
 
+	// cancel 取消所有请求 ctx 的根（http.Server.BaseContext），Stop 在 Shutdown / Close 返回之后调。
+	// 那时还没返回的 handler 要么在劫持走的连接上（WebSocket），要么已经超时：
+	// 前者 Shutdown 不等、Close 也断不掉，不取消的话它们的 ctx 永远不结束
+	cancel context.CancelFunc
+
 	// running 还没返回的 handler 数，见 track。Stop 靠它知道断连之后
 	// handler 是不是真的停下来了：连接断了不等于 handler 返回了
 	running atomic.Int64
@@ -55,24 +60,35 @@ func (s *Server) Start(module string, c ServerConfig, h http.Handler) error {
 	addr := net.JoinHostPort(c.Host, strconv.Itoa(c.Port))
 	srv := s.newServer(module, c, addr, h)
 	srv.TLSConfig = tlsCfg // ListenAndServeTLS 在它的副本上补证书和 h2
+	base, cancel := context.WithCancel(context.Background())
+	srv.BaseContext = func(net.Listener) context.Context { return base }
 
 	s.mu.Lock()
 	if s.stopping {
 		s.mu.Unlock()
 		// 退出信号早于启动到达。照常监听的话，服务会在「已经收到停止信号」
 		// 之后才起来，然后一直跑到框架等超时为止
+		cancel()
 		slog.Warn(module + " received the shutdown signal before starting, the server will not start")
 		return nil
 	}
 	if s.srv != nil {
 		s.mu.Unlock()
+		cancel()
 		return xerror.Newf(module, "start", "server is already running on %s", s.srv.Addr)
 	}
-	s.srv = srv
+	s.srv, s.cancel = srv, cancel
 	s.mu.Unlock()
 
 	ln, err := listen(c, srv)
 	if err != nil {
+		// 没监听上就不算在跑：留着 s.srv 的话，端口空出来之后再 Start 也只会说 already running
+		s.mu.Lock()
+		if s.srv == srv {
+			s.srv, s.cancel = nil, nil
+		}
+		s.mu.Unlock()
+		cancel()
 		return xerror.Newf(module, "start", "listen on %s failed: %w", addr, err)
 	}
 	slog.Info(module+" listening", "addr", addr, "tls", c.tlsEnabled(), "mtls", c.tlsEnabled() && c.ClientCAFile != "",
@@ -112,7 +128,7 @@ func listen(c ServerConfig, srv *http.Server) (net.Listener, error) {
 func (s *Server) Stop(ctx context.Context, module string) error {
 	s.mu.Lock()
 	s.stopping = true // 先置位：Start 若还没开始监听，到达时会直接返回
-	srv := s.srv
+	srv, cancelBase := s.srv, s.cancel
 	s.mu.Unlock()
 
 	if srv == nil {
@@ -130,11 +146,15 @@ func (s *Server) Stop(ctx context.Context, module string) error {
 			slog.Warn(module+" force close failed", "error", cerr)
 		}
 	}
+	// 到这里还没返回的 handler 要么在劫持走的连接上，要么已经超时，取消它们的 ctx：
+	// WebSocket 的读循环、等 ctx 的长轮询据此退出。不取消的话 Shutdown 成功也得把预算等满、报 still running
+	cancelBase()
 
 	// 连接断了不等于 handler 返回了：Close 只关连接、取消请求的 ctx，
 	// handler 所在的协程照跑。不等它们的话，框架紧接着去关数据库和缓存，
 	// 还没返回的 handler 会摸到已经关掉的连接池。
-	// Shutdown 成功时也要等：被劫持走的连接（WebSocket）Shutdown 不等，Close 也断不掉
+	// Shutdown 成功时也要等：被劫持走的连接（WebSocket）Shutdown 不等，Close 也断不掉，
+	// 只能靠上面取消的 ctx 让它们自己退出
 	if n := s.waitHandlers(ctx); n > 0 {
 		return xerror.Newf(module, "stop", "%d handler(s) still running when the shutdown deadline passed: %w", n, ctx.Err())
 	}

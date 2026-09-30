@@ -180,7 +180,7 @@ type TLSConfig struct {
 	// 框架挂的路由也一样。只能和 CertFile / KeyFile 一起配。
 	ClientCAFile string `yaml:"ClientCAFile"`
 
-	// MinVersion 接受的最低 TLS 版本："1.2" 或 "1.3"。默认 "1.2"。只在配了证书时生效。
+	// MinVersion 接受的最低 TLS 版本："1.2" 或 "1.3"，留空同 "1.2"。默认 "1.2"。只在配了证书时生效，也只在那时校验。
 	//
 	// 更低的版本不收：TLS 1.0 / 1.1 早已被弃用（RFC 8996）。
 	MinVersion string `yaml:"MinVersion"`

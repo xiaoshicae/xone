@@ -222,7 +222,25 @@ unpinned() {
   done
 }
 
+# has_entries 标题前缀：docs/CHANGELOG.md 里以它开头的那一节（到下一个 "## " 为止）
+# 有没有 "- " 开头的条目。### 小标题不算条目：只有「### 修复」没有内容的一节照样是空的
+has_entries() {
+  awk -v h="$1" '
+    index($0, h) == 1 { s = 1; next }
+    s && /^## / { exit }
+    s && /^- / { found = 1; exit }
+    END { exit !found }' docs/CHANGELOG.md
+}
+
 if [ "$MODE" = "--bump" ]; then
+  # 空的「未发布」改成版本号，发出去的就是一个没写变化的版本：使用者看不出这版改了什么，
+  # 要么是忘了写 CHANGELOG，要么是根本没有要发的东西。改任何文件之前先查，拒绝了就什么都没动。
+  # 已经有这一节的（--bump 重跑）第 2 步不动 CHANGELOG，这里也不查「未发布」
+  if ! grep -q "^## \[$VERSION\]" docs/CHANGELOG.md && ! has_entries "## [未发布]"; then
+    echo "✗ docs/CHANGELOG.md 的「## [未发布]」一节是空的（没有 - 开头的条目）：先把这一版使用者看得见的变化写进去，没有的话就不用发版"
+    exit 1
+  fi
+
   echo "== 1. 把各模块 go.mod 里仓库内的 require 钉成 $VERSION（replace 留着） =="
   # 用 go mod edit 而不是 sed：require 块的缩进、子模块路径后缀这些细节
   # 手写正则很容易弄错，而弄错的后果是发出去一个装不上的版本。
@@ -277,12 +295,30 @@ fi
 # ---- --tag ----
 echo "== 1. 确认这个提交可以发 $VERSION =="
 [ -z "$(git status --porcelain)" ] || { echo "✗ 工作区有未提交的改动，先提交或暂存"; exit 1; }
-if git rev-parse -q --verify "refs/tags/$VERSION" >/dev/null; then
-  echo "✗ tag $VERSION 已经存在，换一个版本号"; exit 1
+# 这一组 tag 一个都不能已经存在，全部先查完再打：只查根 tag 的话，一个残留的 xgin/$VERSION
+# 会让第 3 步打到一半才失败，留下半组 tag
+taken=
+for t in "$VERSION" $(printf "%s/$VERSION\n" $MODS); do
+  if git rev-parse -q --verify "refs/tags/$t" >/dev/null; then taken="$taken $t"; fi
+done
+if [ -n "$taken" ]; then
+  cat <<TIP
+✗ 这些 tag 已经存在：${taken# }
+
+  - 这个版本已经推出去了（git ls-remote --tags origin 里有 $VERSION）：换一个版本号；
+  - 是本地上一次 --tag / --smoke 失败留下的、还没推送：删掉再重跑 --tag——
+
+      git tag -d \$(git tag --points-at $VERSION)
+
+    根 tag $VERSION 不在、只剩子模块 tag 的话，上面那条列不出它们，直接删：git tag -d$taken
+TIP
+  exit 1
 fi
 left=$(unpinned)
 [ -z "$left" ] || { echo "✗ 这个提交的 go.mod 还没钉到 $VERSION，先合并 scripts/release.sh $VERSION --bump 的那个 PR："; echo "$left"; exit 1; }
 grep -q "^## \[$VERSION\]" docs/CHANGELOG.md || { echo "✗ docs/CHANGELOG.md 里没有 ## [$VERSION] 这一节"; exit 1; }
+# --bump 把「未发布」改成了这一节；它是空的，就是 --bump 之前「未发布」里什么都没写
+has_entries "## [$VERSION]" || { echo "✗ docs/CHANGELOG.md 的 ## [$VERSION] 一节是空的（没有 - 开头的条目）：先把这一版使用者看得见的变化写进去"; exit 1; }
 echo "  ✓ $(git log -1 --format='%h %s')"
 
 # 输出不吞掉：红了的话要看的正是那几行
@@ -314,6 +350,10 @@ cat <<TIP
 （和 --verify 同一个外部工程、同一套检查，红了的话 tag 还没出去）：
 
   scripts/release.sh $VERSION --smoke
+
+冒烟红了、要改代码重来的话，先删掉这组本地 tag 再重跑 --tag：
+
+  git tag -d \$(git tag --points-at $VERSION)
 
 确认无误后只推这一组 tag：
 

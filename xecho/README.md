@@ -59,10 +59,11 @@ XEcho:
   Host: "0.0.0.0"
   Port: 8080
   UseH2C: false            # 非 TLS 下启用 HTTP/2（只认先验知识，不支持 Upgrade: h2c）
-  CertFile: ""             # 与 KeyFile 同时配或同时留空；配了就是 https
-  KeyFile: ""
-  ClientCAFile: ""         # 校验客户端证书的 CA；配了就是双向认证，需同时配证书
-  MinVersion: "1.2"        # "1.2" / "1.3"，只在配了证书时生效
+  TLS:                     # 服务端证书；没有 Enable，CertFile 和 KeyFile 都配了就是 https
+    CertFile: ""           # 与 KeyFile 同时配或同时留空
+    KeyFile: ""
+    ClientCAFile: ""       # 校验客户端证书的 CA；配了就是双向认证，需同时配证书
+    MinVersion: "1.2"      # "1.2" / "1.3"，只在配了证书时生效
   ReadHeaderTimeout: 10s   # 慢连接攻击的主要防线，必须 > 0
   ReadTimeout: 0s          # 默认不限：限制它会打断大文件上传
   WriteTimeout: 0s         # 默认不限：限制它会打断 SSE、长轮询、大文件下载
@@ -94,7 +95,7 @@ admin := xecho.New().WithConfig(c).WithRoutes(adminRoutes)
 - `private` 展开成 `127.0.0.0/8`、`10.0.0.0/8`、`172.16.0.0/12`、`192.168.0.0/16`、`100.64.0.0/10`、`::1/128`、`fc00::/7`。
   列表整体替换默认值：要再加网段就连 `private` 一起写（`[private, 203.0.113.0/24]`），写错的网段启动失败；
   内网里也有不可信的客户端（办公网、VPN 用户能直连服务）时别用 `private`，写确切的那几段，或者 `[]`。
-- `ClientCAFile` 管整个端口：`/metrics` 同样要客户端证书。handler 里用 `c.Request().TLS.PeerCertificates` 看是谁。
+- `TLS.ClientCAFile` 管整个端口：`/metrics` 同样要客户端证书。handler 里用 `c.Request().TLS.PeerCertificates` 看是谁。
 - xgin 和 xecho 可以在一个进程里同时用：两块配置各是各的（`XGin` / `XEcho`），端口别撞上。
 
 ## API
@@ -310,8 +311,11 @@ handler 不改交进来的 `Request`，handler 把请求交给活得比它久的
 
 | 错误原文 | 原因 | 怎么改 |
 |---|---|---|
-| `CertFile and KeyFile must both be set or both be empty`（XEcho） | 服务端证书只配了一半 | 两个都填，或者都留空 |
-| `ClientCAFile requires CertFile and KeyFile, mutual TLS runs on top of TLS`（XEcho） | 配了双向认证却没配服务端证书 | 补上 `CertFile` / `KeyFile` |
+| `TLS.CertFile and TLS.KeyFile must both be set or both be empty`（XEcho） | 服务端证书只配了一半 | 两个都填，或者都留空 |
+| `TLS.ClientCAFile requires TLS.CertFile and TLS.KeyFile, mutual TLS runs on top of TLS`（XEcho） | 配了双向认证却没配服务端证书 | 补上 `TLS.CertFile` / `TLS.KeyFile` |
+| `unknown TLS.MinVersion="1.1", supported: 1.2 / 1.3`（XEcho） | 写了不收的版本，或者写成了 `TLS1.3` | 写 `"1.2"` 或 `"1.3"` |
+| `read TLS.ClientCAFile: ...` / `TLS.ClientCAFile ... contains no PEM certificate`（XEcho） | CA 文件读不出来，或者里面没有 PEM 证书 | 检查路径和文件内容；服务不监听 |
+| `field CertFile not found in type xecho.Config (did you mean TLS.CertFile? move it under TLS:)`（`KeyFile`、`ClientCAFile`、`MinVersion` 同理） | 照旧的平铺写法写的（这几项在 `TLS:` 块里） | 这几行缩进进 `TLS:` 块，见[「配置」](#配置) |
 | `TrustedProxies entry "::ffff:10.0.0.1" is an IPv4-mapped IPv6 address; write it as 10.0.0.1`（XEcho） | `TrustedProxies` 里写了 IPv4 映射成 IPv6 的地址或网段 | 照报错给的写：`::ffff:10.0.0.1` → `10.0.0.1`，`::ffff:10.0.0.0/104` → `10.0.0.0/8` |
 | `field Mode not found in type xecho.Config`（`MaxMultipartMemory`、`ZHTranslations` 同理） | 照抄了 XGin 块 | 删掉这几项，理由见[「配置」](#配置) |
 

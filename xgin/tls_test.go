@@ -95,7 +95,7 @@ func servingTLS(t *testing.T, p serverPKI, mutate ...func(*Config)) (string, *at
 	t.Helper()
 	port := testkit.FreePort(t)
 	c := configWith(append([]func(*Config){quiet, on(port), func(c *Config) {
-		c.CertFile, c.KeyFile = p.certFile, p.keyFile
+		c.TLS.CertFile, c.TLS.KeyFile = p.certFile, p.keyFile
 	}}, mutate...)...)
 	var hits atomic.Int32
 	g := New().WithConfig(c).WithRoutes(func(e *gin.Engine) {
@@ -143,10 +143,10 @@ func get(p serverPKI, base string, cfg *tls.Config) (string, error) {
 
 func TestValidate_ServerTLSNewFields(t *testing.T) {
 	bad := map[string]func(*Config){
-		"只配 ClientCAFile 没配证书": func(c *Config) { c.ClientCAFile = "ca.pem" },
-		"MinVersion 写成 1.1":    func(c *Config) { c.MinVersion = "1.1" },
-		"MinVersion 留空":        func(c *Config) { c.MinVersion = "" },
-		"MinVersion 写成 TLS1.3": func(c *Config) { c.MinVersion = "TLS1.3" },
+		"只配 ClientCAFile 没配证书": func(c *Config) { c.TLS.ClientCAFile = "ca.pem" },
+		"MinVersion 写成 1.1":    func(c *Config) { c.TLS.MinVersion = "1.1" },
+		"MinVersion 留空":        func(c *Config) { c.TLS.MinVersion = "" },
+		"MinVersion 写成 TLS1.3": func(c *Config) { c.TLS.MinVersion = "TLS1.3" },
 	}
 	for name, m := range bad {
 		if err := configWith(m).Validate(); err == nil {
@@ -155,23 +155,23 @@ func TestValidate_ServerTLSNewFields(t *testing.T) {
 	}
 	good := map[string]func(*Config){
 		"默认":                   func(*Config) {},
-		"MinVersion 1.3":       func(c *Config) { c.MinVersion = "1.3" },
-		"证书加 ClientCAFile":     func(c *Config) { c.CertFile, c.KeyFile, c.ClientCAFile = "c", "k", "ca" },
-		"没配证书时 MinVersion 不管用": func(c *Config) { c.MinVersion = "1.3" },
+		"MinVersion 1.3":       func(c *Config) { c.TLS.MinVersion = "1.3" },
+		"证书加 ClientCAFile":     func(c *Config) { c.TLS.CertFile, c.TLS.KeyFile, c.TLS.ClientCAFile = "c", "k", "ca" },
+		"没配证书时 MinVersion 不管用": func(c *Config) { c.TLS.MinVersion = "1.3" },
 	}
 	for name, m := range good {
 		if err := configWith(m).Validate(); err != nil {
 			t.Errorf("%s：不该报错，got=%v", name, err)
 		}
 	}
-	if DefaultConfig().MinVersion != "1.2" {
-		t.Errorf("MinVersion 默认应是 1.2，got=%q", DefaultConfig().MinVersion)
+	if DefaultConfig().TLS.MinVersion != "1.2" {
+		t.Errorf("MinVersion 默认应是 1.2，got=%q", DefaultConfig().TLS.MinVersion)
 	}
 }
 
 func TestStart_ClientCAFileEnablesMutualTLS(t *testing.T) {
 	p := newServerPKI(t)
-	base, hits := servingTLS(t, p, func(c *Config) { c.ClientCAFile = p.caFile })
+	base, hits := servingTLS(t, p, func(c *Config) { c.TLS.ClientCAFile = p.caFile })
 
 	cn, err := get(p, base, &tls.Config{Certificates: []tls.Certificate{p.client}})
 	if err != nil || cn != "svc.internal" {
@@ -213,7 +213,7 @@ func TestStart_MinVersion(t *testing.T) {
 		t.Error("默认 1.2：TLS 1.1 的客户端该被拒")
 	}
 
-	base, _ = servingTLS(t, p, func(c *Config) { c.MinVersion = "1.3" })
+	base, _ = servingTLS(t, p, func(c *Config) { c.TLS.MinVersion = "1.3" })
 	if _, err := get(p, base, tls12()); err == nil {
 		t.Error("MinVersion 1.3：最高只到 TLS 1.2 的客户端该被拒")
 	}
@@ -233,21 +233,33 @@ func TestStart_ClientCAFileUnreadableDoesNotListen(t *testing.T) {
 		"文件里没有证书": junk,
 	} {
 		c := configWith(quiet, on(testkit.FreePort(t)), func(c *Config) {
-			c.CertFile, c.KeyFile, c.ClientCAFile = p.certFile, p.keyFile, ca
+			c.TLS.CertFile, c.TLS.KeyFile, c.TLS.ClientCAFile = p.certFile, p.keyFile, ca
 		})
 		err := startErr(t, New().WithConfig(c))
-		if err == nil || !strings.Contains(err.Error(), "ClientCAFile") {
+		if err == nil || !strings.Contains(err.Error(), "TLS.ClientCAFile") {
 			t.Errorf("%s：该在监听之前报 ClientCAFile 的错，got=%v", name, err)
 		}
 	}
 }
 
 func TestConfig_ServerTLSLoadedFromFile(t *testing.T) {
-	c := load(t, "XGin:\n  CertFile: c.pem\n  KeyFile: k.pem\n  ClientCAFile: ca.pem\n  MinVersion: \"1.3\"\n")
-	if c.ClientCAFile != "ca.pem" || c.MinVersion != "1.3" {
-		t.Errorf("没读对：ClientCAFile=%q MinVersion=%q", c.ClientCAFile, c.MinVersion)
+	c := load(t, "XGin:\n  TLS:\n    CertFile: c.pem\n    KeyFile: k.pem\n    ClientCAFile: ca.pem\n    MinVersion: \"1.3\"\n")
+	if c.TLS.ClientCAFile != "ca.pem" || c.TLS.MinVersion != "1.3" {
+		t.Errorf("没读对：ClientCAFile=%q MinVersion=%q", c.TLS.ClientCAFile, c.TLS.MinVersion)
 	}
-	if err := loadErr(t, "XGin:\n  ClientCAFile: ca.pem\n"); err == nil {
+	if err := loadErr(t, "XGin:\n  TLS:\n    ClientCAFile: ca.pem\n"); err == nil {
 		t.Error("没配证书却配了 ClientCAFile，读配置时就该失败")
+	}
+}
+
+func TestConfig_FlatTLSKeysFailAndPointToTLSBlock(t *testing.T) {
+	// 证书这几项在 TLS: 块里。照平铺的写法写，读配置就失败，并且说清楚该挪到哪：
+	// 静默忽略的话服务会以明文起来，而配置文件看上去是配了证书的
+	for _, f := range []string{"CertFile", "KeyFile", "ClientCAFile", "MinVersion"} {
+		err := loadErr(t, "XGin:\n  "+f+": x\n")
+		want := "did you mean TLS." + f + "? move it under TLS:"
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("平铺写 %s：该失败并提示 %q，got=%v", f, want, err)
+		}
 	}
 }

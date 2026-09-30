@@ -39,23 +39,8 @@ type Config struct {
 	// 发它的客户端拿到的是一个普通的 HTTP/1.1 响应。理由见 protocols。
 	UseH2C bool `yaml:"UseH2C"`
 
-	// CertFile TLS 证书路径。与 KeyFile 必须同时配或同时不配。
-	CertFile string `yaml:"CertFile"`
-
-	// KeyFile TLS 私钥路径。
-	KeyFile string `yaml:"KeyFile"`
-
-	// ClientCAFile 校验客户端证书用的 CA（PEM，可以放好几张）。默认空，不要客户端证书。
-	//
-	// 配了就是双向认证（tls.RequireAndVerifyClientCert）：客户端必须出示这个 CA 签的证书，
-	// 不出示、或者不是它签的，握手就失败，请求到不了任何 handler——/metrics 这类
-	// 框架挂的路由也一样。只能和 CertFile / KeyFile 一起配。
-	ClientCAFile string `yaml:"ClientCAFile"`
-
-	// MinVersion 接受的最低 TLS 版本："1.2" 或 "1.3"。默认 "1.2"。只在配了证书时生效。
-	//
-	// 更低的版本不收：TLS 1.0 / 1.1 早已被弃用（RFC 8996）。
-	MinVersion string `yaml:"MinVersion"`
+	// TLS 服务端证书和双向认证。默认不开：CertFile 和 KeyFile 都配了就是 https。
+	TLS TLSConfig `yaml:"TLS"`
 
 	// ReadHeaderTimeout 读请求头的超时。默认 10s，必须大于 0。
 	//
@@ -178,6 +163,29 @@ type Config struct {
 	ZHTranslations bool `yaml:"ZHTranslations"`
 }
 
+// TLSConfig 服务端 TLS，配置文件里是 TLS 块。
+//
+// 没有 Enable 开关：CertFile 和 KeyFile 都配了就开，都留空就是明文。
+type TLSConfig struct {
+	// CertFile TLS 证书路径。与 KeyFile 必须同时配或同时不配。
+	CertFile string `yaml:"CertFile"`
+
+	// KeyFile TLS 私钥路径。
+	KeyFile string `yaml:"KeyFile"`
+
+	// ClientCAFile 校验客户端证书用的 CA（PEM，可以放好几张）。默认空，不要客户端证书。
+	//
+	// 配了就是双向认证（tls.RequireAndVerifyClientCert）：客户端必须出示这个 CA 签的证书，
+	// 不出示、或者不是它签的，握手就失败，请求到不了任何 handler——/metrics 这类
+	// 框架挂的路由也一样。只能和 CertFile / KeyFile 一起配。
+	ClientCAFile string `yaml:"ClientCAFile"`
+
+	// MinVersion 接受的最低 TLS 版本："1.2" 或 "1.3"。默认 "1.2"。只在配了证书时生效。
+	//
+	// 更低的版本不收：TLS 1.0 / 1.1 早已被弃用（RFC 8996）。
+	MinVersion string `yaml:"MinVersion"`
+}
+
 // DefaultConfig 全部默认值集中在这里
 func DefaultConfig() Config {
 	return Config{
@@ -191,7 +199,7 @@ func DefaultConfig() Config {
 		Trace:              true,
 		Metric:             true,
 		MetricPath:         "/metrics",
-		MinVersion:         "1.2",
+		TLS:                TLSConfig{MinVersion: "1.2"},
 		TrustedProxies:     []string{web.TrustPrivate},
 	}
 }
@@ -235,10 +243,10 @@ func (c Config) server() web.ServerConfig {
 		Host:              c.Host,
 		Port:              c.Port,
 		UseH2C:            c.UseH2C,
-		CertFile:          c.CertFile,
-		KeyFile:           c.KeyFile,
-		ClientCAFile:      c.ClientCAFile,
-		MinVersion:        c.MinVersion,
+		CertFile:          c.TLS.CertFile,
+		KeyFile:           c.TLS.KeyFile,
+		ClientCAFile:      c.TLS.ClientCAFile,
+		MinVersion:        c.TLS.MinVersion,
 		ReadHeaderTimeout: c.ReadHeaderTimeout,
 		ReadTimeout:       c.ReadTimeout,
 		WriteTimeout:      c.WriteTimeout,

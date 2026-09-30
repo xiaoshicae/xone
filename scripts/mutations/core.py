@@ -78,6 +78,11 @@ mutate("退避期间被取消时如实报告取消", "xutil/convert.go", ".", "T
 # 字段明明就叫这个。提示丢了的话，使用者只能对着一个自相矛盾的报错发愣
 mutate("字段没写 tag 时报错说怎么改", "internal/config/strict.go", ".", "TestDecodeStrict",
        swap('\tif s.untagged[key] {', '\tif false {'))
+# 字段从平铺挪进子块（XGin 的 CertFile 挪进 TLS:）之后，照旧写法写的该看到往哪挪
+mutate("字段写在了上一层时报错指出挪进哪个块", "internal/config/strict.go", ".", "TestDecodeStrict_KeyOneLevelTooHigh",
+       swap('} else if block := s.blockOf(key); block != "" {', '} else if block := ""; block != "" {'))
+mutate("好几个子块都有这个字段时不猜", "internal/config/strict.go", ".", "TestDecodeStrict_KeyOneLevelTooHigh",
+       swap('\t\t\tif found != "" {\n\t\t\t\treturn ""\n\t\t\t}\n', ''))
 # yaml 的类型错误带着值的前几个字符，${VAR} 又是凭证的推荐写法：密码填错了字段，
 # 它的一截就进了启动日志。调用点和「记下展开了哪些值」各打一条
 mutate("占位符展开出来的值不进报错", "internal/config/strict.go", ".", "TestUnmarshal_ExpandedPlaceholderValueNotInError",

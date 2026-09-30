@@ -56,10 +56,11 @@ XGin:
   Port: 8080
   Mode: release            # release / debug / test，默认 release；进程级，多个服务要一致
   UseH2C: false            # 非 TLS 下启用 HTTP/2（只认先验知识，不支持 Upgrade: h2c）
-  CertFile: ""             # 与 KeyFile 同时配或同时留空；配了就是 https
-  KeyFile: ""
-  ClientCAFile: ""         # 校验客户端证书的 CA；配了就是双向认证，需同时配证书
-  MinVersion: "1.2"        # "1.2" / "1.3"，只在配了证书时生效
+  TLS:                     # 服务端证书；没有 Enable，CertFile 和 KeyFile 都配了就是 https
+    CertFile: ""           # 与 KeyFile 同时配或同时留空
+    KeyFile: ""
+    ClientCAFile: ""       # 校验客户端证书的 CA；配了就是双向认证，需同时配证书
+    MinVersion: "1.2"      # "1.2" / "1.3"，只在配了证书时生效
   ReadHeaderTimeout: 10s   # 慢连接攻击的主要防线，必须 > 0
   ReadTimeout: 0s          # 默认不限：限制它会打断大文件上传
   WriteTimeout: 0s         # 默认不限：限制它会打断 SSE、长轮询、大文件下载
@@ -90,7 +91,7 @@ admin := xgin.New().WithConfig(c).WithRoutes(adminRoutes)
 - `private` 展开成 `127.0.0.0/8`、`10.0.0.0/8`、`172.16.0.0/12`、`192.168.0.0/16`、`100.64.0.0/10`、`::1/128`、`fc00::/7`。
   列表整体替换默认值：要再加网段就连 `private` 一起写（`[private, 203.0.113.0/24]`），写错的网段启动失败；
   内网里也有不可信的客户端（办公网、VPN 用户能直连服务）时别用 `private`，写确切的那几段，或者 `[]`。
-- `ClientCAFile` 管整个端口：`/metrics` 同样要客户端证书。handler 里用 `c.Request.TLS.PeerCertificates` 看是谁。
+- `TLS.ClientCAFile` 管整个端口：`/metrics` 同样要客户端证书。handler 里用 `c.Request.TLS.PeerCertificates` 看是谁。
 
 ## API
 
@@ -261,11 +262,11 @@ IPv4 映射成 IPv6 的写法启动失败：实测 gin v1.12.0 把 `::ffff:10.0.
 
 **`Mode`** 在 `gin.New` 之前设：debug 模式下 `gin.New` 会打一段警告，之后每条路由再各打一行。`gin.SetMode` 是进程级的。
 
-**TLS 与双向认证**（e2e，`MinVersion: "1.3"`）：带着 `ClientCAFile` 的 CA 签的证书是 `200`、`HTTP/2.0`、`TLS 1.3`；
+**TLS 与双向认证**（e2e，`TLS.MinVersion: "1.3"`）：带着 `TLS.ClientCAFile` 的 CA 签的证书是 `200`、`HTTP/2.0`、`TLS 1.3`；
 不带证书，客户端报 `remote error: tls: certificate required`；拿别的 CA 签的证书，Go 的客户端根本不出示它，结果同上；
 最高只到 TLS 1.2 的客户端报 `protocol version not supported`；明文 HTTP 打到这个端口，net/http 回
 `400 Client sent an HTTP request to an HTTPS server.`。这几种一次都没进 handler。
-`MinVersion` 默认 1.2，Go 1.25 服务端自己的默认也是 1.2，照样显式写上：默认值会随 Go 版本变。
+`TLS.MinVersion` 默认 1.2，Go 1.25 服务端自己的默认也是 1.2，照样显式写上：默认值会随 Go 版本变。
 
 **优雅退出**：
 
@@ -285,8 +286,11 @@ IPv4 映射成 IPv6 的写法启动失败：实测 gin v1.12.0 把 `::ffff:10.0.
 
 | 错误原文 | 原因 | 怎么改 |
 |---|---|---|
-| `CertFile and KeyFile must both be set or both be empty`（XGin） | 服务端证书只配了一半 | 两个都填，或者都留空 |
-| `ClientCAFile requires CertFile and KeyFile, mutual TLS runs on top of TLS`（XGin） | 配了双向认证却没配服务端证书 | 补上 `CertFile` / `KeyFile` |
+| `TLS.CertFile and TLS.KeyFile must both be set or both be empty`（XGin） | 服务端证书只配了一半 | 两个都填，或者都留空 |
+| `TLS.ClientCAFile requires TLS.CertFile and TLS.KeyFile, mutual TLS runs on top of TLS`（XGin） | 配了双向认证却没配服务端证书 | 补上 `TLS.CertFile` / `TLS.KeyFile` |
+| `unknown TLS.MinVersion="1.1", supported: 1.2 / 1.3`（XGin） | 写了不收的版本，或者写成了 `TLS1.3` | 写 `"1.2"` 或 `"1.3"` |
+| `read TLS.ClientCAFile: ...` / `TLS.ClientCAFile ... contains no PEM certificate`（XGin） | CA 文件读不出来，或者里面没有 PEM 证书 | 检查路径和文件内容；服务不监听 |
+| `field CertFile not found in type xgin.Config (did you mean TLS.CertFile? move it under TLS:)`（`KeyFile`、`ClientCAFile`、`MinVersion` 同理） | 照旧的平铺写法写的（这几项在 `TLS:` 块里） | 这几行缩进进 `TLS:` 块，见[「配置」](#配置) |
 | `TrustedProxies entry "::ffff:10.0.0.1" is an IPv4-mapped IPv6 address; write it as 10.0.0.1`（XGin） | `TrustedProxies` 里写了 IPv4 映射成 IPv6 的地址或网段 | 照报错给的写：`::ffff:10.0.0.1` → `10.0.0.1`，`::ffff:10.0.0.0/104` → `10.0.0.0/8` |
 
 停止时的 `N handler(s) still running when the shutdown deadline passed` 见 [`docs/troubleshooting.md`「Runnable 与退出」](../docs/troubleshooting.md#runnable-与退出)；客户端 TLS 的报错见 [xtls「排错」](../xtls/README.md#排错)。

@@ -717,6 +717,48 @@ func TestDecodeStrict_MissingTagErrorExplainsFix(t *testing.T) {
 	}
 }
 
+func TestDecodeStrict_KeyOneLevelTooHighPointsToItsBlock(t *testing.T) {
+	// 字段从平铺挪进子块之后（XGin 的 CertFile 挪进 TLS:），照旧写法写的使用者
+	// 该看到往哪挪，而不只是「没有这个字段」。两个子块都有同名字段时不猜
+	type tlsBlock struct {
+		CertFile string `yaml:"CertFile"`
+		CAFile   string `yaml:"CAFile"`
+	}
+	type other struct {
+		CAFile string `yaml:"CAFile"`
+	}
+	var c struct {
+		Port  int      `yaml:"Port"`
+		TLS   tlsBlock `yaml:"TLS"`
+		Proxy *other   `yaml:"Proxy"`
+	}
+	for src, want := range map[string]string{
+		"CertFile: a": "field CertFile not found in type struct", // 前缀照旧
+		"Nope: a":     "field Nope not found in type struct",
+		"CAFile: a":   "field CAFile not found in type struct",
+	} {
+		var n yaml.Node
+		if err := yaml.Unmarshal([]byte(src), &n); err != nil {
+			t.Fatal(err)
+		}
+		err := DecodeStrict(n.Content[0], &c)
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Fatalf("%s: 认不出的字段该报出来，got=%v", src, err)
+		}
+		hinted := strings.Contains(err.Error(), "did you mean")
+		switch src {
+		case "CertFile: a":
+			if !strings.Contains(err.Error(), "(did you mean TLS.CertFile? move it under TLS:)") {
+				t.Errorf("%s: 该指出挪到 TLS: 下，got=%v", src, err)
+			}
+		default:
+			if hinted {
+				t.Errorf("%s: 子块里没有或不止一个子块有，不该猜，got=%v", src, err)
+			}
+		}
+	}
+}
+
 func TestLoad_PlaceholderNullLiteralIsNotTreatedAsUnset(t *testing.T) {
 	// 变量的值恰好是 null / ~ 时，重新判定会把它当成「这一项没写」：
 	// 字段悄悄留在默认值上，启动一切正常，配的值却没生效

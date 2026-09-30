@@ -8,6 +8,15 @@
 
 ## [未发布]
 
+### 不兼容变更
+
+- XGin / XEcho 的 `CertFile`、`KeyFile`、`ClientCAFile`、`MinVersion` 挪进 `TLS:` 块，和 XGorm / XRedis / XHttp 客户端那一侧的 `TLS:` 同一个样子（服务端没有 `Enable`，照旧是证书配了就开），这几项的校验报错也跟着带上 `TLS.` 前缀（如 `TLS.CertFile and TLS.KeyFile must both be set or both be empty`）。
+  旧的平铺写法启动失败，报 `field CertFile not found in type xgin.Config (did you mean TLS.CertFile? move it under TLS:)`。迁移：在 `XGin:` / `XEcho:` 下加一行 `TLS:`，把这四行缩进到它下面；Go 代码里 `c.CertFile` 改成 `c.TLS.CertFile`（其余三项同理）。
+
+### 新增
+
+- 配置里的 key 写高了一层（它其实是某个子块的字段）时，报错直接指出该挪到哪，如 XRedis 顶层写了 `CAFile` 会提示 `did you mean TLS.CAFile? move it under TLS:`；几个子块都有这个字段时不猜。
+
 ## [v1.17.0] - 2026-09-29
 
 ### 新增

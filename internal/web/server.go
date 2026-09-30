@@ -44,7 +44,7 @@ type Server struct {
 
 // Start 按 c 监听、用 h 处理请求，阻塞到服务停止。module 是报错和日志里的模块名。
 //
-// TLS 的设置不对（读不出 ClientCAFile）时返回 config 错误、不监听；
+// TLS 的设置不对（读不出 TLS.ClientCAFile）时返回 config 错误、不监听；
 // Stop 早于它到达时不监听、直接返回 nil。
 // "<module> listening" 在证书读好、端口绑上之后才打：两样有一样失败，只有那条 listen failed 的错误
 func (s *Server) Start(module string, c ServerConfig, h http.Handler) error {

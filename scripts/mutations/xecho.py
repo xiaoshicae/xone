@@ -18,9 +18,9 @@ mutate("ReadHeaderTimeout 交给了 web.Server", "xecho/config.go", "./xecho", "
 mutate("XEcho UseH2C 交给了 web.Server", "xecho/config.go", "./xecho", "TestStop_H2C",
        swap('\t\tUseH2C:            c.UseH2C,\n', ''))
 mutate("XEcho ClientCAFile 交给了 web.Server", "xecho/config.go", "./xecho", "TestStart_ClientCAFileEnablesMutualTLS",
-       swap('\t\tClientCAFile:      c.ClientCAFile,\n', ''))
+       swap('\t\tClientCAFile:      c.TLS.ClientCAFile,\n', ''))
 mutate("XEcho MinVersion 交给了 web.Server", "xecho/config.go", "./xecho", "TestStart_MinVersion",
-       swap('\t\tMinVersion:        c.MinVersion,\n', '\t\tMinVersion:        "1.2",\n'))
+       swap('\t\tMinVersion:        c.TLS.MinVersion,\n', '\t\tMinVersion:        "1.2",\n'))
 # 调用点：规矩写在 internal/web，XEcho 的 Validate 得真的调到它们
 mutate("XEcho Validate 查了端口和 TLS", "xecho/config.go", "./xecho", "TestValidate",
        swap('\tif err := s.ValidateListen(); err != nil {\n\t\treturn err\n\t}\n', ''))

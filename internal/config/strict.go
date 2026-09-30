@@ -271,16 +271,40 @@ func (s *structFields) add(t reflect.Type) {
 	}
 }
 
-// notFound 认不出的字段怎么报：和 yaml.v3 的原文一致，字段忘了写 yaml tag 时补一句怎么改。
+// notFound 认不出的字段怎么报：和 yaml.v3 的原文一致，再补一句怎么改。
 //
-// yaml.v3 对没写 tag 的字段只认全小写的 key：字段 Endpoint 认 endpoint，
+// 字段忘了写 yaml tag：yaml.v3 对没写 tag 的字段只认全小写的 key，字段 Endpoint 认 endpoint，
 // 不认 Endpoint。于是配置里照着字段名写，报的是
 // 「field Endpoint not found in type C」——字段明明就叫这个，使用者只会一头雾水。
+//
+// key 写在了上一层：它是某个子块里的字段（XGin 的 CertFile 在 TLS: 里），指出该挪到哪。
 func (s *structFields) notFound(key string, t reflect.Type) string {
 	msg := fmt.Sprintf("field %s not found in type %s", key, t)
 	if s.untagged[key] {
 		msg += fmt.Sprintf(" (field %s has no yaml tag, so only %q is accepted: add `yaml:\"%s\"`)",
 			key, strings.ToLower(key), key)
+	} else if block := s.blockOf(key); block != "" {
+		msg += fmt.Sprintf(" (did you mean %s.%s? move it under %s:)", block, key, block)
 	}
 	return msg
+}
+
+// blockOf key 是哪个子块的字段。只往下看一层，恰好一个子块有它才算，几个都有时不猜
+func (s *structFields) blockOf(key string) string {
+	found := ""
+	for name, ft := range s.byKey {
+		for ft.Kind() == reflect.Pointer {
+			ft = ft.Elem()
+		}
+		if ft.Kind() != reflect.Struct {
+			continue
+		}
+		if _, ok := fieldsOf(ft).byKey[key]; ok {
+			if found != "" {
+				return ""
+			}
+			found = name
+		}
+	}
+	return found
 }

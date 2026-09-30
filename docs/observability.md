@@ -50,7 +50,7 @@ xlog 把 `slog.Default()` 换成按 `XLog` 配好的 handler，业务和框架�
 | `xgorm ready` / `xredis ready` / `xcache ready` | INFO | `instances` |
 | `xgorm go-sql-driver log` / `xredis go-redis log` / `xhttp resty log` | WARN（resty 照搬它的级别） | `detail`：三方库原本写到 stderr 的那一行 |
 
-各模块自己的日志在它 README 的「可观测」一节：[xgin](../xgin/README.md#可观测)（访问日志、`xgin listening`、`xgin http server error`）· [xecho](../xecho/README.md#可观测)（访问日志、`xecho listening`、`echo internal log`、`xecho http server error`）· [xgorm](../xgorm/README.md#日志)（`xgorm connected`、SQL 日志）· [xredis](../xredis/README.md#日志) · [xcache](../xcache/README.md#日志) · [xtrace](../xtrace/README.md#日志)。
+各模块自己的日志在它 README 的「可观测」一节：[xgin](../xgin/README.md#可观测)（访问日志、`xgin listening`、`xgin http server error`）· [xecho](../xecho/README.md#可观测)（访问日志、`xecho listening`、`echo internal log`、`xecho http server error`）· [xgorm](../xgorm/README.md#日志)（`xgorm connected`、SQL 日志）· [xredis](../xredis/README.md#日志)（`xredis connected`、`redis command`、`redis pipeline`）· [xhttp](../xhttp/README.md#日志)（`xhttp ready`、`http request`）· [xcache](../xcache/README.md#日志) · [xflow](../xflow/README.md#日志)（`xflow flow done` / `xflow flow failed`、逐步的 `xflow step …`）· [xtrace](../xtrace/README.md#日志)。
 
 ## 指标
 

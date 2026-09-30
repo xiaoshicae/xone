@@ -24,6 +24,9 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgproto3"
 
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
+
 	"github.com/xiaoshicae/xone/xtls"
 )
 
@@ -505,6 +508,52 @@ func TestNew_MySQL_TLSBlockFailsWhenServerLacksTLS(t *testing.T) {
 	_, _, err := New(context.Background(), mysqlTLSCfg(addr, xtls.Config{Enable: true, CAFile: p.caFile}))
 	if err == nil || !strings.Contains(err.Error(), "TLS") {
 		t.Fatalf("服务端不支持 TLS 时该失败，got=%v", err)
+	}
+	if _, plain, _ := s.get(); plain {
+		t.Error("不该退回明文发登录包")
+	}
+}
+
+// 问候包里不带 CLIENT_SSL 的，可以是真不支持 TLS 的服务端，也可以是中间人把这一位清掉了。
+// DSN 里写了 allowFallbackToPlaintext=true 的话，go-sql-driver v1.10.1 此时把 TLS 丢掉、
+// 改发明文的登录包（packets.go readHandshakePacket）——开了 TLS 块也一样
+func TestNew_MySQL_TLSBlockRejectsPlaintextFallbackParam(t *testing.T) {
+	p := newPKI(t)
+	addr, s := fakeMySQL(t, nil)
+	cfg := mysqlTLSCfg(addr, xtls.Config{Enable: true, CAFile: p.caFile})
+	cfg.DSN += "?allowFallbackToPlaintext=true"
+	_, _, err := New(context.Background(), cfg)
+	if err == nil || !strings.Contains(err.Error(), "sets allowFallbackToPlaintext") {
+		t.Fatalf("该报 DSN 与 TLS 块冲突，got=%v", err)
+	}
+	if strings.Contains(err.Error(), secret) {
+		t.Errorf("错误里不该有密码：%v", err)
+	}
+	if _, plain, _ := s.get(); plain {
+		t.Error("不该退回明文发登录包")
+	}
+}
+
+// 兜底：就算校验那一步漏了，交给驱动的连接配置里也不许退回明文
+func TestOpenMySQLTLS_NeverFallsBackToPlaintext(t *testing.T) {
+	p := newPKI(t)
+	addr, s := fakeMySQL(t, nil)
+	tc, err := xtls.Config{Enable: true, CAFile: p.caFile}.Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, err := openMySQLTLS("u:"+secret+"@tcp("+addr+")/d?allowFallbackToPlaintext=true&timeout=2s", tc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// gorm.Open 自己会 ping 一次（gorm v1.31 Open），建连就在这里
+	db, err := gorm.Open(d, &gorm.Config{Logger: logger.Discard})
+	if err == nil {
+		sqlDB, _ := db.DB()
+		_ = sqlDB.Close()
+	}
+	if err == nil || !strings.Contains(err.Error(), "TLS") {
+		t.Errorf("服务端不肯 TLS 时该失败，got=%v", err)
 	}
 	if _, plain, _ := s.get(); plain {
 		t.Error("不该退回明文发登录包")

@@ -86,7 +86,7 @@ XGorm:
 `xgorm.C()` 取 `default`，`xgorm.C("report")` 取另一个。两种写法不能混用。
 
 - **DSN 里写了的参数以 DSN 为准**，配置里的超时只是默认值。时长一律不能为负。
-- 单次建连探测的预算：MySQL 是 `DialTimeout + MySQL.ReadTimeout`，PG 是 `connect_timeout + DialTimeout`（默认 1.5s），
+- 单次建连探测的预算：MySQL 是 `DialTimeout + MySQL.ReadTimeout`（其中一个配成 0 时按另一个算两份），PG 是 `connect_timeout + DialTimeout`（默认 1.5s），
   其余驱动 `2 × DialTimeout`。见[「行为与实测」](#行为与实测)。
 
 ## API
@@ -109,7 +109,7 @@ XGorm:
   见[「MySQL」](#mysql)。
 - **SQL 日志默认关**（`Log: false` 就是真的不写，不是 GORM 那个带颜色写 stdout 的默认）；打开后日志和 Span 里只有带占位符的 SQL，
   服务端报错只记错误码——返回给你的错误原样不变，`errors.As` 照样取得到 `*mysql.MySQLError` / `*pgconn.PgError`。见[「通用」](#通用)。
-- **TLS 写在 `TLS:` 块里**，证书一律校验、不会退回明文；开着它时 DSN 里不能再写 `sslmode` / `tls=`。
+- **TLS 写在 `TLS:` 块里**，证书一律校验、不会退回明文；开着它时 DSN 里不能再写 `sslmode` / `tls=` / `allowFallbackToPlaintext=`。
   不开时 pgx 默认的 `sslmode=prefer` 连上了也**不校验证书**。见 [xtls](../xtls/README.md)。
 - **经 PgBouncer（事务池）** 要改 `default_query_exec_mode`，否则并发下成批报 `prepared statement … already exists`。
   见[「PostgreSQL」](#postgresql)。
@@ -176,7 +176,10 @@ GORM v1.31.2。
 `Preload("Orders")` 照常查得出来。它只管建表那一刻，已经建好的外键不会被删。
 
 **三个性能相关的开关**（本机回环，量级参考，不是基准）：
-- `SkipDefaultTransaction`：500 次单条 Create，PostgreSQL 16 每次约 500µs → 230µs，MySQL 8.0 约 1.0ms → 0.9ms。
+- `SkipDefaultTransaction`：500 次单条 Create，PostgreSQL 16 每次约 500µs → 230µs，MySQL 8.0 约 1.0ms → 0.9ms
+  （省掉的是 `BEGIN` / `COMMIT` 两个来回）。默认不开：省下的来回是拿正确性换的——`AfterCreate` 钩子返回错误时，
+  默认的事务把插入回滚了（0 行），跳过之后那一行留了下来。只在热点路径上跳过的，用
+  `xgorm.C().Session(&gorm.Session{SkipDefaultTransaction: true})`。
 - `PrepareStmt`：2000 次同一条带参数的查询，MySQL 约 180µs → 94µs（不开时驱动每条 prepare / execute / close 三个来回），
   PostgreSQL 约 100µs → 85µs（pgx 本来就缓存语句）。
 - `CreateBatchSize: 3` 插 10 行：两种数据库都发 4 条 INSERT；默认 0 是 1 条。
@@ -205,18 +208,25 @@ GORM 的 PG 方言没参数可代时会写成 `$1$`，这里改回去了）。
 
 所以日志的 `error` 字段和 Span 的状态描述只写 `mysql error 1062 (message omitted, it may contain parameter values)`，
 错误码另记（字段见 [「可观测 · 链路」](#链路)），不调 `RecordError`。**返回给调用方的错误原样不变**，
-`errors.As` 照样取得到 `*mysql.MySQLError` / `*pgconn.PgError`。网络错误、ctx 取消、`record not found`
-这类客户端一侧的错照原文记。例外是 `database/sql` 的扫描错误，它会引出扫不进去的那个值
-（实测 PG：`converting driver.Value type string ("abc-secret") to a int: invalid syntax`），那是列类型与字段类型对不上。
+`errors.As` 照样取得到 `*mysql.MySQLError` / `*pgconn.PgError`。
+
+**客户端一侧的错也带参数值**，所以按白名单放行，和 xredis 同一个做法：
+
+| 来源 | 原文 |
+|---|---|
+| pgx v5.10.0 编码不了的参数（`%#v`） | `failed to encode args[0]: unable to encode xgorm.rvSecret{Token:"hunter2"} into text format for text (OID 25): cannot find encode plan` |
+| `database/sql` 扫描失败（`%q`） | `converting driver.Value type string ("abc-secret") to a int: invalid syntax` |
+
+照原文记的只有：网络错误（`net.Error`，地址、超时，排查正要看这个）、ctx 取消 / 超时、`io.EOF`，
+以及 `database/sql`、go-sql-driver、GORM 自己那些文案固定的哨兵错误（`sql.ErrConnDone`、`driver.ErrBadConn`、
+`mysql.ErrInvalidConn`、`gorm.ErrRecordNotFound`……）。记的是错误链上认出来的**那一个**，不是整条链的原文：
+GORM 的 `AddError` 用 `"%v; %w"` 把前一个错误的原文拼在前面，只看链上有没有安全的错误的话，前一个带着的值照样出去。
+其余一律写 `client error (message omitted, it may contain parameter values)`，Span 上不调 `RecordError`
+（实测 PG 16 上 `Exec("SELECT ?::text", rvSecret{...})`：改之前 `SQL failed` 的 `error` 字段和 Span 的状态描述、
+`exception.message` 里都是上面那句带着 `hunter2` 的原文）。返回给调用方的错误同样不变。
 
 **GORM 自己的默认值**，下面几项不改，量过：
 
-- `SkipDefaultTransaction: false`：每次 `Create` / `Save` / `Update` / `Delete` 都包在一个事务里。
-  实测（2000 次 `Create`）PG 每次 3 个往返，跳过是 1 个，572µs → 377µs；MySQL 每次 5 次写（4 个往返），
-  跳过是 3 次，1.55ms → 1.33ms。不替你打开，因为它换来的是正确性：`AfterCreate` 钩子返回错误时，
-  默认的事务把插入回滚了（0 行），跳过之后那一行留了下来。热点路径上自己用
-  `xgorm.C().Session(&gorm.Session{SkipDefaultTransaction: true})`。
-- `PrepareStmt: false`：PG 那一侧 pgx 已经按语句缓存了，再开一层是重复；经 PgBouncer 时同样会撞上下面那个问题。
 - `NowFunc`：`time.Now().Local()`。PG 上 GORM 给 `time.Time` 建的列是 `timestamptz`，存的是时刻，不受影响；MySQL 见 `parseTime`。
 - `TranslateError: false`：打开之后 MySQL 的 1062 变成 `gorm.ErrDuplicatedKey`，但原来的 `*mysql.MySQLError`
   被整个换掉，按错误号判断的代码会静默失效。
@@ -247,6 +257,14 @@ DSN 里写了的（哪怕是 `parseTime=false`）以 DSN 为准；判断照抄�
 （MariaDB / MySQL 5.x 的改索引名、改列名、`FOR SHARE`、`DROP CONSTRAINT`，MariaDB 10.5+ 的 `RETURNING`）不变。
 
 **单次探测预算**是 `DialTimeout + MySQL.ReadTimeout`（按 DSN 里最终生效的 `timeout` / `readTimeout` 算）。
+驱动拿 `timeout` 管拨号、`readTimeout` 管之后的每一读（握手、认证、`SELECT VERSION()`）。其中一个是 0（驱动不限时）的，
+按另一个算两份：`ReadTimeout: 0`、`DialTimeout: 500ms` 的预算是 1s，不是只剩拨号的 500ms；两个都是 0 用 1s 兜底。
+
+**开了 TLS 块就不会退回明文。** go-sql-driver v1.10.1 的 `allowFallbackToPlaintext=true`（`tls=preferred` 也会打开它）
+在服务端的问候包里没有 `CLIENT_SSL` 时丢掉 TLS、改发明文的登录包（`packets.go` `readHandshakePacket`）。
+这一位是明文传过来的，中间人清掉它就够了。实测（一个问候包不带 `CLIENT_SSL` 的假服务端）：TLS 块加上
+DSN 里的 `allowFallbackToPlaintext=true`，登录包明文发了出去。现在 DSN 里写了这个参数（写成什么值都算）直接启动失败，
+交给驱动的连接配置里也钉死成 false，服务端不肯 TLS 时报 `TLS requested but server does not support TLS`。
 
 **取消与截止时间。** 客户端有读超时兜底：对端不回话、调用方又没给截止时间时，查询在 `ReadTimeout`
 失败（实测 3.0s，`invalid connection`）。调用方的 ctx 管得更细：
@@ -320,5 +338,10 @@ PgBouncer 的事务池会把下一条语句派到另一个服务端连接上，�
 `Driver` 写错了，或者没 import 驱动的 module（`_ "github.com/xiaoshicae/xone/xgorm/clickhouse"`）。
 
 驱动的用法见 [xgorm/clickhouse](clickhouse/README.md)。
+
+### `the DSN sets allowFallbackToPlaintext while the TLS block is enabled`
+
+开了 `TLS:` 块，MySQL 的 DSN 里又写了 `allowFallbackToPlaintext=`。TLS 块从不退回明文，把这个参数从 DSN 里删掉；
+真要「服务端不支持就明文」的，别开 TLS 块、在 DSN 里写 `tls=preferred`，并且清楚它挡不住中间人。
 
 TLS 相关的报错见 [xtls「排错」](../xtls/README.md#排错)；建连失败见 [`docs/troubleshooting.md`「建连」](../docs/troubleshooting.md#建连)。

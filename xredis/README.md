@@ -45,16 +45,16 @@ XRedis:
   Username: ""                  # Redis 6+ ACL 用户名
   Password: "${REDIS_PASSWORD}"
   DB: 0
-  DialTimeout: 500ms            # 拨号 + TLS 握手
-  ReadTimeout: 500ms            # 调用方没给截止时间时，一次读最多等这么久
-  WriteTimeout: 500ms
+  DialTimeout: 500ms            # 拨号 + TLS 握手；0 = go-redis 默认的 5s
+  ReadTimeout: 500ms            # 调用方没给截止时间时，一次读最多等这么久；0 = go-redis 默认的 5s
+  WriteTimeout: 500ms           # 0 = 跟着 ReadTimeout
   PoolSize: 0                   # 0 = go-redis 默认的 10 × GOMAXPROCS
   MinIdleConns: 5               # 常驻的空闲连接；多实例时每个实例各这么多
   MaxIdleConns: 0               # 0 = 不限
   MaxActiveConns: 0             # 0 = 不限
-  PoolTimeout: 1s               # 池子满了等一条连接最多多久
-  ConnMaxIdleTime: 5m
-  ConnMaxLifetime: 5m
+  PoolTimeout: 1s               # 池子满了等一条连接最多多久；0 = ReadTimeout + 1s
+  ConnMaxIdleTime: 5m           # 0 = go-redis 默认的 30m
+  ConnMaxLifetime: 5m           # 0 = 不按存活时间换连接
   MaxRetries: 0                 # 0 = go-redis 默认的 3 次；-1 关掉重试
   MinRetryBackoff: 0s           # 0 = go-redis 默认的 10ms；-1ns 关掉
   MaxRetryBackoff: 0s           # 0 = go-redis 默认的 1s；-1ns 关掉
@@ -95,6 +95,7 @@ XRedis:
 - **要停得下来，就给 ctx 带截止时间。** 命令听截止时间、不听取消：ctx 被取消叫不醒一条已经阻塞在读上的命令，
   它照样等到 `ReadTimeout`。见[「行为与实测」](#行为与实测)。
 - **一条命令最多要多久**（调用方没给截止时间时）：`(MaxRetries+1) × (DialTimeout+ReadTimeout) + MaxRetries × MaxRetryBackoff`，默认 7s。
+- **时长配 0 不是「不限时」**，是 go-redis 的默认值（见上面配置里的注释）；启动探测的预算也按换算之后的值算。
 - **负数一律不收**，只有 `MaxRetries: -1`、`MinRetryBackoff: -1ns`、`MaxRetryBackoff: -1ns` 表示「关掉」。
 - **内存**：每条连接约 66KiB 堆，池子涨满时是 `PoolSize × 66KiB`。
 - **启动探测**：每个实例探一次，最多试 3 次；`WRONGPASS` / `NOAUTH` 不重试。见
@@ -132,7 +133,7 @@ XRedis:
 
 | 来源 | Span 名 | 关键属性 |
 |---|---|---|
-| xredis | redisotel 按命令起名 | 只有命令名，没有 `db.statement` 里的参数 |
+| xredis | redisotel 按命令起名 | 只有命令名，没有 `db.statement` 里的参数；出错时的状态描述和命令日志的 `error` 同一套规则 |
 
 链路的全貌、传播与信任边界见 [`docs/observability.md`「链路」](../docs/observability.md#链路)。
 
@@ -172,6 +173,19 @@ xredis 把 `DialerRetries` 固定成 1，同样的场景默认配置 2.1s、`Max
 **每条连接的内存**：32KiB 读缓冲 + 32KiB 写缓冲，实测（200 条空闲连接）每条约 66KiB 堆。连接池涨满时是
 `PoolSize × 66KiB`：默认 `PoolSize` 是 10 × GOMAXPROCS，4 核 40 条约 2.6MB，64 核 640 条约 41MB；
 平时只有 `MinIdleConns`（默认 5）条。缓冲区大小不开放配置。`MaxConcurrentDials` 默认等于 `PoolSize`，不另设。
+
+**时长配 0 是 go-redis 的默认值。** go-redis v9.22.0 在 `NewClient` 里把 0 换掉（`options.go` `init`），
+实测 `client.Options()`：`DialTimeout` 5s、`ReadTimeout` 5s、`WriteTimeout` 跟着换算之后的 `ReadTimeout`、
+`PoolTimeout` 是 `ReadTimeout + 1s`（`ReadTimeout: 2s` 时 3s）、`ConnMaxIdleTime` 30m；`ConnMaxLifetime` 留 0，就是不按存活时间换连接。
+启动时建连验证的单次预算是换算之后的 `DialTimeout + ReadTimeout`：两个都配 0 是 10s，不是兜底的 1s——
+按配置里的 0 算的话，一次 1.5s 才回 `PONG` 的建连 go-redis 还愿意等，建连验证先判了超时，试满 3 次失败。
+
+**Span 上的错误不带原文。** redisotel v9.22.0 记错误是 `span.RecordError(err)` 加 `span.SetStatus(codes.Error, err.Error())`，
+服务端的原文就进了 `exception.message` 和状态描述（实测 Redis 7.0.15：`ERR unknown command 'foo', with args beginning with: 'secretarg1'`、
+`EVAL` 里 `redis.error_reply(ARGV[1])` 的 `ERR secretarg1`、`return {err=ARGV[1]}` 的 `secretarg1`）。
+它没有改写错误的选项，xredis 交给它的 TracerProvider 包了一层：状态描述换成和命令日志 `error` 字段同一份文本
+（`redis server error ERR (message omitted, it may contain argument values)`），`RecordError` 只记网络错误、超时这类
+原文可以照记的，其余不记成事件。返回给调用方的错误不变。
 
 **TLS 握手受 `DialTimeout` 管**（go-redis 用 `tls.DialWithDialer`，拨号和握手共用一个超时）。
 

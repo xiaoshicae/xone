@@ -291,7 +291,16 @@ func setOf(names ...string) map[string]struct{} {
 	return m
 }
 
-// errorAttrs 错误的字段：服务端报的错只记错误码，不记原文。
+// errorAttrs 错误的字段，文本和错误码见 redactedError
+func errorAttrs(err error) []any {
+	text, code := redactedError(err)
+	if code != "" {
+		return []any{"error", text, "error_code", code}
+	}
+	return []any{"error", text}
+}
+
+// redactedError 要写进日志和 Span 的错误文本：服务端报的错只记错误码，不记原文。
 //
 // 服务端的错误原文会把参数带出来，实测 Redis 7.0.15：
 //
@@ -300,25 +309,30 @@ func setOf(names ...string) map[string]struct{} {
 //	plainsecret                           ← EVAL 里 return {err=ARGV[1]}，连错误码的位置都是值
 //
 // 所以错误码也不是「取第一个词」：只认 knownErrorCodes 里的，其余的只说是服务端的错。
-// 客户端这一侧的错误只有下面这几类照原文记（地址、超时，排查正要看这个）；
+// 客户端这一侧的错误只有 clientSafe 认得的几类照原文记；
 // 别的也不记原文——go-redis 解析回复失败时把回复内容写进错误（reader.go 的 can't parse %q）。
 // 返回给调用方的错误不变。
-func errorAttrs(err error) []any {
+func redactedError(err error) (text, code string) {
 	var rerr redis.Error
 	if errors.As(err, &rerr) {
 		code, _, _ := strings.Cut(rerr.Error(), " ")
 		if _, ok := knownErrorCodes[code]; ok {
-			return []any{"error", "redis server error " + code + " (message omitted, it may contain argument values)", "error_code", code}
+			return "redis server error " + code + " (message omitted, it may contain argument values)", code
 		}
-		return []any{"error", "redis server error (message omitted, it may contain argument values)"}
+		return "redis server error (message omitted, it may contain argument values)", ""
 	}
+	if clientSafe(err) {
+		return err.Error(), ""
+	}
+	return "redis client error (message omitted, it may contain reply data)", ""
+}
+
+// clientSafe 客户端这一侧、原文可以照记的错：地址、超时，排查正要看这个
+func clientSafe(err error) bool {
 	var ne net.Error
-	if errors.As(err, &ne) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) ||
+	return errors.As(err, &ne) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) ||
 		errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) ||
-		errors.Is(err, redis.ErrClosed) || errors.Is(err, redis.ErrPoolTimeout) || errors.Is(err, redis.ErrPoolExhausted) {
-		return []any{"error", err.Error()}
-	}
-	return []any{"error", "redis client error (message omitted, it may contain reply data)"}
+		errors.Is(err, redis.ErrClosed) || errors.Is(err, redis.ErrPoolTimeout) || errors.Is(err, redis.ErrPoolExhausted)
 }
 
 // knownErrorCodes Redis 自己用的错误码（Redis 7 源码里 addReplyError 的前缀，加上集群、ACL 的那几个）

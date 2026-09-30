@@ -3,12 +3,18 @@ package xgorm
 import (
 	"context"
 	"crypto/tls"
+	"database/sql"
+	"database/sql/driver"
+	"errors"
 	"fmt"
+	"io"
 	"maps"
+	"net"
 	"slices"
 	"sync"
 	"time"
 
+	mysqldriver "github.com/go-sql-driver/mysql"
 	"gorm.io/gorm"
 )
 
@@ -160,16 +166,58 @@ func (d Dialect) errorCode(err error) string {
 	return d.ErrorCode(err)
 }
 
-// redactedError 要写进日志和 Span 的错误文本：服务端报的错只留错误码，其余照原文。
+// redactedError 要写进日志和 Span 的错误文本：服务端报的错只留错误码；
+// 客户端这一侧的只有 clientSafeError 认得的几类照记，其余一律是 clientErrorOmitted。
 //
-// 只动服务端的错：网络错误、ctx 取消、record not found 这类是客户端这一侧的，
-// 原文里没有参数值，而且正是排查要看的东西。
+// 客户端的错也会带参数值，实测：pgx v5.10.0 编码不了的参数用 %#v 整个写进错误
+// （unable to encode xgorm.rvSecret{Token:"…"} into text format for text (OID 25)），
+// database/sql 扫描失败用 %q 写出读回来的值（converting driver.Value type []uint8 ("…") to a int）。
+// 所以和 xredis 一样按白名单放行，不是按黑名单去猜哪些危险。返回给调用方的错误不变
 func (d Dialect) redactedError(err error) (text, code string) {
 	if code = d.errorCode(err); code != "" {
 		return fmt.Sprintf("%s error %s (message omitted, it may contain parameter values)", d.Name, code), code
 	}
-	return err.Error(), ""
+	if safe := clientSafeError(err); safe != nil {
+		return safe.Error(), ""
+	}
+	return clientErrorOmitted, ""
 }
+
+// clientSafeError 错误链上第一个原文可以照记的错误：网络错误（地址、超时，排查正要看这个）、
+// ctx 取消 / 超时，以及 database/sql、驱动、GORM 自己的那些固定文案的哨兵错误。没有就是 nil。
+//
+// 返回的是链上认出来的那一个，不是整条链的原文：外面包的那几层不一定干净——
+// GORM 的 AddError 用 "%v; %w" 把前一个错误的原文拼在前面（gorm v1.31.2 gorm.go AddError），
+// 后一个是 ErrInvalidData 的话，整条链的原文里照样是前一个带着的参数值
+func clientSafeError(err error) error {
+	var ne net.Error
+	if errors.As(err, &ne) {
+		return ne
+	}
+	for _, safe := range safeErrors {
+		if errors.Is(err, safe) {
+			return safe
+		}
+	}
+	return nil
+}
+
+// safeErrors 文案固定、不带任何值的哨兵错误
+var safeErrors = []error{
+	context.Canceled, context.DeadlineExceeded, io.EOF, io.ErrUnexpectedEOF,
+	sql.ErrConnDone, sql.ErrTxDone, sql.ErrNoRows, driver.ErrBadConn, driver.ErrSkip,
+	mysqldriver.ErrInvalidConn, mysqldriver.ErrMalformPkt, mysqldriver.ErrNoTLS, mysqldriver.ErrPktSync,
+	mysqldriver.ErrPktSyncMul, mysqldriver.ErrPktTooLarge, mysqldriver.ErrBusyBuffer,
+	gorm.ErrRecordNotFound, gorm.ErrInvalidTransaction, gorm.ErrNotImplemented, gorm.ErrMissingWhereClause,
+	gorm.ErrUnsupportedRelation, gorm.ErrPrimaryKeyRequired, gorm.ErrModelValueRequired,
+	gorm.ErrModelAccessibleFieldsRequired, gorm.ErrSubQueryRequired, gorm.ErrInvalidData, gorm.ErrUnsupportedDriver,
+	gorm.ErrRegistered, gorm.ErrInvalidField, gorm.ErrEmptySlice, gorm.ErrDryRunModeUnsupported, gorm.ErrInvalidDB,
+	gorm.ErrInvalidValue, gorm.ErrInvalidValueOfLength, gorm.ErrPreloadNotAllowed, gorm.ErrDuplicatedKey,
+	gorm.ErrForeignKeyViolated, gorm.ErrCheckConstraintViolated,
+}
+
+// clientErrorOmitted 客户端这一侧的错、又不在 clientSafeError 认得的那几类里时，日志和 Span 里写的话
+const clientErrorOmitted = "client error (message omitted, it may contain parameter values)"
 
 // lookupDialect 取一个已注册的方言
 func lookupDialect(name Driver) (Dialect, bool) {

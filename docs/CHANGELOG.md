@@ -8,6 +8,8 @@
 
 ## [未发布]
 
+## [v1.19.0] - 2026-09-30
+
 ### 新增
 
 - xredis 新增配置项 `Log`（默认 false）和 `SlowThreshold`（默认 100ms，需 `Log` 开启，0 不记，负数启动失败）：每条命令一行 `redis command`（pipeline 整个一行 `redis pipeline`），带实例名、命令名、第一个 key 和耗时，不记值和其余参数；key 不存在（`redis.Nil`）记 INFO 并带 `nil: true`，失败和慢命令记 WARN，失败时只记服务端的错误码。

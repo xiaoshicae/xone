@@ -8,6 +8,8 @@
 
 ## [未发布]
 
+## [v1.22.0] - 2026-10-01
+
 ### 不兼容变更
 
 - 配置文件里用 `---` 隔开的多份 YAML 文档现在启动失败，报 `multiple YAML documents in one file are not supported ... put per-environment settings in application-{profile}.yml instead`；原来只读第一份，后面的整段静默丢掉（也不算「没人读的配置块」）。开头一个 `---`、结尾多写的空 `---` 照常加载。迁移：把 `---` 之后的内容并进第一份；按环境区分的那几段挪进 `application-{profile}.yml`，用 `XApp.Profiles` / `--profile` 激活。

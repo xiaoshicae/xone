@@ -13,6 +13,7 @@ use (
 	./xgorm/clickhouse
 	./xredis
 	./xcache
+	./xcron
 	./xhttp
 	./xgin
 	./xecho

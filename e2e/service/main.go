@@ -24,6 +24,8 @@
 //	GET  /dep?target=redis|db|mysql|ch[&timeout=200ms]  对 Redis / PG / MySQL / ClickHouse 做一次最小操作，回耗时，测故障下的超时
 //	POST /mysql/users 等        第二个 xgorm 实例 xgorm.C("mysql") 上的增删改查，见 mysql.go
 //	POST /ch/events 等          第三个 xgorm 实例 xgorm.C("ch")（ClickHouse，可选），见 clickhouse.go
+//
+// Service.CronEvery 大于 0 时另有一个定时任务 e2e-tick，见 cron.go。
 package main
 
 import (
@@ -75,6 +77,10 @@ func main() {
 	// 用 AddSensitiveHeaders 加进名单。X-Tenant-Id 不含任何敏感词，
 	// 它被遮只能是名单那一条在起作用——默认名单里的头名字都带着敏感词，单看它们分不出是哪一条遮的
 	middleware.AddSensitiveHeaders("X-Tenant-Id")
+
+	if c.CronEvery > 0 {
+		addCron(c.CronEvery, c.CronHold) // 见 cron.go
+	}
 
 	g := xgin.New().WithRoutes(routes, probeRoutes) // probeRoutes 见 probe.go
 	var r xone.Runnable = g

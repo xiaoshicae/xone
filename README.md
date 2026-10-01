@@ -81,6 +81,7 @@ curl localhost:8080/hello     # {"msg":"hello"}；访问日志、链路、/metri
 | [xredis](xredis/README.md) | [go-redis](https://github.com/redis/go-redis) | `*redis.Client`，多实例 |
 | [xcache](xcache/README.md) | [ristretto](https://github.com/dgraph-io/ristretto) | 本地缓存，按类型取值 |
 | [xhttp](xhttp/README.md) | [resty](https://github.com/go-resty/resty) | 出站 HTTP，重试、链路、指标 |
+| [xcron](xcron/README.md) | [cronexpr](https://github.com/hashicorp/cronexpr)（只用来解析） | 进程内的定时任务，每次执行带链路和日志字段，退出时等在途的跑完 |
 | [xtrace](xtrace/README.md) | [OpenTelemetry](https://github.com/open-telemetry/opentelemetry-go) | 链路，设为全局 TracerProvider |
 | [xmetric](xmetric/README.md) | [Prometheus](https://github.com/prometheus/client_golang) | 指标打点，`/metrics` 由 xgin / xecho 挂上 |
 | [xlog](xlog/README.md) | [log/slog](https://pkg.go.dev/log/slog)（标准库） | 结构化日志，文件轮转，请求级字段 |
@@ -94,8 +95,8 @@ curl localhost:8080/hello     # {"msg":"hello"}；访问日志、链路、/metri
 | 模块 | 跟着谁来 | 一个都没用时 |
 |---|---|---|
 | `xapp`（`XApp` 块） | `xone` 本身 | —— |
-| `xlog` | xgin、xecho | 框架不接管日志，`slog.Default()` 还是你自己的；要用就匿名 import `github.com/xiaoshicae/xone/xlog` |
-| `xtrace`、`xmetric` | xgin、xecho、xgorm、xredis、xhttp；xcache 只带 xmetric | 想要时匿名 import，见 [可观测「链路」](docs/observability.md#链路) |
+| `xlog` | xgin、xecho、xcron | 框架不接管日志，`slog.Default()` 还是你自己的；要用就匿名 import `github.com/xiaoshicae/xone/xlog` |
+| `xtrace`、`xmetric` | xgin、xecho、xgorm、xredis、xhttp；xcache 只带 xmetric，xcron 只带 xtrace | 想要时匿名 import，见 [可观测「链路」](docs/observability.md#链路) |
 
 ## 常用写法
 

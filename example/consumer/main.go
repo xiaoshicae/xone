@@ -23,7 +23,7 @@ import (
 	// 这些自带链路的集成，少了它日志就带不上 trace_id
 	_ "github.com/xiaoshicae/xone/xtrace"
 
-	// xlog 只跟着 xgin / xecho 来。没有 Web 框架的程序要按 XLog 配日志，自己匿名 import 它；
+	// xlog 只跟着 xgin / xecho / xcron 来。没有 Web 框架的程序要按 XLog 配日志，自己匿名 import 它；
 	// 不 import 的话 slog.Default() 保持标准库默认，写了 XLog 块会启动失败
 	_ "github.com/xiaoshicae/xone/xlog"
 )

@@ -36,7 +36,8 @@ for pkg in ./xhook ./xerror ./xutil ./xtls ./internal/web; do
 done
 echo "✓ xhook / xerror / xutil / xtls / internal/web 零第三方依赖"
 
-# xlog 会换掉 slog.Default()，只跟着 xgin / xecho 来。数据类集成、xtrace、xmetric 都不许把它带进来：
+# xlog 会换掉 slog.Default()，只跟着 xgin / xecho / xcron 来（它们是「进程的主体」：Web 服务、定时任务进程，
+# 要的就是 JSON 日志和 trace_id）。数据类集成、xtrace、xmetric 都不许把它带进来：
 # 否则只用 xgorm 的程序又被接管了日志。xtrace / xmetric 往 internal/logext 注入，不 import xlog。
 # 查每个模块的全部包（./...），不只是模块根上那一个：核心里的 xflow、xonetest、internal/... 带进 xlog，
 # 使用者 import 它们同样被接管日志。xlog 自己的 Deps 里没有它自己，不用单独排掉
@@ -49,7 +50,7 @@ for m in . xtrace xmetric xgorm xredis xhttp xcache; do
   [ -z "$bad" ] || fail "$m 里这些包把 xlog 带进来了（根模块、数据类集成、xtrace、xmetric 都不该带）：
 $bad"
 done
-echo "✓ 只有 xgin / xecho 带着 xlog"
+echo "✓ 只有 xgin / xecho / xcron 带着 xlog"
 
 # ---- 4. 只有集成包可以有 init() ----
 # 集成包的 init 只登记不初始化；核心自己则连登记都不该有。
@@ -105,6 +106,9 @@ for d in $integrations; do
   ! grep -rq '"github.com/xiaoshicae/xone"' "$d"/*.go || fail "$d 引用了根包（只能 import xhook / xconfig）"
   # 只读配置、不造任何东西的包（如 xapp、xflow）没有构造器可言，这条对它是空的
   grep -rq 'xhook\.BeforeStop(' "$d"/*.go || continue
+  # xcron 例外：它登记的是进程里唯一的那个调度器，没有「一个实例」可造；
+  # 绕开框架的路径是 Once（不经钩子就能跑），测试直接调包内的调度器
+  [ "$d" != xcron ] || continue
   # New[T any]( 也算：泛型构造器同样是「绕开框架直接造一个」的入口
   grep -rqE '^func New[(\[]' "$d"/*.go || fail "$d 登记了组件，却没有纯构造器 New"
 done

@@ -55,6 +55,7 @@ Go 的 MVS 会把**整个模块图**里的版本要求强加给使用者——�
 | `xmetric` | 38 | 36 |
 | `xcache`（指标经 xmetric） | 42 | 39 |
 | `xhttp`（链路经 xtrace） | 58 | 54 |
+| `xcron`（链路经 xtrace） | 27 | 24 |
 | `xredis`（链路经 xtrace） | 60 | 56 |
 | `xgorm`（链路经 xtrace） | 68 | 64 |
 | `xgorm/clickhouse` | 131 | 126 |
@@ -66,7 +67,7 @@ Go 的 MVS 会把**整个模块图**里的版本要求强加给使用者——�
 指向本仓库的各个模块，`GOWORK=off go mod tidy` 之后数 `GOWORK=off go list -m all` 除第一行（应用自己）之外的行数；
 「第三方」再去掉 `github.com/xiaoshicae/xone` 开头的。数字随依赖升级会变，改了 `go.mod` 之后重量一次。
 
-- **会产生 Span 的集成（xgin、xecho、xgorm、xredis、xhttp）依赖 xtrace**：用了它们就有链路，不用另外记得 import xtrace——
+- **会产生 Span 的集成（xgin、xecho、xgorm、xredis、xhttp、xcron）依赖 xtrace**：用了它们就有链路，不用另外记得 import xtrace——
   漏了的话不报错，只是 Span 全是 noop、日志没有 `trace_id`。代价实测很小：它们本来就依赖 OpenTelemetry 的 API
   （xgin、xgorm 连 SDK 也有），xtrace 多带进来的只是它自己、b3 传播器和 stdout 导出器，模块图从 85 / 64 / 58 涨到
   上表的 89 / 68 / 60（xgin / xgorm / xredis）。xcache 不产生 Span，不依赖它。
@@ -176,7 +177,7 @@ func New(ctx context.Context, cfg Config) (*T, io.Closer, error)  // 会建连�
 
 xlog 的两个扩展点放在核心的 `internal/logext` 里（`xlog.SetTraceExtractor` / `xlog.AddObserver` 转发过去），
 而不是 xlog 自己：注入方 xtrace、xmetric 于是不 import xlog。xlog 会换掉 `slog.Default()`，
-只用 xgorm、xredis 这类集成的程序（它们都带着 xtrace、xmetric）不该因此被接管日志；xlog 只跟着 xgin / xecho 来。
+只用 xgorm、xredis 这类集成的程序（它们都带着 xtrace、xmetric）不该因此被接管日志；xlog 只跟着 xgin / xecho / xcron 来。
 
 不用「在 `slog.Default()` 外面包一层」的办法：`slog.SetDefault` 会把标准库 `log` 包的输出也接到新 handler 上，
 链条一旦绕回 slog 自带的 handler 就成环，卡死在 `log` 包那把不可重入的锁上。让下层自己持有扩展点就没有这个问题。

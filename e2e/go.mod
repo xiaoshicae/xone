@@ -7,6 +7,7 @@ go 1.25.0
 replace (
 	github.com/xiaoshicae/xone => ../
 	github.com/xiaoshicae/xone/xcache => ../xcache
+	github.com/xiaoshicae/xone/xcron => ../xcron
 	github.com/xiaoshicae/xone/xgin => ../xgin
 	github.com/xiaoshicae/xone/xginswagger => ../xginswagger
 	github.com/xiaoshicae/xone/xgorm => ../xgorm
@@ -28,6 +29,7 @@ require (
 	github.com/swaggo/swag v1.16.6
 	github.com/xiaoshicae/xone v1.22.1
 	github.com/xiaoshicae/xone/xcache v1.22.1
+	github.com/xiaoshicae/xone/xcron v1.22.1
 	github.com/xiaoshicae/xone/xgin v1.22.1
 	github.com/xiaoshicae/xone/xginswagger v1.22.1
 	github.com/xiaoshicae/xone/xgorm v1.22.1
@@ -86,6 +88,7 @@ require (
 	github.com/goccy/go-json v0.10.5 // indirect
 	github.com/goccy/go-yaml v1.19.2 // indirect
 	github.com/google/uuid v1.6.0 // indirect
+	github.com/hashicorp/cronexpr v1.1.3 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
 	github.com/jackc/puddle/v2 v2.2.2 // indirect

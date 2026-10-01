@@ -78,6 +78,7 @@ XGorm、XRedis 启动时各探一次，共用同一份实现（`internal/xclient
 | [xredis](../xredis/README.md#行为与实测) | go-redis：超时、建连重试、新连接上的握手、内存 |
 | [xcache](../xcache/README.md#行为与实测) | ristretto：内部开销、停止、指标开销、TTL |
 | [xhttp](../xhttp/README.md#行为与实测) | resty / otelhttp / 标准库 Transport 的默认 |
+| [xcron](../xcron/README.md#行为与实测) | cronexpr：段数、时区前缀、夏令时、永远不会到的 spec；`@every` 的漂移 |
 | [xgin](../xgin/README.md#行为与实测) | gin / net/http：代理、上传、超时、h2c、TLS、优雅退出 |
 | [xecho](../xecho/README.md#行为与实测) | echo：client_ip、错误渲染、路由模板、分组的兜底路由、`e.Pre`、超时中间件、panic、gommon 日志、压缩、multipart 阈值、路由的严格匹配 |
 | [xmetric](../xmetric/README.md#行为与实测) | client_golang：桶、名字、常量标签 |

@@ -39,7 +39,7 @@ import (
 
 	// XApp 块跟着框架一起来：只 import 了 xone 的程序也能写应用名。它只读配置，不改任何全局状态。
 	// xlog 不在这里：它会换掉 slog.Default，只用 xhook、xgorm 的程序不该被它接管日志。
-	// 只有 xgin / xecho 会把它带进来（xtrace、xmetric 不 import 它），别的程序要用就匿名 import 它
+	// 只有 xgin / xecho / xcron 会把它带进来（xtrace、xmetric 不 import 它），别的程序要用就匿名 import 它
 	_ "github.com/xiaoshicae/xone/xapp"
 )
 
@@ -193,7 +193,7 @@ func Run(r Runnable, opts ...Option) error {
 		hint := ""
 		if slices.Contains(orphan, "XLog") {
 			// XLog 不跟着根包来（见 import 处），只用核心和数据类集成的程序最容易踩到
-			hint = `; XLog needs import _ "github.com/xiaoshicae/xone/xlog" (xgin and xecho bring it along)`
+			hint = `; XLog needs import _ "github.com/xiaoshicae/xone/xlog" (xgin, xecho and xcron bring it along)`
 		}
 		return errors.Join(xerror.Newf("xone", "config",
 			"config keys %v are not read by anyone: check the spelling, or whether the matching package is imported; "+

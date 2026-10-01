@@ -3,7 +3,7 @@
 接口文档：把 [swag](https://github.com/swaggo/swag) 生成的文档以 Swagger UI 挂到 xgin 的原生 `*gin.Engine` 上。
 
 - 单独一个 module：UI 资源会编进二进制，不该让每个线上服务都背上
-- 没写的字段沿用注解里的值，写了才覆盖；标题、版本取自 `XApp`（见「配置」下的说明）
+- 没写的字段沿用注解里的值，写了才覆盖；标题、版本默认取自 `XApp`
 - `Host` 这类随环境变的值写在配置里：联调和生产的地址不一样，而注解是编译进去的
 - 挂载前缀可配，写错启动失败
 
@@ -36,8 +36,8 @@ func main() {
 
 ```yaml
 XGinSwagger:
-  Host: api.example.com    # 文档里显示的地址；默认取自请求
-  BasePath: /api/v1        # 所有接口的公共前缀
+  Host: api.example.com    # 文档里显示的地址；默认沿用注解的 @host，注解也没写时 Swagger UI 用当前请求的地址
+  BasePath: /api/v1        # 所有接口的公共前缀；默认沿用注解的 @BasePath
   Title: ""                # 默认取 XApp.Name
   Description: ""
   Schemes: []              # 默认留空：沿用注解里的 @schemes，写了才覆盖
@@ -47,8 +47,6 @@ XGinSwagger:
 - 没写的字段沿用注解里的值，写了才覆盖。标题和版本例外，按这个顺序取第一个有值的：
   - 标题：`XGinSwagger.Title` → `XApp.Name` → 注解里的 `@title`
   - 版本：`XApp.Version` → 注解里的 `@version`（`XGinSwagger` 没有版本字段）
-
-  这些值在第一次访问文档时才填。
 
 ## API
 

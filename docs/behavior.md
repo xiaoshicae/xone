@@ -1,15 +1,8 @@
 # 与底层库不同的默认值与实测
 
-框架接的每个库都有自己的默认行为，其中不少和它的 README、和「大家以为的」不一样。
-这份文档记两件事：**框架在哪里改了库的默认值、为什么**，以及**没改的那些实际是什么行为**。
-每一条都是用代码量出来的，写着库的默认、这里的默认、实测的数字和当时的依赖版本——
-升级依赖之后数字对不上，就说明行为变了，要重新量。
-
-这里只留总表和跨模块的那一项（启动期建连探测），每个模块的实测在它 README 的「行为与实测」一节，
-配置项在同一个 README 的「配置」一节（索引见 [`config.md`](config.md)），日志 / 指标 / 链路的字段见
-[`observability.md`](observability.md) 和各模块 README 的「可观测」一节。
-
-**怎么读**：先看[总表](#总表)——每一行是一处「库的默认 ≠ 这里的默认」，链接跳到那个模块的实测细节。
+框架接的每个库都有自己的默认行为，其中不少和它的 README、和「大家以为的」不一样。这份文档是**总表**：
+每一行是一处「库的默认 ≠ 这里的默认」，链接跳到那个模块 README 的「行为与实测」，那里有实测的数字和依赖版本——
+升级依赖之后数字对不上，就说明行为变了，要重新量。跨模块的启动期建连探测也写在这里。
 
 实测环境：没有特别说明的都是本机回环、Go 1.25；带 e2e 的是 `e2e/` 下真起进程、连真服务
 （PG 16、MySQL 8.0.46、Redis 7.0.15、ClickHouse 24.8.14）量出来的。
@@ -26,7 +19,7 @@
 | [`XGin.MaxMultipartMemory`](../xgin/README.md#行为与实测) | 32MB | 8MB | 它是落盘阈值不是请求体上限，堆开销约为它的三倍 |
 | [`XGin.ReadHeaderTimeout: 0`](../xgin/README.md#行为与实测) | 退到 `ReadTimeout`（默认 0），即不限时 | 启动失败 | 发半个请求头就能一直占着连接 |
 | [`XGin.UseH2C`](../xgin/README.md#行为与实测) | x/net 的 `h2c.NewHandler` | 标准库的 `Protocols.SetUnencryptedHTTP2` | 前者劫持连接，`Shutdown` 管不到在途请求 |
-| [gin `RedirectTrailingSlash`](../xgin/README.md#行为与实测) | 开着：`/users/` 回 301（POST 307）到 `/users` | 关掉，走 `NoRoute` 记 404 `unmatched` | 重定向的请求不跑任何中间件，访问日志、指标、链路里都没有 |
+| [gin `RedirectTrailingSlash`](../xgin/README.md#行为与实测) | 开着：`/users/` 回 301（GET）/ 307（其余方法）到 `/users` | 关掉，走 `NoRoute` 记 404 `unmatched` | 重定向的请求不跑任何中间件，访问日志、指标、链路里都没有 |
 | [gin `ContextWithFallback`](../xgin/README.md#行为与实测) | 关着：`*gin.Context` 的 `Value` 只查 `c.Keys`、`Done()` 是 nil | 开着，转到 `c.Request.Context()` | 否则 `xlog.AddKV(c, ...)`、`Start(c, ...)` 丢掉日志作用域和父 Span，取消也传不下去 |
 | [`http.Server` 劫持的连接](../xgin/README.md#行为与实测) | `Shutdown` 不等、`Close()` 断不掉，请求 ctx 不取消 | `Shutdown` / `Close()` 之后取消 `BaseContext` | 否则等着 ctx 的 WebSocket handler 让 `Stop` 等满预算再报错 |
 | [`XEcho.TrustedProxies`](../xecho/README.md#行为与实测) | `IPExtractor` 为 nil：`X-Forwarded-For` / `X-Real-IP` 谁发来的都信 | 只信私有网段（`private`），算法同 xgin | 实测公网对端发 `X-Forwarded-For: 1.2.3.4`，`c.RealIP()` 就是 `1.2.3.4` |
@@ -58,8 +51,6 @@
 | [`XTrace` 透传与 baggage](../xtrace/README.md#行为与实测) | 入站的值照单全收 | 只收直连对端在 `XGin.TrustedProxies`（`XEcho.TrustedProxies`）里的 | 否则公网客户端能伪造 `X-Tenant-Id` 带进内网 |
 | [`XTrace` 采样](../xtrace/README.md#行为与实测) | `AlwaysSample` 无视上游 | `ParentBased`，有上游时听上游 | 否则上游 `sampled=00` 被改成 `-01` 往下传 |
 | [`XMetric.Namespace`](../xmetric/README.md#行为与实测) | 不合规的名字导出时转义 | 读配置时失败 | 否则看板按你写的名字查不到 |
-
-每一项的实测在对应模块的 README 里，见[各模块的实测](#各模块的实测)。
 
 ## 启动期建连探测
 

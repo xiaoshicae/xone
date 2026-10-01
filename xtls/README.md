@@ -2,11 +2,9 @@
 
 客户端 TLS 块：XGorm / XRedis / XHttp 连出去时的 TLS 写成同一个 `TLS:` 块（核心模块，`xtls.Config`），字段、默认值、校验规则只有这一份。
 
-- 三个模块里写法完全一样，代码不用改
 - 证书一律校验，没有跳过校验的开关；最低 TLS 1.2
 - 开着 TLS 块就不会退回明文
 - 配错的组合在读配置时就失败，证书文件在建实例时读
-- 服务端（XGin）的 TLS 是另外几个字段，见 [xgin](../xgin/README.md#配置)
 
 ## 快速上手
 
@@ -40,10 +38,9 @@ XRedis:
     ServerName: redis.internal        # 比对证书的名字。空 = 连接地址的主机部分
 ```
 
-- 填了 `CAFile` 就**只认**这个文件里的 CA，系统根证书不再参与。
+- 填了 `CAFile` 就**只认**这个文件里的 CA，系统根证书不再参与。自签证书把 CA 填进这里。
 - 要更细的控制（加密套件、自定义校验）就绕开配置、自己造原生 client。
-
-服务端（XGin、XEcho）那一侧同样是一个 `TLS:` 块，字段不同：`CertFile`、`KeyFile`、`ClientCAFile`、`MinVersion`，没有 `Enable`（证书配了就开），见 [XGin](../xgin/README.md#配置)。
+- 服务端（XGin、XEcho）的 `TLS:` 块是另一组字段：`CertFile`、`KeyFile`、`ClientCAFile`、`MinVersion`，没有 `Enable`（证书配了就开），见 [XGin](../xgin/README.md#配置)。
 
 ## API
 
@@ -56,9 +53,8 @@ XRedis:
 
 ## 注意事项
 
-- **证书一律校验，没有跳过校验的开关**：自签证书把 CA 填进 `CAFile`。最低 TLS 1.2。
-- **开着 TLS 块就不会退回明文**；DSN 里不能再写 TLS 参数（PG 的 `ssl*`、MySQL 的 `tls=`、ClickHouse 的 `secure` /
-  `skip_verify` / `tls_server_name`），两处都写是配置错误。
+- **开着 TLS 块时 DSN 里不能再写 TLS 参数**（PG 的 `ssl*`、MySQL 的 `tls=` / `allowFallbackToPlaintext=`、ClickHouse 的 `secure` /
+  `skip_verify` / `tls_server_name`），两处都写是配置错误；也必须走 TCP（Unix socket 上不做 TLS）。
 - **不开 TLS 块时 pgx 默认连上了也不校验证书**（`sslmode=prefer`），go-sql-driver 不写 `tls` 就是明文。见[「行为与实测」](#行为与实测)。
 - 没开 `Enable` 却写了别的几项（多半是忘了开）、`CertFile` / `KeyFile` 只配一个，读配置时就失败。
 - 证书文件在建实例时读，读不出来报 op 为 `config` 的错，一次都不连。
@@ -103,12 +99,12 @@ XRedis:
 | `TLS.CertFile and TLS.KeyFile must be set together` | 客户端证书只配了一半 | 两个都填 |
 | `the DSN sets sslmode while the TLS block is enabled; configure TLS in one place only` | PG 的 DSN / `Postgres.Params` 里有 `ssl*` 参数，同时开了 TLS 块 | 二选一 |
 | `the DSN sets tls while the TLS block is enabled` | MySQL 的 DSN 里写了 `tls=`（哪怕 `tls=false`） | 二选一 |
+| `the DSN sets allowFallbackToPlaintext while the TLS block is enabled` | MySQL 的 DSN 里写了 `allowFallbackToPlaintext=`（哪怕 `=false`） | 从 DSN 里删掉：TLS 块从不退回明文 |
+| `the TLS block is enabled but … Unix socket` / `… connects over unix` | PG 的主机或 MySQL 的 DSN 走 Unix socket | 改成 TCP 地址，或者不开 TLS 块 |
 | `the DSN sets secure while the TLS block is enabled` | ClickHouse 的 DSN 里有 `secure` / `skip_verify` / `tls_server_name` | 二选一 |
 | `the DSN uses http:// while the TLS block is enabled, and http:// never runs TLS` | ClickHouse 的 DSN 是 `http://` | 改成 `https://` |
 | `Driver="…" does not support the TLS block, configure TLS in its DSN instead` | 这个驱动没提供 `OpenTLS` | 在它的 DSN 里配 TLS |
-| `read TLS.CAFile: …` / `TLS.CAFile … contains no PEM certificate` | 证书文件读不出来或不是 PEM | 检查路径和文件内容 |
+| `read TLS.CAFile: …` / `TLS.CAFile … contains no PEM certificate` / `load TLS.CertFile / TLS.KeyFile: …` | 证书文件读不出来、不是 PEM，或证书和私钥不配对 | 检查路径和文件内容 |
 | `x509: certificate signed by unknown authority` | 服务端证书不是 `CAFile` 里的 CA 签的（没填 `CAFile` 时是系统根证书） | 把签发它的 CA 填进 `CAFile` |
 | `x509: certificate is valid for …, not …` | 证书上的名字和连接地址对不上 | 按 IP 连时填 `ServerName` |
 | `remote error: tls: certificate required` / `unknown certificate authority` | 服务端要客户端证书，没带或不是它认的 CA 签的 | 填 `CertFile` / `KeyFile`，用服务端认的 CA 签 |
-
-证书被拒不重试：再试还是同一张证书、同一个结论。

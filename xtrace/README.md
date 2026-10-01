@@ -2,7 +2,7 @@
 
 链路：装好 OpenTelemetry 的全局 TracerProvider 和 Propagator，业务代码用原生的 `otel.Tracer("...")`。
 
-- xgin / xgorm / xredis / xhttp 自带它，用了其中任何一个就不用另外 import
+- xgin / xecho / xgorm / xredis / xhttp 自带它，用了其中任何一个就不用另外 import
 - 有上游时听上游的采样决定，没有上游时按 `SampleRatio` 采样
 - 按配置透传自定义 Header（如 `X-Request-Id`），可以只发给指定域名
 - 透传的 Header 和 `baggage` 只收可信对端的
@@ -68,17 +68,18 @@ XTrace:
 | `AddSpanProcessor(sp sdktrace.SpanProcessor)` | 挂一个上报用的处理器，在 `xone.Run` 之前调；初始化之后调的立即挂上。传 nil 直接 panic |
 | `ForwardHeaderFromContext(ctx, key) string` | 取一个透传的 Header 值，大小写不敏感 |
 | `ForwardHeadersFromContext(ctx) map[string]string` | 取全部透传的 Header（拷贝） |
-| `Transport{Next}` | `http.RoundTripper`：把目标 Host 写进 ctx，`ForwardHeaderRules` 才能按域名生效。xhttp 已经包好，自己的 `http.Client` 才要用 |
+| `Transport{Next}` | `http.RoundTripper`：把目标 Host 写进 ctx，`ForwardHeaderRules` 才能按域名生效。它自己不注入 Header，`Next` 要是会调全局 Propagator 的那一层（如 `otelhttp.NewTransport(...)`）。xhttp 已经包好，自己的 `http.Client` 才要用 |
+| `WithTargetHost(ctx, host)` / `TargetHostFromContext(ctx)` | 不经 HTTP 时自己写 / 读目标 Host，作用同 `Transport` |
 | `New(ctx, cfg, procs...) (*Tracing, io.Closer, error)` | 纯构造器：不碰全局，`(*Tracing).Install()` 才装成进程级的 |
 
 ## 注意事项
 
 - **框架不内置任何 exporter**：不 `AddSpanProcessor` 的话 Span 照样生成、`trace_id` 照样进日志，只是不上报。本地调试开 `Console: true`。
-- **透传 Header 和 `baggage` 只收可信对端的**：直连对端在 `XGin.TrustedProxies`（用 xecho 时是 `XEcho.TrustedProxies`）里才收。`TrustedProxies` 默认只信私有网段
-  （负载均衡、K8s 的 Ingress 和 Pod），公网直连的不收。`traceparent` / `b3` 谁发来的都接。见
+- **透传 Header 和 `baggage` 只收可信对端的**：直连对端在 `XGin.TrustedProxies` / `XEcho.TrustedProxies` 里才收，默认只信私有网段
+  （负载均衡、K8s 的 Ingress 和 Pod）。`traceparent` / `b3` 谁发来的都接。见
   [observability.md「传播与信任边界」](../docs/observability.md#传播与信任边界)。
-- **有上游时一律听上游的 sampled 位**，`SampleRatio: 1` 也不例外。`SampleRatio: 0` 是不采样但照常生成、透传 TraceID；
-  连 Span 都不要用 `Enable: false`。
+- **有上游时一律听上游的 sampled 位**，`SampleRatio: 1` 也不例外（`ParentBased`，见[「行为与实测」](#行为与实测)）。
+  `SampleRatio: 0` 是不采样但照常生成、透传 TraceID；连 Span 都不要用 `Enable: false`。
 - **`service.name`** 取 `XApp.Name`，环境变量 `OTEL_RESOURCE_ATTRIBUTES` / `OTEL_SERVICE_NAME` 压过它。见[「行为与实测」](#行为与实测)。
 
 ## 可观测
@@ -100,8 +101,8 @@ XTrace:
 
 OTel SDK v1.46.0、otelhttp v0.71.0。
 
-**采样**：SDK 的 `AlwaysSample` 无视上游的 `sampled=00`，还把 `-01` 往下游传。这里用
-`ParentBased(TraceIDRatioBased(SampleRatio))`：有上游时一律听上游的 sampled 位，`SampleRatio: 1` 也不例外。
+**采样**：SDK 的 `AlwaysSample` 无视上游的 `sampled=00`，还把 `-01` 往下游传。这里一律用
+`ParentBased(TraceIDRatioBased(SampleRatio))`：只有根 Span 按比例抽，有上游时照上游的 sampled 位。
 
 **`service.name` 的优先级**，后面的压过前面的：OTel 自己的兜底名 `unknown_service:<可执行文件名>` →
 `XApp.Name` / `XApp.Version` → `OTEL_RESOURCE_ATTRIBUTES` → `OTEL_SERVICE_NAME`。没配的那一项不写，
@@ -114,5 +115,5 @@ OTel SDK v1.46.0、otelhttp v0.71.0。
 或者改写成 `baggage: tenant=…`，就被当成自己人给的、带进内网的每一次调用。规则见
 [`observability.md`](../docs/observability.md#传播与信任边界)。
 
-**`*trusted.com` 这类通配**：原样照字面后缀匹配的话 `*trusted.com` 会匹配 `eviltrusted.com`，
-一个谁都能注册的域名就拿到了内部令牌。所以 `Domains` 只认 `api.internal.com` 和 `*.trusted.com` 两种写法。
+**`*trusted.com` 这类通配**：照字面后缀匹配的话会匹配 `eviltrusted.com`，一个谁都能注册的域名就拿到了内部令牌。
+所以 `Domains` 只认 `api.internal.com` 和 `*.trusted.com` 两种写法。

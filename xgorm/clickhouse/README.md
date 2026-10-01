@@ -44,8 +44,10 @@ XGorm:
   DialTimeout: 500ms       # 注入 DSN 的 dial_timeout，DSN 里已写的不覆盖；0 不注入，驱动用它自己的 30s
 ```
 
-- `https://` 不必再写 `secure=true`；TLS 规则见 [xtls](../../xtls/README.md)。
 - `dial_timeout` 接在 DSN 的 query 末尾，你写的其余参数一个字节都不动（不重排、不重新转义）。
+- 库名写在路径里或写成 `?database=` 都行，两处都写时以 query 里的为准（建连日志的 `db`、Span 的 `db.namespace` 也按它记）。
+- TLS 规则见 [xtls](../../xtls/README.md)。开着 TLS 块时：`https://` 不必再写 `secure=true`；DSN 里不能再写
+  `secure` / `skip_verify` / `tls_server_name`；DSN 是 `http://` 的启动失败。
 
 ## API
 
@@ -60,8 +62,8 @@ XGorm:
 - **`read_timeout` 没写时是 300s，而且管的是一整段读**：健康的长查询也会被它打断；读超时的查询会被 `database/sql` 重发，一共发 3 次。
   **给查询的截止时间要比 `read_timeout` 短**。见[「行为与实测」](#行为与实测)。
 - **新建连接不听 ctx**：拨号和握手只按 `dial_timeout`（`DialTimeout`，默认 500ms）。
-- 驱动对写入报的影响行数永远是 0。
-- DSN 必须是上面四种 scheme 之一的 URL；DSN 是 `http://` 时开着 TLS 块启动失败。
+- 驱动对写入报的影响行数永远是 0，Span 的 `db.rows_affected` 在 ClickHouse 上没有意义。
+- DSN 必须是上面四种 scheme 之一的 URL。
 - 驱动名写错或忘了 import 时启动失败：`unknown Driver="clickhouse", registered: [mysql postgres]`，列出的就是 `xgorm.Drivers()`。
 
 ## 行为与实测
@@ -86,12 +88,12 @@ clickhouse-go 用它们跑集成测试，而 `go.mod` 分不出「只测试用�
   50 行 × 100ms 的流配 `read_timeout=1s`，1.0s 报 `i/o timeout`；`SELECT sleep(2)` 同样 1.0s 失败。
   跑得久的查询要么调大 `read_timeout`，要么给调用方的截止时间。
 - **调用方的截止时间代替 `read_timeout`**，比它长也照截止时间来（同一条 5s 的流配 `read_timeout=1s`、截止时间 10s，5.0s 读完）；
-  池里的连接给 200ms 就在 201ms 返回。**新建连接不听 ctx**：拨号和握手只按 `dial_timeout`，
-  池里的连接用完之后每条查询要等满 `dial_timeout`（默认 500ms，实测 500.2–501.5ms）。
+  池里的连接给 200ms 就在 201ms 返回。
+- **新建连接不听 ctx**：拨号和握手只按 `dial_timeout`。池里的连接用完之后，要新建连接的查询照样等满 `dial_timeout`
+  （默认 500ms，实测 500.2–501.5ms）。
 - **读超时的查询会被 `database/sql` 重发，一共发 3 次。** 驱动把读超时认成坏连接、报 `driver.ErrBadConn`，
   `database/sql` 换一条连接再发（`maxBadConnRetries` = 2）。实测 `read_timeout=1s`：服务端要睡 1.5s 的查询 3.0s 后才失败，
   `system.query_log` 里它开始了 3 次，返回的错误是 `driver: bad connection`（`i/o timeout` 这个根因丢了）。
-  所以给查询的截止时间要比 `read_timeout` 短。
   clickhouse-go v2.30.0 时相反：读超时的连接还回池里，下一条借到它的查询**成功返回了上一条的结果**（上游 v2.47.0 修掉）。
 - ctx **取消**时当场返回 `context canceled`，同时给服务端发 Cancel 包、关掉这条连接：客户端断开之后 0.5ms handler 就返回了。
   服务端按数据块停下（约 115ms 从 `system.processes` 消失），`sleep(2.5)` 打断不了。
@@ -100,7 +102,6 @@ clickhouse-go 用它们跑集成测试，而 `go.mod` 分不出「只测试用�
   不是兜底的 1s。实测（ClickHouse 24.8.14，中间一层代理让服务端的第一个字节晚 1.5s）：按 0 算时 3 次各 1s 全部超时、5.3s 后启动失败；
   按 30s 算 1.5s 连上。
 - 参数由驱动代进语句再发给服务端：浮点数写成 `cast(1.5, 'Float64')`，在 `system.query_log` 里按语句文本找时要按这个写法找。
-- 驱动对写入报的影响行数永远是 0，Span 的 `db.rows_affected` 在 ClickHouse 上没有意义。
 
 **认证失败**认的是服务端回的 `*clickhouse.Exception`（HTTP 协议下包在 `*clickhouse.HTTPError` 里）：
 516（AUTHENTICATION_FAILED）、192 / 193 / 194（老版本的 UNKNOWN_USER、WRONG_PASSWORD、REQUIRED_PASSWORD）。
@@ -110,12 +111,14 @@ clickhouse-go 用它们跑集成测试，而 `go.mod` 分不出「只测试用�
 驱动的 `database/sql` 路径在 ping 之前先从连接上读一个字节检查它还活着没有，异常要是已经到了，就被这一下读走，
 连接被当成坏的丢掉。实测 64 个协程并发各连 20 次（共 1280 次），`database/sql` 路径约 9% 是这样，驱动的原生 API 一次都没有。
 
-**TLS**（`verificationMode=relaxed`）：native 与 `https://` 都走 TLS 块，`system.query_log` 都是 `is_secure=1`；
-CA 不对、`ServerName` 对不上、客户端证书不是服务端认的 CA 签的都在 2–6ms 内失败、不重试；
-TLS 块开着连到明文端口是 `first record does not look like a TLS handshake`（native）/
-`server gave HTTP response to HTTPS client`（HTTPS），照常重试。不开 TLS 块时 DSN 的 `skip_verify=true`
-连得上，但服务端证书根本不校验。GORM 的 clickhouse 驱动拿到 DSN 会另解一份、在带 `UpdateLocalTable` 的 UPDATE
-里按那一份直连每台主机（`update.go`），那几条直连不带 TLS 块——所以开着 TLS 块时不把 DSN 交给它。
+**TLS**（`verificationMode=relaxed`）：native 与 `https://` 都走 TLS 块，`system.query_log` 都是 `is_secure=1`。
 
-多主机 `clickhouse://u:p@h1:9000,h2:9000/db` 按 `in_order` 依次去连，第一个挂了之后查询照常（e2e）。
-DSN 解析失败的错误不回显 DSN：驱动和 `url.Parse` 的原始错误里带着整串 DSN，连同明文密码。
+- CA 不对、`ServerName` 对不上、客户端证书不是服务端认的 CA 签的：都在 2–6ms 内失败、不重试。
+- TLS 块开着连到明文端口：`first record does not look like a TLS handshake`（native）/
+  `server gave HTTP response to HTTPS client`（HTTPS），照常重试。
+- 不开 TLS 块时 DSN 的 `skip_verify=true` 连得上，但服务端证书根本不校验。
+- GORM 的 clickhouse 驱动拿到 DSN 会另解一份、在带 `UpdateLocalTable` 的 UPDATE 里按那一份直连每台主机（`update.go`），
+  那几条直连不带 TLS 块——所以开着 TLS 块时不把 DSN 交给它。
+
+多主机 `clickhouse://u:p@h1:9000,h2:9000/db` 按 `in_order` 依次去连，第一个挂了之后查询照常（e2e）；
+日志的 `addr`、Span 的 `server.address` 记第一个。

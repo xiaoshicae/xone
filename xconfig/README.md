@@ -49,18 +49,19 @@ if err := xconfig.Unmarshal("Order", &cfg); err != nil {
 | `Has(key string) bool` | 文件里有没有写这一块，用于「配了才做」。问过就算认领 |
 | `UnmarshalClients[C any](key string, defaults func() C) (map[string]C, error)` | 解「单实例 / 多实例」两种写法的块，返回 `map[名字]配置`，每个实例先铺默认值。主要给写集成的人用 |
 | `DecodeStrict(node *yaml.Node, v any) error` | 在集合元素自己的 `UnmarshalYAML` 里用，保留「字段拼错就失败」的严格检查 |
+| `DefaultClientName` | 单实例写法规整成的实例名，即 `"default"` |
 
 测试里换一份配置用 `xonetest.UseConfigYAML(t, yml)`，见 [guide.md「测试」](../docs/guide.md#测试)。
 
 ## 注意事项
 
-- **每个字段都写 `yaml` tag。** 没写 tag 的字段 yaml.v3 只认全小写的 key，`PayTimeout:` 会被当成不认识的字段、启动失败——
-  报错里会提示你加 tag，见 [troubleshooting.md](../docs/troubleshooting.md#field-bogus-not-found-in-type-xginconfig)。
-- **在 `Start` 之前什么时候读都行**：`main` 里、`xone.Run` 之前，或者一个 `BeforeStart` 钩子里（见[下文](#在钩子里读)）。
-  **别只在 `Start` 里读**：全部启动钩子跑完时还没人读过的顶层 key 会让启动失败（`config keys [Order] are not read by anyone`）。
-- **时长写单位**：裸数字 `30` 会被当成 30 纳秒，所以直接报错。
+- **每个字段都写 `yaml` tag。** 没写 tag 的字段 yaml.v3 只认全小写的 key，`PayTimeout:` 会被当成不认识的字段、启动失败，
+  报错里提示加 tag，见 [troubleshooting.md](../docs/troubleshooting.md#field-bogus-not-found-in-type-xginconfig)。
+- **在 `Start` 之前读**：`main` 里、`xone.Run` 之前，或者一个 `BeforeStart` 钩子里（见[下文](#在钩子里读)）。
+  只在 `Start` 里才读的不算：启动钩子跑完时没人读过的顶层 key 让启动失败（`config keys [Order] are not read by anyone`）。
+- **时长写单位**：裸数字 `30` 直接报错（``cannot unmarshal !!int `30` into time.Duration``），不会被悄悄当成 30 纳秒。
 - **区分「没配」和「配了」用 `xconfig.Has("Order")`**，不必用指针字段。
-- 在 `main` 里读还有一个好处：「哪来的配置」由 `main` 决定，你的类型不必认识 `xconfig`，测试里直接传值。
+- 在 `main` 里读的好处：你的类型不必认识 `xconfig`，测试里直接传值。
 
 ## 在钩子里读
 

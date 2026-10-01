@@ -21,21 +21,18 @@
 
 ## 日志
 
-xlog 把 `slog.Default()` 换成按 `XLog` 配好的 handler，业务和框架都写它。
-它跟着 xgin / xecho 来；没有 Web 框架的程序（消费者、一次性任务、只用 xgorm / xredis 的）要用它，
-匿名 import `github.com/xiaoshicae/xone/xlog`，不 import 则 `slog.Default()` 保持原样，下面这些都没有。
-要写到自己的日志后端（zap、公司的日志 SDK），在 `xone.Run` 之前 `xlog.UseHandler(h)`，下面这些照样生效，
-见 [xlog「用自己的日志后端」](../xlog/README.md#用自己的日志后端)。
+xlog 把 `slog.Default()` 换成按 `XLog` 配好的 handler，业务和框架都写它。它跟着 xgin / xecho 来；
+没有 Web 框架的程序（消费者、一次性任务、只用 xgorm / xredis 的）要用它就匿名 import `github.com/xiaoshicae/xone/xlog`，
+否则 `slog.Default()` 保持原样，下面这些都没有。要写到自己的日志后端（zap、公司的日志 SDK），
+在 `xone.Run` 之前 `xlog.UseHandler(h)`，下面这些照样生效，见 [xlog「用自己的日志后端」](../xlog/README.md#用自己的日志后端)。
 
-- **`trace_id` / `span_id`**：有链路时（见[链路](#链路)），用带 ctx 的方法（`slog.InfoContext(ctx, …)`）写的每一条都自动带上；
-  xlog 本身不依赖 OpenTelemetry，这一步由 xtrace 接上（注入点在核心的 `internal/logext`，xtrace 因此不必 import xlog）。
+- **`trace_id` / `span_id`**：有链路时（见[链路](#链路)），用带 ctx 的方法（`slog.InfoContext(ctx, …)`）写的每一条都自动带上
+  （由 xtrace 接上，xlog 本身不依赖 OpenTelemetry）。
 - **请求级字段**：`xlog.AddKV(ctx, "user_id", id)` 在任意调用层级补一个字段，之后同一请求里的每条日志
   （包括访问日志）都带着它。作用域由 xgin / xecho 的 `LogScope` 中间件在每个请求开头开好；自己的非 Web 入口用
   `xlog.CtxWithScope(ctx)` 开。
 - **一段调用的字段**：`xlog.CtxWithKV(ctx, map[string]any{"order_id": id})` 派生一个新 ctx，只有用它写的日志带着；
   父 ctx 已有的字段照样带上。批量处理的每一条、起的每个 goroutine 各派生一个，互相不串。
-
-访问日志的字段和脱敏规则见 [xgin「访问日志」](../xgin/README.md#访问日志)。
 
 ### 框架自己的日志
 
@@ -50,11 +47,11 @@ xlog 把 `slog.Default()` 换成按 `XLog` 配好的 handler，业务和框架�
 | `xgorm ready` / `xredis ready` / `xcache ready` | INFO | `instances` |
 | `xgorm go-sql-driver log` / `xredis go-redis log` / `xhttp resty log` | WARN（resty 照搬它的级别） | `detail`：三方库原本写到 stderr 的那一行 |
 
-各模块自己的日志在它 README 的「可观测」一节：[xgin](../xgin/README.md#可观测)（访问日志、`xgin listening`、`xgin http server error`）· [xecho](../xecho/README.md#可观测)（访问日志、`xecho listening`、`echo internal log`、`xecho http server error`）· [xgorm](../xgorm/README.md#日志)（`xgorm connected`、SQL 日志）· [xredis](../xredis/README.md#日志)（`xredis connected`、`redis command`、`redis pipeline`）· [xhttp](../xhttp/README.md#日志)（`xhttp ready`、`http request`）· [xcache](../xcache/README.md#日志) · [xflow](../xflow/README.md#日志)（`xflow flow done` / `xflow flow failed`、逐步的 `xflow step …`）· [xtrace](../xtrace/README.md#日志)。
+各模块自己的日志在它 README 的「可观测」一节：[xgin](../xgin/README.md#可观测)（访问日志、`xgin listening`、`xgin http server error`）· [xecho](../xecho/README.md#可观测)（访问日志、`xecho listening`、`echo internal log`、`xecho http server error`）· [xgorm](../xgorm/README.md#日志)（`xgorm connected`、SQL 日志）· [xredis](../xredis/README.md#日志)（`xredis connected`、`redis command`、`redis pipeline`）· [xhttp](../xhttp/README.md#日志)（`xhttp ready`、`http request`）· [xcache](../xcache/README.md#日志) · [xflow](../xflow/README.md#日志)（`xflow flow done` / `xflow flow failed`；逐步的 `xflow step … done` 记 INFO、`… failed` 记 WARN）· [xtrace](../xtrace/README.md#日志)。
 
 ## 指标
 
-框架自带的指标，名字前面都加 `XMetric.Namespace`（有的话）和 `XMetric.ConstLabels`：
+框架自带的指标都带 `XMetric.ConstLabels`；除了 client_golang 现成的 `go_*` / `process_*`，名字前面还加 `XMetric.Namespace`（有的话）：
 
 | 模块 | 指标 |
 |---|---|
@@ -70,7 +67,7 @@ xlog 把 `slog.Default()` 换成按 `XLog` 配好的 handler，业务和框架�
 - **`method`** 收敛到固定集合：`GET` `HEAD` `POST` `PUT` `PATCH` `DELETE` `CONNECT` `OPTIONS` `TRACE`，其余（包括小写的 `get`）
   一律 `OTHER`——方法是自由 token，照抄的话谁都能把时间序列撑爆。
 - 连接池、缓存的指标在被抓取时才读；`Metric: false` 的实例不出现在 `/metrics` 里。
-- 指标注册失败（比如同名指标已被注册成别的类型）**不让启动失败**，只打一条错误日志，那组指标导不出去。
+- 各集成的指标注册失败（比如同名指标已被注册成别的类型）**不让启动失败**，只打一条错误日志，那组指标导不出去。
 
 ## 链路
 

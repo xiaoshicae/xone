@@ -23,11 +23,9 @@
 go get github.com/xiaoshicae/xone@v1.22.0 github.com/xiaoshicae/xone/xgin@v1.22.0
 ```
 
-升级时同样把用到的每个 xone 模块都列上、写同一个版本号，如
-`go get github.com/xiaoshicae/xone@vX.Y.Z github.com/xiaoshicae/xone/xgin@vX.Y.Z`。
-只升核心不会带上集成：Go 的 MVS 让 xgin 留在旧版本；反过来只升一个集成，会把它依赖的核心
-（以及 xmetric、xtrace）一起拉上去——两种情况都会让各模块版本对不上。
-别用 `go get -u ./...` 来做这件事，它连所有间接依赖都一起升了。
+升级时同样把用到的每个 xone 模块列全、写同一个版本号。只升核心，Go 的 MVS 让 xgin 留在旧版本；
+只升一个集成，会把它依赖的核心（以及 xmetric、xtrace）一起拉上去——两种都会让各模块版本对不上。
+别用 `go get -u ./...`，它连所有间接依赖都升了。
 
 **2. 写配置** `conf/application.yml`（只写要改的，其余用默认值）
 
@@ -91,12 +89,13 @@ curl localhost:8080/hello     # {"msg":"hello"}；访问日志、链路、/metri
 | [xapp](xapp/README.md) · [xtls](xtls/README.md) | — | 应用名 / 版本 · 客户端 TLS（XGorm / XRedis / XHttp 共用） |
 
 `xconfig`、`xlog`、`xflow`、`xapp`、`xtls`、`xhook`、`xerror`、`xutil`、`xonetest` 都在核心模块里，核心只依赖 yaml。
-其中 `xapp` 跟着框架一起来：只要 import 了 `xone`，`XApp` 块就生效，不用另外 import。
-`xlog` 跟着 xgin / xecho 来：只用 xhook、xgorm、xredis 这类集成的程序，`slog.Default()` 还是你自己的那个，
-框架不接管日志；这样的程序想用 xlog，匿名 import `github.com/xiaoshicae/xone/xlog`。
+有几个不用自己 import，跟着别的模块来：
 
-**指标、链路跟着集成来**：xgin、xecho、xgorm、xredis、xhttp 带着 xtrace 和 xmetric，xcache 带着 xmetric，
-用了就不用另外 import。只有进程里一个这样的集成都没有、又想要它们时，才需要匿名 import，见 [可观测「链路」](docs/observability.md#链路)。
+| 模块 | 跟着谁来 | 一个都没用时 |
+|---|---|---|
+| `xapp`（`XApp` 块） | `xone` 本身 | —— |
+| `xlog` | xgin、xecho | 框架不接管日志，`slog.Default()` 还是你自己的；要用就匿名 import `github.com/xiaoshicae/xone/xlog` |
+| `xtrace`、`xmetric` | xgin、xecho、xgorm、xredis、xhttp；xcache 只带 xmetric | 想要时匿名 import，见 [可观测「链路」](docs/observability.md#链路) |
 
 ## 常用写法
 

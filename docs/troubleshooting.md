@@ -41,6 +41,8 @@
 
 前面带着 `application.yml:3:` 这样的文件和行号。字段拼错了，或者没有这个字段——配置里多写的字段一律启动失败。
 
+后面跟着 `(did you mean TLS.CertFile? move it under TLS:)` 的，是把子块的字段写高了一层，照提示挪进去。
+
 后面跟着 `(field Endpoint has no yaml tag, so only "endpoint" is accepted: add `yaml:"Endpoint"`)` 的，是你自己的结构体
 字段没写 `yaml` tag：yaml.v3 对没写 tag 的字段只认全小写的 key。照提示加上 tag。
 
@@ -96,7 +98,7 @@ Import 进来的片段找不到时同样是这个错误：片段的路径相对�
 | `no instance named "default", and none is configured at all — check the XGorm block` | 配置里整块没写 | 写上 `XGorm` 块；可选依赖用 `xgorm.Has()` 先判断 |
 | `no instance named "orders", configured ones are [default report]` | 名字写错，或者多实例里没有 `default` 却调了不带参数的 `C()` | 按列出的名字改，或者在 `Clients` 下加一个 `default` |
 
-`xhttp.C()` / `xhttp.R(ctx)` 不会 panic：任何时候都有一个按默认值建的客户端。
+`xhttp.C()` / `xhttp.R(ctx)` 不会 panic：`xone.Run` 建好之前、关掉之后拿到的是一个带 30s 超时的兜底客户端（不带 `XHttp` 的配置）。
 
 ## Runnable 与退出
 
@@ -115,13 +117,15 @@ Import 进来的片段找不到时同样是这个错误：片段的路径相对�
 
 ### `N handler(s) still running when the shutdown deadline passed`
 
-xgin 到了服务那一段停止预算（`WithStopTimeout` 的 2/3，默认 10s）还有 handler 没返回。已经断开了连接、取消了请求的 ctx，
-剩下的是**不看 ctx 的 handler**：慢操作要传 `c.Request.Context()`。卡在 Redis 读上的也会这样——go-redis 不认取消，
+xgin / xecho 到了服务那一段停止预算（`WithStopTimeout` 的 2/3，默认 10s）还有 handler 没返回。已经断开了连接、取消了请求的 ctx
+（劫持了连接的 WebSocket handler 也一样），剩下的是**不看 ctx 的 handler**：慢操作和 WebSocket 的读循环要看 `c.Request.Context()`
+（xecho 是 `c.Request().Context()`）。卡在 Redis 读上的也会这样——go-redis 不认取消，
 给 ctx 带上截止时间（`context.WithTimeout`）。真的需要更长就调大 `WithStopTimeout`。
 
 ### `server did not exit within its share of the stop budget, closing the rest`
 
-`Start` 没在服务那一段预算里返回（`Stop` 不看 ctx、或者 `Start` 没在 ctx 取消后返回）。框架不再等它，接着关各组件——
+`Start` 没在服务那一段预算里返回（`Stop` 不看 ctx、或者 `Start` 没在 ctx 取消后返回）；`Stop` 自己没返回时是
+`server Stop did not return within its share of the stop budget, closing the rest`。框架不再等它，接着关各组件——
 这时它要是还在用数据库，就会撞上已经关掉的连接池。让 `Start` 在 ctx 取消后返回。
 
 ### 进程卡住不退

@@ -25,7 +25,7 @@ import (
 // stopHookPkgs 登记了停止钩子的包（量自 e2e 服务一次正常退出的 stopping 日志）。
 // 启动期间被打断的用例据此推算「该关哪几个」；框架给别的包加了停止钩子时，
 // 关闭顺序那个用例会先报出来，到时候把它补进这里
-var stopHookPkgs = []string{"xlog", "xtrace", "xcache", "xgorm", "xredis", "xhttp"}
+var stopHookPkgs = []string{"xlog", "xtrace", "xcache", "xgorm", "xredis", "xhttp", "xcron"}
 
 // textHook xlog 装好之前，框架日志是 slog 默认格式写 stderr 的文本：
 //

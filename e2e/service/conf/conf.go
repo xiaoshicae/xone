@@ -45,6 +45,12 @@ type Config struct {
 	// Drain 大于 0 时，服务的 Start 在 xgin 返回之后再收这么久的尾（不看 ctx），
 	// 然后碰一次 PG 和 Redis，测「框架等 Start 真正返回才关其余组件」。0 是不收尾
 	Drain time.Duration `yaml:"Drain"`
+
+	// CronEvery 大于 0 时登记一个 @every CronEvery 的定时任务 e2e-tick（见 cron.go）。0 是不登记
+	CronEvery time.Duration `yaml:"CronEvery"`
+
+	// CronHold e2e-tick 每次执行看着 ctx 等多久；ctx 被取消时再不看 ctx 地收尾 300ms
+	CronHold time.Duration `yaml:"CronHold"`
 }
 
 // DefaultConfig 默认值

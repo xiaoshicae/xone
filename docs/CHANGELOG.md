@@ -8,6 +8,10 @@
 
 ## [未发布]
 
+### 新增
+
+- 新模块 xcron：进程内的定时任务，`xcron.Add("*/5 * * * *", fn)` 登记，Web 服务和只跑定时任务的进程（`xone.MustRun(xone.UntilSignal())`）都能用；每次执行带根 Span `cron <name>` 和 `job` 日志字段，上一次没跑完时跳过，panic 被接住，退出时取消并等在途的执行返回之后才关客户端；`RunOnStartAndWait` 让第一次跑不成功时启动失败，`xcron.Once(fn)` 给一次性任务同样的链路、日志和 panic 恢复。默认按 UTC，多副本时每个副本都会跑。
+
 ## [v1.22.1] - 2026-10-01
 
 ### 修复

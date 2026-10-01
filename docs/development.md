@@ -45,6 +45,7 @@ xone/
 ├── xredis/              Redis，基于 go-redis（独立 module）
 ├── xcache/              本地缓存，基于 ristretto（独立 module）
 ├── xhttp/               出站 HTTP，基于 resty（独立 module）
+├── xcron/               进程内的定时任务，cronexpr 只用来解析（独立 module）
 ├── xgin/                Web 服务，基于 Gin（独立 module）
 │   └── middleware/      访问日志、链路、指标、panic 恢复，外加 LogScope / Propagate
 ├── xginswagger/         Swagger UI（独立 module）

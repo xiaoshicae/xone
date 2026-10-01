@@ -80,7 +80,7 @@ func warmup(ctx context.Context) error {
 | `StageTelemetry` | 要早于客户端，客户端的 Span 才挂得上、指标才收得到 | xtrace、xmetric |
 | `StageClient` | 被业务依赖的客户端 | xgorm、xredis、xcache、xhttp |
 | `StageBusiness` | 你自己的业务资源：预热、定时任务、订阅。**不写 `At` 就是它** | 你的钩子 |
-| `StageServer` | 对外服务：最后起、最先关 | xgin、xecho、xginswagger（读配置） |
+| `StageServer` | 对外服务：最后起、最先关 | xgin、xecho、xginswagger（读配置）、xcron（定时任务的调度器） |
 
 只有必须早于或晚于别人时才写 `xhook.At(xhook.StageClient)` 之类。**同一档内的顺序是 Go 初始化包的顺序**：
 同一份代码每次都一样，但由 import 关系和包路径的字典序决定，不是 import 语句的书写顺序——有先后要求的放进不同档位。
@@ -178,6 +178,11 @@ func main() { xone.MustRun(&Consumer{q: client, workers: 4, timeout: 5 * time.Se
 
 上面的 `Consumer` 也可以不写类型，把 `Start` 的内容放进 `xone.Func(func(ctx context.Context) error { … })`；三条规矩不变。
 一次性任务（迁移、批处理）用 `xone.Func`，干完 `return nil`，见 [Runnable](#runnable)。
+
+**定时任务**用 [xcron](../xcron/README.md)：`xcron.Add(spec, fn)` 登记，Web 服务里照常 `xone.MustRun(xgin.New()…)`，
+只跑定时任务的进程 `xone.MustRun(xone.UntilSignal())`。每次执行带根 Span 和 `job` 日志字段，退出时等在途的跑完才关数据库。
+一次性任务想要同样的 Span、日志和 panic 恢复，用 `xone.MustRun(xcron.Once(fn))` 代替 `xone.Func`。
+多副本部署时每个副本都会跑，要只跑一份得自己抢锁（xcron README「多副本」有一段 `SetNX` 的写法）。
 
 ## 多实例
 

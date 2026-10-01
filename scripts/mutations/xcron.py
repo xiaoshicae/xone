@@ -19,8 +19,6 @@ mutate("不写名字就取函数名", "xcron/option.go", "./xcron", "TestAdd_Dup
 mutate("退出开始之后 Add 报错", "xcron/scheduler.go", "./xcron", "TestAdd_AfterStopIsRegisterError",
        swap('\tif s.state == stopped {\n\t\ts.mu.Unlock()\n\t\treturn xerror.Newf("xcron", "register"',
             '\tif false {\n\t\ts.mu.Unlock()\n\t\treturn xerror.Newf("xcron", "register"'))
-mutate("Once 不收只对调度有意义的 Option", "xcron/xcron.go", "./xcron", "TestOnce_PanicsOnMisuse",
-       swap('\tif len(o.scheduled) > 0 {\n', '\tif false {\n'))
 
 section("时区")
 mutate("默认时区是 UTC", "xcron/option.go", "./xcron", "TestOptions_DefaultLocationIsUTC",

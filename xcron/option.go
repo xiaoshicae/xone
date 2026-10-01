@@ -31,9 +31,6 @@ type options struct {
 
 	// firsts 写了几个 RunOnStart / RunOnStartAndWait：两个都写是自相矛盾，报错而不是谁后写听谁的
 	firsts int
-
-	// scheduled 只对 Add 有意义的那几个 Option 的名字，Once 收到它们就 panic
-	scheduled []string
 }
 
 // WithName 任务名：日志的 job 字段、Span 名（cron <name>）、报错里都用它，同一个进程里不能重复。
@@ -64,7 +61,7 @@ func WithTimeout(d time.Duration) Option {
 // 默认不允许：到了时间点而上一次还在跑，这一次跳过并记一条 WARN（cron job skipped），
 // 下一个时间点照常。一个比间隔还慢的任务因此不会越积越多。
 func AllowOverlap() Option {
-	return func(o *options) { o.overlap = true; o.scheduled = append(o.scheduled, "AllowOverlap") }
+	return func(o *options) { o.overlap = true }
 }
 
 // WithLocation 按哪个时区解释 spec。默认 UTC。
@@ -74,7 +71,7 @@ func AllowOverlap() Option {
 // 有夏令时的时区里，拨快那天不存在的时刻整天跳过，拨回那天重复的时刻跑两次，
 // 见 README「行为与实测」。spec 里不收 CRON_TZ= / TZ= 前缀，时区只在这里写。
 func WithLocation(loc *time.Location) Option {
-	return func(o *options) { o.loc = loc; o.scheduled = append(o.scheduled, "WithLocation") }
+	return func(o *options) { o.loc = loc }
 }
 
 // RunOnStart 调度器起来时先在后台跑一次，不等它，之后按 spec 照常。
@@ -83,7 +80,6 @@ func RunOnStart() Option {
 	return func(o *options) {
 		o.first = firstAsync
 		o.firsts++
-		o.scheduled = append(o.scheduled, "RunOnStart")
 	}
 }
 
@@ -96,7 +92,6 @@ func RunOnStartAndWait() Option {
 	return func(o *options) {
 		o.first = firstWait
 		o.firsts++
-		o.scheduled = append(o.scheduled, "RunOnStartAndWait")
 	}
 }
 

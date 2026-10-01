@@ -8,7 +8,6 @@
 - 退出时取消在途执行的 ctx，等它们返回之后才关数据库；到点没返回的点名报出来
 - 默认按 UTC 解释 spec；`WithLocation` 换时区
 - `RunOnStartAndWait`：起来先跑一次，跑不成功服务就不启动
-- `Once`：跑一次就退出的进程，同样的链路、日志、超时、panic 恢复
 
 ## 快速上手
 
@@ -44,22 +43,14 @@ func main() {
 }
 ```
 
-**跑一次就退出的进程**（迁移、批处理）：
-
-```go
-func main() {
-	xone.MustRun(xcron.Once(migrate, xcron.WithTimeout(time.Hour)))
-}
-```
-
-`Once` 和 `xone.Func` 的差别：替你开了 Span、带上 `job` 字段、记结束那一行、接住 panic。
+**启动前跑一次、失败就不启动**（迁移、预热）不需要 xcron：写成 `xhook.BeforeStart(migrate)`，
+它在客户端建好之后、服务开始监听之前跑，返回错误启动就失败。跑一次就退出的进程用 `xone.Func`。
 
 ## API
 
 | 函数 | 说明 |
 |---|---|
 | `Add(spec, fn, opts...) error` | 登记一个任务。当场校验，错误是 `*xerror.Error`（模块 `xcron`）：spec 写错、`fn` 是 nil、名字为空或重复是 `config`，退出开始之后再 Add 是 `register` |
-| `Once(fn, opts...)` | 跑一次就结束的 Runnable，交给 `xone.Run`；错误是 `*xerror.Error`（op `execute`），`fn` 的错误用 `%w` 包着 |
 
 `spec`：标准的 5 段 `分 时 日 月 周`，或者 `@yearly` / `@annually` / `@monthly` / `@weekly` / `@daily` / `@hourly` / `@every <时长>`。
 `<时长>` 是 `time.ParseDuration` 的写法（`90s`、`1h30m`），必须大于 0。
@@ -72,8 +63,6 @@ func main() {
 | `WithLocation(loc)` | UTC | 按哪个时区解释 spec |
 | `RunOnStart()` | 不跑 | 调度器起来时先在后台跑一次，不等它；失败只记日志 |
 | `RunOnStartAndWait()` | 不跑 | 调度器起来时先跑一次，启动等它；失败启动就失败 |
-
-`Once` 只收 `WithName` 和 `WithTimeout`，给了别的直接 panic（它没有调度可言）；`fn` 是 nil 也 panic，同 `xone.Func(nil)`。
 
 **默认名字**是函数名，去掉 import path 前缀和方法值的 `-fm` 后缀（Go 1.25 实测）：
 

@@ -181,7 +181,6 @@ func main() { xone.MustRun(&Consumer{q: client, workers: 4, timeout: 5 * time.Se
 
 **定时任务**用 [xcron](../xcron/README.md)：`xcron.Add(spec, fn)` 登记，Web 服务里照常 `xone.MustRun(xgin.New()…)`，
 只跑定时任务的进程 `xone.MustRun(xone.UntilSignal())`。每次执行带根 Span 和 `job` 日志字段，退出时等在途的跑完才关数据库。
-一次性任务想要同样的 Span、日志和 panic 恢复，用 `xone.MustRun(xcron.Once(fn))` 代替 `xone.Func`。
 多副本部署时每个副本都会跑，要只跑一份得自己抢锁（xcron README「多副本」有一段 `SetNX` 的写法）。
 
 ## 多实例

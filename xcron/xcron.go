@@ -12,10 +12,6 @@
 //
 //	xone.MustRun(xone.UntilSignal())
 //
-// 跑一次就退出的（迁移、批处理），同样的链路、日志字段、panic 恢复：
-//
-//	xone.MustRun(xcron.Once(migrate))
-//
 // 调度器在 StageServer 那一档起来——客户端（xgorm、xredis……）和你的业务钩子都已就绪，
 // 任务里直接 xgorm.C()；停的时候它最先停，等在途的执行返回之后才轮到关客户端。
 //
@@ -27,8 +23,6 @@ package xcron
 
 import (
 	"context"
-	"fmt"
-	"strings"
 
 	"github.com/xiaoshicae/xone/xerror"
 	"github.com/xiaoshicae/xone/xhook"
@@ -63,45 +57,6 @@ func Add(spec string, fn func(ctx context.Context) error, opts ...Option) error 
 		return xerror.Newf("xcron", "config", "job %q: bad spec %q: %w", o.name, spec, err)
 	}
 	return std.add(&job{name: o.name, sched: sched, fn: fn, o: o})
-}
-
-// Once 把 fn 包成跑一次就结束的 Runnable，交给 xone.Run：fn 返回，进程走退出流程。
-//
-//	xone.MustRun(xcron.Once(migrate, xcron.WithTimeout(time.Hour)))
-//
-// 和 xone.Func 的差别是替你做了 Add 的每次执行都做的事：根 Span、job 日志字段、
-// 结束那一行日志、超时、panic 变成错误。fn 的 ctx 就是 Start 的 ctx，退出信号到达时被取消。
-// 返回的错误是 *xerror.Error（模块 xcron，op execute），fn 的错误用 %w 包在里面。
-//
-// 只收 WithName 和 WithTimeout；fn 是 nil、收到别的 Option（它没有调度可言）、
-// 设置本身不成立时直接 panic，和 xone.Func(nil) 一样：这是写代码时就该发现的错。
-//
-// 返回值满足 xone.Runnable。写成匿名接口，是因为集成不 import 根包（Go 的接口按方法匹配，对得上就行）
-func Once(fn func(ctx context.Context) error, opts ...Option) interface{ Start(context.Context) error } {
-	if fn == nil {
-		panic("xcron: Once needs a function, got nil")
-	}
-	o := buildOptions(fn, opts)
-	if len(o.scheduled) > 0 {
-		panic(fmt.Sprintf("xcron: Once runs fn once and has no schedule, so %s does not apply; it takes only WithName and WithTimeout",
-			strings.Join(o.scheduled, ", ")))
-	}
-	if err := o.validate(); err != nil {
-		panic(fmt.Sprintf("xcron: Once: %v", err))
-	}
-	return once{o: o, fn: fn}
-}
-
-type once struct {
-	o  options
-	fn func(context.Context) error
-}
-
-func (r once) Start(ctx context.Context) error {
-	if err := execute(ctx, r.o.name, r.o.timeout, r.fn); err != nil {
-		return xerror.Newf("xcron", "execute", "job %q: %w", r.o.name, err)
-	}
-	return nil
 }
 
 // ---- 登记 ----

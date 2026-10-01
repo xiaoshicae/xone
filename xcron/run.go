@@ -18,7 +18,7 @@ import (
 
 const tracerName = "github.com/xiaoshicae/xone/xcron"
 
-// execute 跑一次任务，Add 的每一次和 Once 的那一次都走这里。
+// execute 跑一次任务，Add 的每一次执行都走这里。
 //
 // 替 fn 做的事：开一个根 Span（cron <name>），ctx 里带上 job=<name> 这个日志字段，
 // 按 timeout 限时，记一行结果，接住 panic。返回 fn 的错误；panic 变成错误返回。

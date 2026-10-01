@@ -48,8 +48,8 @@ if err := xconfig.Unmarshal("MyApp", &c); err != nil {
 xone.MustRun(&Consumer{workers: c.Workers, timeout: c.Timeout})
 ```
 
-- **在 `Start` 之前任何时候读都行**：在 `main` 里、`xone.Run` 之前，或者一个 `BeforeStart` 钩子里；第一次读的时候框架才加载配置文件，
-  读到的永远是最终值。**别只在 `Start` 里读**：全部启动钩子跑完时还没人读过的顶层 key 会让启动失败
+- **在 `Start` 之前任何时候读都行**（`main` 里、`xone.Run` 之前、`BeforeStart` 钩子里）：第一次读时才加载配置文件，
+  读到的永远是最终值。**别只在 `Start` 里读**：启动钩子全跑完时还没人读过的顶层 key 让启动失败
   （`config keys [...] are not read by anyone`）。
 - 结构体字段一定要写 `yaml` tag；要区分「没配」和「配了」用 `xconfig.Has("MyApp")`。
 
@@ -261,19 +261,19 @@ func TestInitXKV(t *testing.T) {
 ## 部署
 
 - **终止宽限期要比停止预算长。** `xone.WithStopTimeout`（默认 15s）是从开始退出到 `Run` 返回的上限，K8s 的
-  `terminationGracePeriodSeconds`（默认 30s）留得比它长即可，不必再对齐别的数。xgin 等在途请求用的是其中 2/3。
+  `terminationGracePeriodSeconds`（默认 30s）比它长即可，没有别的数要对齐。xgin / xecho 等在途请求用其中 2/3。
 
   ```go
   xone.MustRun(app, xone.WithStopTimeout(25*time.Second))
   ```
 
-  `WithStopTimeout` 必须 > 0，给 0 或负数 `Run` 什么都不做就返回错误。
+  必须 > 0：给 0 或负数，`Run` 什么都不做就返回错误。
 - **第二个信号立即终止。** 第一个 SIGINT / SIGTERM 触发优雅退出，同时把系统默认处置还回去；卡住时再发一次，进程当场退出。
 - **启动期间收到信号**：不再启动服务，已建好的逆序关掉，以 0 退出——滚动更新撞上这个窗口不会留一条「启动失败」。
 - **配置文件和 profile**：镜像里放 `conf/application.yml`，环境差异放 `application-<env>.yml`，用 `XONE_PROFILE` 选；
   凭证写成 `${VAR}` 从环境变量来。目录怎么放、每种启动方式读到什么，见
   [config.md「多环境配置：一个完整的例子」](config.md#多环境配置一个完整的例子)。
-- **在负载均衡后面**：`XGin.TrustedProxies` 默认只信私有网段，负载均衡、K8s 的 Ingress 和 Pod 转发来的默认就认，不用配；
+- **在负载均衡后面**：`XGin.TrustedProxies`（`XEcho.TrustedProxies`）默认只信私有网段，负载均衡、K8s 的 Ingress 和 Pod 转发来的不用配；
   见 [xgin「在负载均衡 / Cloudflare 后面」](../xgin/README.md#在负载均衡--cloudflare-后面)。
 - **健康检查**：框架不内置，自己挂一个路由；服务在全部启动钩子成功之后才开始监听。
 
@@ -304,12 +304,20 @@ func DefaultConfig() Config { return Config{Addr: "127.0.0.1:1234"} }
 // Validate 读配置时就调，配错的值在启动时失败
 func (c Config) Validate() error { /* ... */ return nil }
 
+// Client 你包装的那个原生客户端
+type Client struct{}
+
+func (c *Client) Close() error { /* ... */ return nil }
+
 // New 纯构造：不碰全局、不读文件、不依赖框架。会阻塞（建连、探测）的才收 ctx
-func New(ctx context.Context, c Config) (*Client, io.Closer, error) { /* ... */ }
+func New(ctx context.Context, c Config) (*Client, io.Closer, error) {
+	cl := &Client{} // 按 c 建连
+	return cl, cl, nil
+}
 
 func init() {
 	xhook.BeforeStart(initXMine, xhook.At(xhook.StageClient)) // 被业务依赖的客户端；业务资源不写档位
-	xhook.BeforeStop(closeXMine)                               // 档位跟着上面那个启动钩子
+	xhook.BeforeStop(closeXMine)                              // 档位跟着上面那个启动钩子
 }
 
 var (

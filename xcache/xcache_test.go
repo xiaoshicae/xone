@@ -476,8 +476,10 @@ func TestClose_NoCrashWithConcurrentReadWrite(t *testing.T) {
 	// 于是和它并发的 Set / Del 会 send on closed channel；policy 的 itemsCh
 	// 也是这么关的，并发的 Get 同样会炸。拿着原生 *Cache 的调用方
 	// 我们拦不住，所以关闭这一步本身必须对并发读写是安全的。
-	// 实测直接调 Close 时这 100 轮里有 750 个协程 panic，并且 -race 报数据竞争
-	const rounds, workers = 100, 8
+	// 实测直接调 Close 时 100 轮里有 750 个协程 panic，并且 -race 报数据竞争。
+	// 每轮都炸好几个，20 轮足够：变异「关闭时改调 ristretto 的 Close」连跑 5 次每次都被抓到。
+	// 实测空闲的 4 核机器、-race：100 轮约 1.1s，20 轮约 0.2s
+	const rounds, workers = 20, 8
 	small := DefaultClientConfig()
 	small.NumCounters, small.MaxCost = 1000, 100 // 默认的 100 万个计数器每轮要分配 4MB，太慢
 	var panics atomic.Int64

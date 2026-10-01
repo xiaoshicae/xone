@@ -26,14 +26,23 @@ set -e
 cd "$(dirname "$0")/.."
 
 # --load 可以写在任意位置，其余参数原样留给 go test
+#
+# -parallel 不给就是 16：go test 默认同时只跑 GOMAXPROCS（4 核的机器就是 4）个并行测试，
+# 而 e2e 的测试大半时间在等——等超时、等信号之后退出、等数据库——CPU 闲着，测试在排队。
+# 实测 4 核机器、数据库已就绪：4 → 103s，16 → 60s（两轮全绿）；32 不再更快（被最慢的那个测试
+# 卡在 60s），反而让「1s 内退出」这类计时断言在抢 CPU 时超时（4 个红）
 timeout=30m
+parallel=-parallel=16
 for a; do
   shift
-  if [ "$a" = --load ]; then
+  case "$a" in
+  --load)
     export XONE_E2E_LOAD=1
     timeout=60m
     continue
-  fi
+    ;;
+  -parallel|-parallel=*|-test.parallel|-test.parallel=*) parallel= ;;
+  esac
   set -- "$@" "$a"
 done
 
@@ -178,4 +187,4 @@ fi
 # 和 scripts/test.sh 一样 GOWORK=off：测的是 e2e/go.mod 自己解出来的依赖
 cd e2e
 export XONE_E2E=1 GOWORK=off
-exec go test -count=1 -v -timeout "$timeout" ./... "$@"
+exec go test -count=1 -v -timeout "$timeout" $parallel ./... "$@"

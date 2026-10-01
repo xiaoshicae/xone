@@ -8,6 +8,8 @@
 
 ## [未发布]
 
+## [v1.22.1] - 2026-10-01
+
 ### 修复
 
 - 安全：xredis 链路的 Span 名不再带命令参数：redisotel 拿第 1 个参数当 Span 名，`Do(ctx, "SET k1 <值>")` 的 Span 名原来是 `set k1 <值>`、pipeline 里是 `redis.pipeline set k2 <值>`；现在不像命令名的记成 `<invalid>`（规则同命令日志的 `cmd` 字段），合规的命令名和 `redis.dial` 不变。

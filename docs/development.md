@@ -87,9 +87,9 @@ xone/
 | 命令 | 干什么 | 在 CI 里 |
 |---|---|---|
 | `scripts/check.sh` | 架构约束 + 依赖边界 + 文档 + gofmt / vet | 每次（ci.yml） |
-| `scripts/test.sh [go test 参数]` | 逐模块 `GOWORK=off go test -race ./...`，一个模块红了也跑完其余的，最后一起报 | 每次（`-count=1`） |
+| `scripts/test.sh [go test 参数]` | 逐模块 `GOWORK=off go test -race ./...`，几个模块同时跑（默认 CPU 核数个，`XONE_TEST_JOBS` 可改），输出按模块顺序打出；一个模块红了也跑完其余的，最后一起报。本地改代码时不加 `-count=1`，没改过的模块直接用缓存 | 每次（`-count=1`） |
 | `scripts/mutate.py [-j N] [--only X] [-k X] [--dry-run]` | 变异测试，并行跑，不动工作区 | 全量每晚（e2e.yml）；`--dry-run` 在 check.sh 里 |
-| `scripts/e2e.sh [--load] [-run X]` | 真实 Web 服务测试，要 PG / MySQL / Redis（ClickHouse 可选） | 改了 `go.mod` / `go.sum` 的 PR、每晚、手动触发（e2e.yml，不含压测） |
+| `scripts/e2e.sh [--load] [-run X]` | 真实 Web 服务测试，要 PG / MySQL / Redis（ClickHouse 可选）；不给 `-parallel` 时用 16（测试大半时间在等，默认的 4 让它们排队） | 改了 `go.mod` / `go.sum` 的 PR、每晚、手动触发（e2e.yml，不含压测） |
 | `scripts/release.sh vX.Y.Z (--bump \| --tag [--e2e-passed] \| --smoke \| --verify)` | 发布：钉版本号 / 打 tag / 推送前冒烟 / 推送后验证 | 否（打 tag 由 release 按钮做） |
 
 ### check.sh

@@ -9,7 +9,7 @@ section("启动与退出")
 mutate("建实例 panic 不漏掉已建好的", "internal/xclient/xclient.go", "./xredis", "TestInitAll",
        swap('safeNew(ctx, r.module, name, cfgs[name], new)', 'new(ctx, name, cfgs[name])'))
 mutate("一个实例建不起来就把已建好的全关掉", "internal/xclient/xclient.go", "./xredis", "TestInitAll",
-       swap('\t\t\tcloseAll(r.module, closers)\n\t\t\treturn err\n','\t\t\treturn err\n'))
+       swap('\t\t\treturn abort(err)\n', '\t\t\treturn err\n'))
 
 section("客户端")
 mutate("xredis 没配也让注册表知道启动过了", "xredis/xredis.go", "./xredis", "TestInitXRedis_CSaysUnconfiguredNotTooEarly",

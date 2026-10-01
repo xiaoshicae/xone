@@ -8,6 +8,10 @@
 
 ## [未发布]
 
+### 不兼容变更
+
+- 配置文件里用 `---` 隔开的多份 YAML 文档现在启动失败，报 `multiple YAML documents in one file are not supported ... put per-environment settings in application-{profile}.yml instead`；原来只读第一份，后面的整段静默丢掉（也不算「没人读的配置块」）。开头一个 `---`、结尾多写的空 `---` 照常加载。迁移：把 `---` 之后的内容并进第一份；按环境区分的那几段挪进 `application-{profile}.yml`，用 `XApp.Profiles` / `--profile` 激活。
+
 ### 修复
 
 - 安全：xgorm 的 MySQL 开着 `TLS:` 块时，DSN 里的 `allowFallbackToPlaintext=true` 会让驱动在服务端（或中间人）不报 TLS 能力时改走明文、把登录包和之后的 SQL 明文发出去；现在 DSN 里写了这个参数直接启动失败（`the DSN sets allowFallbackToPlaintext while the TLS block is enabled`），交给驱动的连接配置里也钉死不退回明文。迁移：把这个参数从 DSN 里删掉。
@@ -18,6 +22,14 @@
 - xgorm 的 MySQL：`MySQL.ReadTimeout: 0`（或 `DialTimeout: 0`）时启动建连探测的单次预算不再只剩另一个超时，配成 0 的那一段按另一段算（`ReadTimeout: 0`、`DialTimeout: 500ms` 是 1s）。
 - xredis：时长配 0 时（go-redis 换成它的默认值 `DialTimeout` / `ReadTimeout` 5s）启动建连探测的预算按换算之后的值算，不再只有 1s 兜底，慢一点但合法的建连不再在启动时失败；配置文档写明了每个时长配 0 的含义。
 - xgorm/clickhouse：库名写成 `?database=` 时，建连日志和 Span 里的 `db` 是真正连上的那个库，不再是空的或路径里被盖掉的那个。
+- `xone.Run`：收到退出信号后，服务的 `Stop` 恰好在截止时间返回、`Start` 紧跟着带错误返回时，`Start` 的错误约有一半的概率丢掉，还多打一条 `server did not exit within its share of the stop budget` 告警；现在错误照常返回，服务已经退出时不再告警。
+- profile 文件和 import 进来的文件里用合并键 `<<: *x` 写的值，现在照常压过低优先级文件里写明的同名 key；原来输给了它们（YAML「写明的压过并进来的」被套到了跨文件合并上）。同一个文件里的 `<<` 规矩不变。
+- `XONE_DEBUG` 打出的最终配置：凭证 key 下的列表和 map 整个遮成 `***`（原来只遮标量）；密码里带 `@`、`/` 的 URL / MySQL DSN 遮到最后一个 `@`（原来后半截连同主机原样打出）；查询串里的 `token=`、`api_key=`、`access_token=` 这类也遮（原来只遮 `password=` / `passwd=` / `pwd=`）；来自 `${VAR}` 的值显示原文 `${VAR}`，不再显示展开出来的值。
+- 没设置的环境变量报错（`environment variables not set: ...`）按名字排序、每个只列一次；原来同一个变量用了几处就列几遍。
+- `--config`、`--profile` 写在命令行最后却没带值时启动失败（`--config needs a value`）；原来被静默忽略，接着按 `XONE_CONFIG`、约定路径找文件。
+- `xconfig.Unmarshal`、`xconfig.DecodeStrict` 传了非指针或 nil 时返回 `xconfig` 的 `config` 错误（`decode target must be a non-nil pointer`），不再 panic；`Unmarshal` 在这一块没配时也照样报。
+- `xlog.Location()`：同一个进程里后一次 `Run` 没配 `XLog.Timezone`（或用了 `xlog.UseHandler`）时回到 `time.Local`；原来一直留着上一次配的时区。
+- xgorm、xredis、xcache 多实例建到一半失败时，回头关已建好的实例失败的错误并进启动错误里返回；原来被丢掉。
 
 ## [v1.21.0] - 2026-09-30
 

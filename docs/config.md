@@ -42,7 +42,8 @@ Import、合并、占位符。每个配置块的全部字段、默认值和最�
    `config/application.yaml`、`application.yml`、`application.yaml`（相对进程的工作目录）
 
 前三种是点名要的，文件不存在就启动失败（`config file does not exist: <path>`）；约定路径一个都没有时
-只打一条告警、全用默认值。
+只打一条告警、全用默认值。`--config`、`--profile` 写在最后却没带值（`./app --config`）同样启动失败
+（`--config needs a value`），不会当成没写、接着按后面的顺序找。
 
 配置在**第一次有人读**的时候才加载——可能早于 `xone.Run`（比如你在 `main` 里就调了 `xconfig.Unmarshal`）。
 那时 `WithConfigPath` 还没生效，用的是 2–4 找到的文件；之后 `Run` 再点名另一个文件会直接报错
@@ -116,8 +117,14 @@ application.yml  <  它 Import 的（含片段自己的 -prod 变体）  <  appl
 | `Addr: ""`、`Headers: []` | 覆盖成空串、空列表——要清空就这样写 |
 
 - **重复的 key 在每个文件里都是错误**，报出文件和两处的行号。
+- **一个文件只能有一份 YAML 文档**：用 `---` 隔开的第二份启动失败（`multiple YAML documents in one file are not supported`），
+  分环境的写法是 `application-{profile}.yml`。空的文档不算一份：开头一个 `---`、结尾多写的 `---`（后面什么都没有、
+  只有注释或 `~`）照常加载。
 - **锚点和别名**（`&name` / `*name` / `<<: *name`）在同一个文件内随便用，可以跨顶层块；不能跨文件。
   展开后一个文件超过十万个节点直接启动失败。
+- **`<<` 在每个文件内部就摊平成普通的 key**，规矩和 YAML 一样：写明的 key 压过并进来的（不论写在 `<<` 前后），
+  `<<: [*a, *b]` 里靠前的压过靠后的，只并一层（写明了 `Nested` 就整个用写明的）。摊平之后才按上表跨文件合并，
+  所以 profile 文件里 `<<: *prod` 带进来的值照样压过 base 里写明的同名 key。
 
 ## 多环境配置：一个完整的例子
 
@@ -264,10 +271,15 @@ XONE_DEBUG=1 ./app --profile=prod      # 1 / true / yes / on 都算打开
 
 - **配置文件是怎么找到的**：括号里是 `xone.WithConfigPath`、`--config`、`XONE_CONFIG` 或 `default search path`。
 - **profile 是从哪来的**：`--profile`、`XONE_PROFILE`，或者 `XApp.Profiles in the config file`。
-- **最终配置是合并、展开 `${VAR}` 之后的**，也就是各组件真正读到的值；配置文件里的注释不带出来（合并之后看不出是哪个文件的）。
-- **凭证已遮掉**，显示成 `***`：key 名里含 password、passwd、secret、token、credential、apikey、accesskey、privatekey 的值整个遮掉
-  （比较前转小写、去掉 `_ - .`）；值里夹着的密码也遮——`postgres://app:***@db`、`report:***@tcp(db:3306)/report`、
-  `password=***`。**空的不遮**，一眼看得出哪个凭证没配。
+- **最终配置是合并之后的**，也就是各组件真正读到的值；配置文件里的注释不带出来（合并之后看不出是哪个文件的）。
+  **来自 `${VAR}` 的值显示配置里写的原文**（`Webhook: ${ORDER_WEBHOOK}`），不显示展开出来的值——凭证多半就是这么传进来的，
+  而它不一定放在叫 password 的 key 下面。
+- **凭证已遮掉**，显示成 `***`：key 名里含 password、passwd、secret、token、credential、apikey、accesskey、privatekey 的
+  （比较前转小写、去掉 `_ - .` 和空格），值不论是标量、列表还是 map 都整个换成 `***`；值里夹着的密码也遮——
+  `postgres://app:***@db`、`report:***@tcp(db:3306)/report`，密码里带 `@`、`/` 时遮到最后一个 `@`
+  （同一段里后面再有 `@` 时连主机一起遮掉，宁可多遮）；查询串和 `key=value` 写法里名字含上面那些词的
+  （`token=***`、`api_key=***`、`password=***`，外加 `pwd=***`）也遮，`${VAR:默认值}` 的默认值里的同样。
+  **空的不遮**（`""`、`[]`、`{}`、没写），一眼看得出哪个凭证没配。
 - **只在本地排查时开**：写的是多行的纯文本，不是 JSON，接在日志采集器后面就是几行解析失败的日志。
 
 **启动 banner**（带 xone 的版本）只在 stderr 是终端时打：本地 `go run` 能看到，容器里、重定向到文件、接在日志采集器后面时一个字都不写。

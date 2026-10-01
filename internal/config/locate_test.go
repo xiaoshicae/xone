@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -102,4 +103,18 @@ func chdir(t *testing.T, dir string) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { os.Chdir(old) })
+}
+
+func TestEnsure_FlagWithoutValueIsError(t *testing.T) {
+	// 从前 --config 写在最后、忘了带值时被静默忽略，接着按 XONE_CONFIG、约定路径找，
+	// 起来的是另一份配置——或者一份全是默认值的
+	for _, key := range []string{ArgKey, ProfileArgKey} {
+		fresh(t)
+		t.Setenv(EnvKey, write(t, "Demo:\n  Addr: from-env\n"))
+		withArgs(t, "serve", "--"+key)
+		err := Ensure("", quiet())
+		if err == nil || !strings.Contains(err.Error(), "--"+key+" needs a value") {
+			t.Errorf("--%s 没带值该报错，got=%v", key, err)
+		}
+	}
 }

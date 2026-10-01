@@ -222,7 +222,7 @@ func (m multiCloser) Close() error {
 
 // ---- 登记 ----
 
-// location 生效中的日志时区，由 Init 填好。nil 表示跟随本地时区
+// location 生效中的日志时区，每次装日志时都重新写。nil 表示跟随本地时区
 var location atomic.Pointer[time.Location]
 
 // Location 返回日志时间戳用的时区。
@@ -293,6 +293,7 @@ func initXLog(context.Context) error {
 				ConfigKey, ConfigKey)
 		}
 		closer = nil
+		location.Store(nil) // 时间戳由你的 handler 决定，xlog 没有时区
 		slog.SetDefault(withStatic(slog.New(newCtxHandler(*h)), identity(), c.Fields))
 		installed.Store(true)
 		return nil
@@ -307,10 +308,10 @@ func install(c Config) error {
 		return err
 	}
 	closer = cl
-	// New 已经校验过，这里不会再失败
-	if loc, _ := parseLocation(c.Timezone); loc != nil {
-		location.Store(loc)
-	}
+	// New 已经校验过，这里不会再失败。没配时存 nil（跟随本地时区）也要存：
+	// 同一个进程里的上一次 Run 配过时区的话，不存就一直留着那一个
+	loc, _ := parseLocation(c.Timezone)
+	location.Store(loc)
 	// 装进标准库的全局默认 logger：业务代码直接用 slog.Info / slog.InfoContext，
 	// 不需要认识本包。这与 slog.SetDefault 是同一个模式。
 	slog.SetDefault(l)

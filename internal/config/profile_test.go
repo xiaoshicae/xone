@@ -536,3 +536,119 @@ func TestLoad_XAppNameLeftToXapp_ProfilesAndImportTakenByLoader(t *testing.T) {
 		t.Errorf("XApp.Import 该生效，Addr=%q err=%v", c.Addr, err)
 	}
 }
+
+// ---- YAML 合并键（<<）跨文件 ----
+//
+// yaml 的规矩是「写明的 key 压过 << 并进来的」。这条规矩要在每个文件内部用：
+// 从前是在几个文件合并完之后才由解码器套用，于是 profile 文件用 << 写的值
+// 输给了 base 里写明的同名 key——优先级高的文件反而没生效
+
+func TestLoad_ProfileMergeKeyBeatsBaseExplicitKeys(t *testing.T) {
+	withProfileEnv(t, "prod")
+	base := files(t, "application.yml", map[string]string{
+		"application.yml":      "Demo:\n  Addr: base:1\n  Timeout: 1s\n",
+		"application-prod.yml": "Shared: &s\n  Addr: prod:1\nDemo:\n  <<: *s\n",
+	})
+	c := listComps(t)
+	if err := LoadInto(base, "Demo", c); err != nil {
+		t.Fatal(err)
+	}
+	if c.Addr != "prod:1" || c.Timeout != time.Second {
+		t.Errorf("profile 里 << 并进来的值该压过 base，got Addr=%q Timeout=%v", c.Addr, c.Timeout)
+	}
+}
+
+func TestLoad_ImportedMergeKeyBeatsImporterExplicitKeys(t *testing.T) {
+	base := files(t, "application.yml", map[string]string{
+		"application.yml": "XApp:\n  Import: extra.yml\nDemo:\n  Addr: base:1\n",
+		"extra.yml":       "Demo:\n  <<: {Addr: extra:1}\n",
+	})
+	c := listComps(t)
+	if err := LoadInto(base, "Demo", c); err != nil {
+		t.Fatal(err)
+	}
+	if c.Addr != "extra:1" {
+		t.Errorf("import 进来的文件里 << 并进来的值该压过引它的文件，Addr=%q", c.Addr)
+	}
+}
+
+func TestLoad_ProfileExplicitKeyBeatsBaseMergeKey(t *testing.T) {
+	withProfileEnv(t, "prod")
+	base := files(t, "application.yml", map[string]string{
+		"application.yml":      "Shared: &s\n  Addr: base:1\n  Timeout: 2s\nDemo:\n  <<: *s\n",
+		"application-prod.yml": "Demo:\n  Addr: prod:1\n",
+	})
+	c := listComps(t)
+	if err := LoadInto(base, "Demo", c); err != nil {
+		t.Fatal(err)
+	}
+	if c.Addr != "prod:1" || c.Timeout != 2*time.Second {
+		t.Errorf("got Addr=%q Timeout=%v", c.Addr, c.Timeout)
+	}
+}
+
+func TestLoad_ProfileNestedMergeKeyBeatsBase(t *testing.T) {
+	withProfileEnv(t, "prod")
+	base := files(t, "application.yml", map[string]string{
+		"application.yml":      "Demo:\n  Nested:\n    A: base-a\n    B: base-b\n",
+		"application-prod.yml": "Demo:\n  Nested:\n    <<: {A: prod-a}\n",
+	})
+	c := listComps(t)
+	if err := LoadInto(base, "Demo", c); err != nil {
+		t.Fatal(err)
+	}
+	if c.Nested.A != "prod-a" || c.Nested.B != "base-b" {
+		t.Errorf("got %+v", c.Nested)
+	}
+}
+
+func TestLoad_MergeKeyRulesWithinOneFile(t *testing.T) {
+	// 同一个文件里仍是 yaml 的规矩：写明的 key 压过并进来的，不论写在 << 之前还是之后；
+	// << 后面是列表时，靠前的压过靠后的；并进来的 mapping 自己也能带 <<
+	body := "A: &a {Addr: a:1, Timeout: 1s}\n" +
+		"B: &b {Addr: b:1, Timeout: 2s, Headers: [b]}\n" +
+		"W: &w {<<: {Nested: {A: deep}}, Addr: w:1}\n" +
+		"Demo:\n  Addr: own:1\n  <<: [*a, *b]\n" +
+		"Deep:\n  <<: *w\n"
+	c := listComps(t)
+	if err := LoadInto(write(t, body), "Demo", c); err != nil {
+		t.Fatal(err)
+	}
+	if c.Addr != "own:1" || c.Timeout != time.Second || !reflect.DeepEqual(c.Headers, []string{"b"}) {
+		t.Errorf("got Addr=%q Timeout=%v Headers=%v", c.Addr, c.Timeout, c.Headers)
+	}
+	d := listComps(t)
+	if err := Unmarshal("Deep", d); err != nil {
+		t.Fatal(err)
+	}
+	if d.Addr != "w:1" || d.Nested.A != "deep" {
+		t.Errorf("got Addr=%q Nested=%+v", d.Addr, d.Nested)
+	}
+}
+
+func TestLoad_MergeKeyWithScalarValueIsError(t *testing.T) {
+	err := LoadInto(write(t, "Demo:\n  <<: oops\n"), "Demo", listComps(t))
+	if err == nil || !strings.Contains(err.Error(), "<<") {
+		t.Errorf("<< 后面不是 mapping 该报错，got=%v", err)
+	}
+}
+
+func TestLoad_TypoInMergedFieldsIsError(t *testing.T) {
+	// << 摊平之后并进来的字段就是普通的 key，拼错照样启动失败
+	err := LoadInto(write(t, "Shared: &s\n  Adr: x:1\nDemo:\n  <<: *s\n"), "Demo", listComps(t))
+	if err == nil || !strings.Contains(err.Error(), "field Adr not found") {
+		t.Errorf("并进来的字段拼错该报错，got=%v", err)
+	}
+}
+
+func TestLoad_MultipleDocumentsInProfileFileIsError(t *testing.T) {
+	withProfileEnv(t, "prod")
+	base := files(t, "application.yml", map[string]string{
+		"application.yml":      "Demo:\n  Addr: base:1\n",
+		"application-prod.yml": "Demo:\n  Addr: prod:1\n---\nDemo:\n  Addr: other:1\n",
+	})
+	err := LoadInto(base, "Demo", listComps(t))
+	if err == nil || !strings.Contains(err.Error(), "application-prod.yml") || !strings.Contains(err.Error(), "line 3") {
+		t.Errorf("profile 文件里的多份文档同样启动失败，并指出是哪个文件、哪一行，got=%v", err)
+	}
+}

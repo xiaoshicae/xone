@@ -191,6 +191,19 @@ func TestResolve_ZeroTimeoutNotInjected(t *testing.T) {
 	}
 }
 
+func TestResolve_ZeroTimeoutProbesWithDriverDefault(t *testing.T) {
+	// 配置和 DSN 都没写 dial_timeout：ParseDSN 读出来是 0，驱动建连时才补成 30s
+	// （v2.48.0 clickhouse_options.go setDefaults）。预算按 0 算的话 xgorm 只剩 1s 兜底，
+	// 驱动还愿意等的慢握手被建连验证先判了超时
+	_, info, err := resolve(cfg("clickhouse://h:9000/db", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.ProbeTimeout != 60*time.Second {
+		t.Errorf("探测预算该按驱动补上的 30s 算（建连 + 同量级的往返 = 60s），got=%v", info.ProbeTimeout)
+	}
+}
+
 func TestResolve_RejectsNonURLDSNWithoutEcho(t *testing.T) {
 	// 驱动并不接受裸的 host:port（实测 ParseDSN("10.255.255.1:9000") 报错），
 	// 原样透传的话，它建连时的解析错误会连同整串 DSN、包括明文密码一起进日志。

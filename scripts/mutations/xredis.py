@@ -50,6 +50,14 @@ mutate("Redis Span 不把服务端原文记成事件", "xredis/trace.go", "./xre
        swap('\tif clientSafe(err) {\n\t\ts.Span.RecordError(err, opts...)', '\tif true {\n\t\ts.Span.RecordError(err, opts...)'))
 mutate("Redis Span 的状态描述用收过的文本", "xredis/trace.go", "./xredis", "TestTrace_ServerErrorTextNotInSpan",
        swap('\t\tdesc = s.text\n', '\t\t_ = s.text\n'))
+# redisotel v9.22.0 拿 cmd.FullName() 当 Span 名，实测 Do(ctx, "SET k1 <值>") 的 Span 名是 "set k1 <值>"。
+# 打在两个调用点上：交出命令的钩子、包装里起名的那一处
+mutate("Redis Span 名不带命令参数：命令交给包装", "xredis/xredis.go", "./xredis", "TestTrace_SpanNameCarriesNoArgs",
+       swap('\t\tclient.AddHook(spanCmdsHook{})\n', ''))
+mutate("Redis Span 名不带命令参数：包装按命令起名", "xredis/trace.go", "./xredis", "TestTrace_SpanNameCarriesNoArgs",
+       swap('t.Tracer.Start(ctx, spanName(ctx, name), opts...)', 't.Tracer.Start(ctx, name, opts...)'))
+mutate("Redis pipeline 的 Span 名逐条收", "xredis/trace.go", "./xredis", "TestTrace_SpanNameCarriesNoArgs",
+       swap('if n := spanCmdName(c); ', 'if n := c.FullName(); '))
 mutate("Redis Span 上网络错误照原文记", "xredis/trace.go", "./xredis", "TestTrace_ClientSafeErrorKeptInSpan",
        swap('\tif clientSafe(err) {\n\t\ts.Span.RecordError(err, opts...)', '\tif false {\n\t\ts.Span.RecordError(err, opts...)'))
 mutate("Metric 关掉的 Redis 实例不导出", "xredis/xredis.go", "./xredis", "TestInstall", swap('\t\tif inst.metric {\n', '\t\tif true {\n'))

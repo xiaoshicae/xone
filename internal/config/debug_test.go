@@ -214,6 +214,26 @@ Keyword: "host=db user=app client_secret=kw-sec dbname=app"
 	}
 }
 
+func TestEnsure_XONE_DEBUGPlaceholderDefaultMaskedKeepsClosingBrace(t *testing.T) {
+	// 查询串的值一路遮到空白或 & 为止，从前连 ${...} 收尾的 } 也一起遮掉：
+	// 打出来是 ${OPT:https://h/?api_key=***，看着像占位符没写完
+	t.Setenv(DebugEnvKey, "1")
+	out := debugLoad(t, t.TempDir(), map[string]string{
+		"application.yml": "Demo:\n  URL: ${XONE_T_UNSET_URL:https://h/?api_key=def-key}\n" +
+			"  Hook: ${XONE_T_UNSET_HOOK:https://h/x?page=2&token=def-tok}/tail\n",
+	}, "application.yml")
+	for _, secret := range []string{"def-key", "def-tok"} {
+		if strings.Contains(out, secret) {
+			t.Errorf("%q 不该出现在调试输出里，got=\n%s", secret, out)
+		}
+	}
+	for _, want := range []string{"URL: ${XONE_T_UNSET_URL:https://h/?api_key=***}", "Hook: ${XONE_T_UNSET_HOOK:https://h/x?page=2&token=***}/tail"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("调试输出里该有 %q，got=\n%s", want, out)
+		}
+	}
+}
+
 func TestEnsure_XONE_DEBUGShowsPlaceholderTextNotExpandedValue(t *testing.T) {
 	// 展开出来的值从前原样打出来：${VAR} 恰恰是凭证的推荐写法，
 	// 放在一个不叫 password 的 key 下面（DSN、Webhook）就进了调试输出

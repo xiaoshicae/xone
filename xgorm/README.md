@@ -92,6 +92,7 @@ XGorm:
   |---|---|---|
   | MySQL | `timeout + readTimeout`；一个是 0 时按另一个算两份，都是 0 用 1s | 3.5s |
   | PostgreSQL | `connect_timeout + DialTimeout` | 1.5s |
+| ClickHouse | `2 × dial_timeout`；都没写时按驱动自己的 30s 算 | 1s |
   | 其余驱动 | 方言自己推算；推算不出是 `2 × DialTimeout` | — |
 
 ## API

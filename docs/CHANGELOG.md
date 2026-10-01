@@ -8,6 +8,12 @@
 
 ## [未发布]
 
+### 修复
+
+- 安全：xredis 链路的 Span 名不再带命令参数：redisotel 拿第 1 个参数当 Span 名，`Do(ctx, "SET k1 <值>")` 的 Span 名原来是 `set k1 <值>`、pipeline 里是 `redis.pipeline set k2 <值>`；现在不像命令名的记成 `<invalid>`（规则同命令日志的 `cmd` 字段），合规的命令名和 `redis.dial` 不变。
+- xgorm/clickhouse：`DialTimeout: 0` 且 DSN 里没写 `dial_timeout` 时，启动建连探测的单次预算按驱动实际用的 30s 算（60s），不再只有 1s 兜底，慢一点但合法的建连不再在启动时失败。
+- `XONE_DEBUG` 打出的最终配置：`${VAR:默认值}` 的默认值里带凭证查询参数时，遮挡不再把收尾的 `}` 和后面的内容一起吞掉。
+
 ## [v1.22.0] - 2026-10-01
 
 ### 不兼容变更

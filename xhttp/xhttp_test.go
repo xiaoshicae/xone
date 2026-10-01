@@ -295,21 +295,24 @@ func (f roundTripperFunc) RoundTrip(r *http.Request) (*http.Response, error) { r
 func TestRetry_OnlyIdempotentMethods(t *testing.T) {
 	// 超时分不出「请求没到」和「处理完了但响应丢了」，
 	// 重发一个 POST 就可能变成重复下单
-	if !retryOnlyIdempotent(respFor("GET"), timeoutErr) {
+	if !onlyIdempotent.condition(respFor("GET"), timeoutErr) {
 		t.Error("GET 应当允许重试")
 	}
 	for _, m := range []string{"POST", "PATCH"} {
-		if retryOnlyIdempotent(respFor(m), timeoutErr) {
+		if onlyIdempotent.condition(respFor(m), timeoutErr) {
 			t.Errorf("%s 不该重试", m)
 		}
 	}
-	if retryOnlyIdempotent(respFor("GET"), nil) {
+	if onlyIdempotent.condition(respFor("GET"), nil) {
 		t.Error("拿到响应就不该重试，与 resty 默认条件一致")
 	}
-	if retryOnlyIdempotent(nil, timeoutErr) {
+	if onlyIdempotent.condition(nil, timeoutErr) {
 		t.Error("认不出方法时应当保守地不重试")
 	}
 }
+
+// onlyIdempotent RetryOnlyIdempotent 开着时挂上的那套策略
+var onlyIdempotent = retryPolicy{onlyIdempotent: true}
 
 // timeoutErr 一个传输层错误，形状与 http.Client.Do 超时时报的一样
 var timeoutErr error = &url.Error{Op: "Get", URL: "http://h", Err: context.DeadlineExceeded}
@@ -341,7 +344,7 @@ func TestRetry_NoRetryOnResponseParseFailure(t *testing.T) {
 
 func TestRetry_RetriesOnBodyCutMidway(t *testing.T) {
 	// 与 resty 的默认条件一致：响应体没收全是传输层的问题，io.ErrUnexpectedEOF
-	if !retryOnlyIdempotent(respFor("GET"), io.ErrUnexpectedEOF) {
+	if !onlyIdempotent.condition(respFor("GET"), io.ErrUnexpectedEOF) {
 		t.Error("响应体读到一半断开应当重试")
 	}
 }

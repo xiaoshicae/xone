@@ -147,15 +147,18 @@ func endSpan(d Dialect) func(*gorm.DB) {
 	}
 }
 
-// recordError 把错误记进 Span。服务端报的错只记错误码，不记原文，理由见
-// Dialect.ErrorCode：原文里可能就是参数值，而 db.query.text 为了不带参数值
-// 特意只记了占位符。也不调 RecordError——那会把原文写进 exception.message
+// recordError 把错误记进 Span，文本和日志是同一份（Dialect.redactedError）：服务端报的错只记错误码，
+// 客户端的错只有认得出是安全的几类才记原文——原文里可能就是参数值，而 db.query.text
+// 为了不带参数值特意只记了占位符。RecordError 会把 err.Error() 原样写进 exception.message，
+// 所以只交给它认出来的那个安全的错误
 func recordError(span trace.Span, d Dialect, err error) {
 	text, code := d.redactedError(err)
 	if code != "" {
 		span.SetAttributes(semconv.DBResponseStatusCode(code), semconv.ErrorTypeKey.String(code))
 	} else {
-		span.RecordError(err)
+		if safe := clientSafeError(err); safe != nil {
+			span.RecordError(safe)
+		}
 		span.SetAttributes(semconv.ErrorTypeOther)
 	}
 	span.SetStatus(codes.Error, text)

@@ -84,7 +84,9 @@ TLS 块适合「只调一类内部下游」的客户端；要同时调公网的�
 
 - **`Timeout` 管一次尝试，不是整次请求**：`Timeout: 300ms` 配 `RetryCount: 3` 实测跑满 1.24s。要封顶就像上面那样用 ctx。
   见[「行为与实测」](#行为与实测)。
-- **只重试传输层的错**（建连失败、超时、连接被重置），拿到了响应就不重试，5xx 也不重试；`RetryOnlyIdempotent` 默认开着，POST 不重发。
+- **只重试传输层的错**（建连失败、超时、连接被重置），拿到了响应就不重试，5xx 也不重试；`RetryOnlyIdempotent` 默认开着，POST 不重发，
+  自己 `AddRetryCondition` 挂的条件也放不回来——按状态码重试的条件除外，见[「行为与实测」](#行为与实测)。
+- **body 是 `io.Reader` 的请求不重试**：第一次尝试就把它读完了，重发的是空 body。要重试就传 `[]byte` / `string`。
 - **设了 `HTTP_PROXY` / `HTTPS_PROXY` 就全部出站都走代理**；跨 host 重定向时自定义的凭证头（如 `X-Api-Key`）照样带给新 host。
   见[「行为与实测」](#行为与实测)的表。
 - **TLS 块管这个客户端的每一个 https 请求**：填了 `CAFile` 公网的 https 下游就校验不过了。
@@ -152,6 +154,23 @@ resty v2.17.2、otelhttp v0.71.0、Go 1.25。
 拿到了响应就不重试——5xx 也不重试。挂上重试条件会让 resty 自己的判断整个作废，所以这条是 xhttp 自己守着的：
 不守的话实测 200 + 坏 JSON、`RetryCount: 3` 时同一个 GET 发了 4 次。`RetryOnlyIdempotent` 默认开着：
 传输层超时分不出「请求没到服务端」和「处理完了但响应丢了」，重发一个 POST 就可能重复下单。
+
+**使用者自己挂的重试条件。** resty v2.17.2 的条件是「或」：请求级的排在前面、client 级的按挂上的顺序，
+一个返回 true 就不看后面的（`retry.go` `Backoff`），xhttp 的「POST 不重试」只是其中一个 false。所以另有一道关挂在
+`RetryAfter` 上（决定重试之后、等待之前调，返回错误就不再重试）：没拿到响应的 POST / PATCH 不重试，调用方拿到的仍是
+第一次的传输层错误（resty 只在这一次没有错误时才把 `RetryAfter` 的错误交出去）。实测 `RetryCount: 2`、
+挂一个 `err != nil` 就重试的条件、连接被掐断：改之前 POST 发了 2 次，现在 1 次。
+**挡不住的一种**：拿到了响应之后按状态码重试的条件（比如 `StatusCode() >= 500`）。那时没有原来的错误可交，
+否决就得把那个 503 换成一个编出来的错误，所以不否决：POST 照你的条件重试（实测发 3 次，最后拿到 503、错误为 nil），
+方法要你自己在条件里判断。自己 `SetRetryAfter` 会把这道关换掉。`OnRetry` 钩子在这道关之前调，被否决的那次也会调一次。
+
+**body 是 `io.Reader` 的请求不重试。** resty v2.17.2 每次尝试都拿 `Request.Body` 重建请求（`middleware.go`
+`createHTTPRequest`），`[]byte`、`string`、结构体每次重新序列化，`io.Reader` 第一次就读到了头、也不替你倒回去
+（`RetryResetReaders` 只管 multipart）。实测 `PUT` 一个 `strings.NewReader(…)`、第一次连接被掐断：第二次发出去 0 字节，
+服务端回 200，调用方看到的是成功。现在这种请求不重试（`RetryOnlyIdempotent` 关着也一样），调用方拿到第一次的错误；
+按状态码重试的条件要重发它时，调用方拿到 `not retrying: the request body is an io.Reader that the first attempt already consumed`
+和那个响应。`SetContentLength(true)` 的除外：resty 把 `io.Reader` 读进缓冲，之后每次发那份缓冲（实测两次都是完整的 body）；
+没有 body 的 PUT / DELETE 照旧重试。
 
 **连接池没配的那些是标准库的默认**（从 `http.DefaultTransport` 克隆）：
 

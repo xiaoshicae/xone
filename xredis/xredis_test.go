@@ -167,14 +167,35 @@ func TestNew_PoolOptionsPassedThrough(t *testing.T) {
 }
 
 func TestPingTimeout(t *testing.T) {
-	c := DefaultClientConfig()
-	c.DialTimeout, c.ReadTimeout = time.Second, 2*time.Second
-	if got := pingTimeout(c); got != 3*time.Second {
+	if got := pingTimeout(&redis.Options{DialTimeout: time.Second, ReadTimeout: 2 * time.Second}); got != 3*time.Second {
 		t.Errorf("Ping 预算应为建连 + 读超时，got=%v", got)
 	}
-	c.DialTimeout, c.ReadTimeout = 0, 0
-	if got := pingTimeout(c); got != fallbackPingTimeout {
+	// 配置里的 0 交给 go-redis 补成默认值，预算按补完的算
+	c := redis.NewClient(&redis.Options{})
+	defer c.Close()
+	if got := pingTimeout(c.Options()); got != 10*time.Second {
+		t.Errorf("0 是 go-redis 的默认值（5s + 5s），got=%v", got)
+	}
+	if got := pingTimeout(&redis.Options{}); got != fallbackPingTimeout {
 		t.Errorf("推算不出时该用兜底值，got=%v", got)
+	}
+}
+
+// 配 0 在 go-redis v9.22.0 里是「用它的默认值」（DialTimeout 5s、ReadTimeout 5s，options.go init），
+// 不是「不花时间」。预算按配置里的 0 + 0 算的话只剩 1s 兜底：一次 1.5s 才回 PONG 的建连，
+// go-redis 自己还愿意等，建连验证先判了超时，3 次都失败
+func TestNew_ZeroTimeoutsProbeWithGoRedisDefaults(t *testing.T) {
+	f := newFakeRedis(t)
+	f.setDelay("ping", 1500*time.Millisecond)
+	c := liveCfg(f)
+	c.DialTimeout, c.ReadTimeout, c.WriteTimeout = 0, 0, 0
+	client, closer, err := New(context.Background(), c)
+	if err != nil {
+		t.Fatalf("go-redis 默认等 5s，1.5s 的 PONG 该连得上：%v", err)
+	}
+	defer closer.Close()
+	if o := client.Options(); o.DialTimeout != 5*time.Second || o.ReadTimeout != 5*time.Second {
+		t.Errorf("前提：0 交给 go-redis 换成默认值，got dial=%v read=%v", o.DialTimeout, o.ReadTimeout)
 	}
 }
 
@@ -212,7 +233,7 @@ func TestProbe_FailsAfterRetries(t *testing.T) {
 	client := redis.NewClient(&redis.Options{Addr: c.Addr})
 	defer client.Close()
 
-	if err := xclient.Probe(context.Background(), probePolicy(c), probe(client)); err == nil {
+	if err := xclient.Probe(context.Background(), probePolicy(client.Options()), probe(client)); err == nil {
 		t.Fatal("Ping 一直失败时应当返回错误")
 	}
 	// 数服务端收到几次 ping，不看耗时：退避带抖动之后，

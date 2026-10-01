@@ -6,6 +6,8 @@ import (
 	"strings"
 
 	"go.yaml.in/yaml/v3"
+
+	"github.com/xiaoshicae/xone/xerror"
 )
 
 // DecodeStrict 严格解码：认不出的字段是错误，不是忽略。
@@ -19,10 +21,14 @@ import (
 // node.Decode。走的是节点本身，于是每条报错都知道是哪个节点：行号就是它的
 // 行号，文件是 load 记下的它来自的那个，占位符展开出来的值按节点遮掉。
 //
-// 返回的错误要么是 nil，要么是 yaml 自己的错误；字段和类型层面的问题一律是
+// target 不是非 nil 的指针时返回 xconfig 的 config 错误（见 checkTarget）。
+// 其余的错误要么是 nil，要么是 yaml 自己的错误；字段和类型层面的问题一律是
 // *yaml.TypeError——嵌套在 UnmarshalYAML 里的那一次也是，于是 yaml 把它并进
 // 外层的报错列表。那一次拿到的就是配置文件里的节点，报错在那里已经说清楚了。
 func DecodeStrict(node *yaml.Node, target any) error {
+	if err := checkTarget(target); err != nil {
+		return err
+	}
 	c := newChecker()
 	if err := c.walk(node, reflect.TypeOf(target)); err != nil {
 		return err
@@ -31,6 +37,18 @@ func DecodeStrict(node *yaml.Node, target any) error {
 		return &yaml.TypeError{Errors: c.errs}
 	}
 	return node.Decode(target)
+}
+
+// checkTarget 解码目标必须是非 nil 的指针。
+//
+// 传了值或者 nil 时 yaml 和 reflect 都是当场 panic，整个进程崩在启动钩子里；
+// 这是调用方写错了，但它该是一条说得清的错误。Unmarshal 在找配置块之前就查：
+// 块没配时照样报出来，不必等到哪天配上了才崩
+func checkTarget(target any) error {
+	if v := reflect.ValueOf(target); v.Kind() != reflect.Pointer || v.IsNil() {
+		return xerror.Newf("xconfig", "config", "decode target must be a non-nil pointer, got %T", target)
+	}
+	return nil
 }
 
 // checker 拿目标类型走一遍节点，收集字段和类型层面的问题
@@ -106,14 +124,8 @@ func (c *checker) walk(n *yaml.Node, t reflect.Type) error {
 // mapping 逐个 key 往下走。s 为 nil 时 t 是 map，否则 t 是结构体、s 是它的字段
 func (c *checker) mapping(n *yaml.Node, t reflect.Type, s *structFields) error {
 	for i := 0; i+1 < len(n.Content); i += 2 {
+		// 合并键 << 在解析时已经摊平成普通的 key（见 flattenMerges），这里见不到它
 		k, v := n.Content[i], n.Content[i+1]
-		if k.Kind == yaml.ScalarNode && k.Value == "<<" && k.ShortTag() == "!!merge" {
-			// <<: *base 并进来的字段按同一个类型查；一次并好几个时写成序列
-			if err := c.merged(v, t); err != nil {
-				return err
-			}
-			continue
-		}
 		if s == nil {
 			if err := c.walk(k, t.Key()); err != nil {
 				return err
@@ -132,21 +144,6 @@ func (c *checker) mapping(n *yaml.Node, t reflect.Type, s *structFields) error {
 			continue
 		}
 		if err := c.walk(v, ft); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (c *checker) merged(v *yaml.Node, t reflect.Type) error {
-	for v.Kind == yaml.AliasNode && v.Alias != nil {
-		v = v.Alias
-	}
-	if v.Kind != yaml.SequenceNode {
-		return c.walk(v, t)
-	}
-	for _, e := range v.Content {
-		if err := c.walk(e, t); err != nil {
 			return err
 		}
 	}

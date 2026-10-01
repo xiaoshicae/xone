@@ -28,16 +28,26 @@ echo "✓ 核心不依赖任何集成模块"
 # xhook 是每个集成都要认识的包（另一个是 xconfig），一旦它有依赖，所有集成都被迫背上。
 # xtls 同理：它是 xgorm / xredis / xhttp 配置结构体里的一个字段类型。
 # internal/web 是各 Web 集成共用的那一半：混进一个三方包，每个 Web 集成都得背上
+# go list 的输出先落进变量：直接接管道的话，包挪走了、go list 报错，grep -c 数出 0，检查静默通过
 for pkg in ./xhook ./xerror ./xutil ./xtls ./internal/web; do
-  d=$(GOWORK=off go list -deps "$pkg" | grep -E '^[^/]*\.' | grep -vc xiaoshicae || true)
+  list=$(GOWORK=off go list -deps "$pkg") || fail "go list -deps $pkg 失败（包挪走了？同步这里的列表）"
+  d=$(echo "$list" | grep -E '^[^/]*\.' | grep -vc xiaoshicae || true)
   [ "$d" -eq 0 ] || fail "$pkg 混进了 $d 个第三方包"
 done
 echo "✓ xhook / xerror / xutil / xtls / internal/web 零第三方依赖"
 
 # xlog 会换掉 slog.Default()，只跟着 xgin / xecho 来。数据类集成、xtrace、xmetric 都不许把它带进来：
-# 否则只用 xgorm 的程序又被接管了日志。xtrace / xmetric 往 internal/logext 注入，不 import xlog
+# 否则只用 xgorm 的程序又被接管了日志。xtrace / xmetric 往 internal/logext 注入，不 import xlog。
+# 查每个模块的全部包（./...），不只是模块根上那一个：核心里的 xflow、xonetest、internal/... 带进 xlog，
+# 使用者 import 它们同样被接管日志。xlog 自己的 Deps 里没有它自己，不用单独排掉
+xlog=github.com/xiaoshicae/xone/xlog
 for m in . xtrace xmetric xgorm xredis xhttp xcache; do
-  (cd "$m" && GOWORK=off go list -deps . | grep -qx 'github.com/xiaoshicae/xone/xlog') && fail "$m 把 xlog 带进来了（根包、数据类集成、xtrace、xmetric 都不该带）"
+  out=$(cd "$m" && GOWORK=off go list -f "{{.ImportPath}}{{range .Deps}}{{if eq . \"$xlog\"}} <-xlog{{end}}{{end}}" ./...) \
+    || fail "$m: go list 失败（模块挪走了？同步这里的列表）"
+  [ -n "$out" ] || fail "$m: go list 一个包都没列出来"
+  bad=$(echo "$out" | sed -n 's/ <-xlog$//p')
+  [ -z "$bad" ] || fail "$m 里这些包把 xlog 带进来了（根模块、数据类集成、xtrace、xmetric 都不该带）：
+$bad"
 done
 echo "✓ 只有 xgin / xecho 带着 xlog"
 
@@ -195,8 +205,12 @@ echo "✓ 错误都走 xerror（%w 保住错误链）"
 # 使用者照着 README 和 example/ 抄。几轮重构之后，那里还留着 Component.Init、
 # registry.Register 这些早就不存在的名字，注释里还在教一个已经撤掉的写法——
 # 比没有文档更糟，因为它看上去是对的。删掉一个公开名字时，把它加进这张表
-gone='xredis\.TLSConfig|Component\.Init|registry\.(Declare|Provide|Register)|ProvideEach|xconfig\.(HasKey|DecodeClients)\b|\.OnInit\(|xgin\.With(Config|Log|Trace|Metric|MetricPath|SkipPaths|RequestBodyLog|ResponseBodyLog|ZHTranslations)\('
-hits=$(files '*.go' '*.md' '*.yml' | xargs grep -nE "$gone" || true)
+#
+# docs/CHANGELOG.md 不扫，而且是对整张表都不扫：它是历史记录，按约定每个删掉的公开名字都要在那里
+# 写明「旧写法怎么迁移」，也就是必然点名——表里的每一条迟早都会在那里出现一次，这不是残留。
+# 别的文档照查
+gone='xutil\.(GetOrDefault|ToPtr)\b|xredis\.TLSConfig|Component\.Init|registry\.(Declare|Provide|Register)|ProvideEach|xconfig\.(HasKey|DecodeClients)\b|\.OnInit\(|xgin\.With(Config|Log|Trace|Metric|MetricPath|SkipPaths|RequestBodyLog|ResponseBodyLog|ZHTranslations)\('
+hits=$(files '*.go' '*.md' '*.yml' ':(exclude)docs/CHANGELOG.md' | xargs grep -nE "$gone" || true)
 [ -z "$hits" ] || fail "还在提已经删掉的名字（改文档，或者确认它真的还在）：
 $hits"
 echo "✓ 文档和示例里没有已经删掉的名字"

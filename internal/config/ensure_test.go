@@ -8,6 +8,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"go.yaml.in/yaml/v3"
+
+	"github.com/xiaoshicae/xone/xerror"
 )
 
 func quiet() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
@@ -170,5 +174,47 @@ func TestReset_RelocatesAndReloadsAfterward(t *testing.T) {
 	}
 	if c.Addr != "b" {
 		t.Errorf("Reset 之后应读新的那一份，got=%q", c.Addr)
+	}
+}
+
+func TestUnmarshalAndDecodeStrict_BadTargetIsErrorNotPanic(t *testing.T) {
+	// 传了值而不是指针、或者传了 nil：从前当场 panic（reflect 在 nil 类型上取 Kind、
+	// yaml 往不可寻址的值里写），整个进程在启动钩子里崩掉
+	if err := Load(write(t, "Demo:\n  Addr: a:1\n")); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(Reset)
+	var node yaml.Node
+	if err := yaml.Unmarshal([]byte("Addr: a:1\n"), &node); err != nil {
+		t.Fatal(err)
+	}
+	for name, target := range map[string]any{
+		"nil": nil, "value": demoConf{}, "nil pointer": (*demoConf)(nil),
+	} {
+		check := func(what string, err error) {
+			t.Helper()
+			var xe *xerror.Error
+			if !errors.As(err, &xe) || xe.Module != "xconfig" || xe.Op != "config" ||
+				!strings.Contains(err.Error(), "non-nil pointer") {
+				t.Errorf("%s(%s) 该返回 xconfig 的 config 错误，got=%v", what, name, err)
+			}
+		}
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					t.Errorf("Unmarshal(%s) panic 了：%v", name, r)
+				}
+			}()
+			check("Unmarshal", Unmarshal("Demo", target))
+			check("Unmarshal 没配的块", Unmarshal("NotConfigured", target))
+		}()
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					t.Errorf("DecodeStrict(%s) panic 了：%v", name, r)
+				}
+			}()
+			check("DecodeStrict", DecodeStrict(&node, target))
+		}()
 	}
 }

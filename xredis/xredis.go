@@ -12,6 +12,7 @@ import (
 	"github.com/redis/go-redis/extra/redisotel/v9"
 	"github.com/redis/go-redis/v9"
 	"github.com/redis/go-redis/v9/maintnotifications"
+	"go.opentelemetry.io/otel"
 
 	"github.com/xiaoshicae/xone/internal/xclient"
 	"github.com/xiaoshicae/xone/xconfig"
@@ -142,7 +143,7 @@ func newClient(ctx context.Context, name string, cfg ClientConfig) (*redis.Clien
 		}
 	}()
 
-	if err := xclient.Probe(ctx, probePolicy(cfg), probe(client)); err != nil {
+	if err := xclient.Probe(ctx, probePolicy(client.Options()), probe(client)); err != nil {
 		// 原始错误用 %w 带上，调用方要靠它判断根因。它不含凭证：连不上时是
 		// 拨号错误（只有地址），认证失败时是服务端回的 WRONGPASS / NOAUTH 文本
 		if redis.IsAuthError(err) {
@@ -163,7 +164,12 @@ func newClient(ctx context.Context, name string, cfg ClientConfig) (*redis.Clien
 		// 找调用方，写进 code.function / code.filepath / code.lineno。实测关掉之后
 		// 每条命令 14.0µs → 11.6µs（约 -17%，本机回环、noop provider），代价是
 		// Span 里不再有这三个属性。这是对外可见的变化，暂保持默认，待定。
-		if err := redisotel.InstrumentTracing(client, redisotel.WithDBStatement(false)); err != nil {
+		//
+		// 错误也一样：redisotel 把服务端的错误原文写进 exception.message 和状态描述，
+		// 换成包了一层的 TracerProvider，Span 上的错误文本和命令日志用同一套规则（见 trace.go）。
+		// 包的是这一刻的全局 provider：xtrace 还没装好时它是 otel 的委托，装好之后照样转过去
+		tp := redactingTracerProvider{otel.GetTracerProvider()}
+		if err := redisotel.InstrumentTracing(client, redisotel.WithDBStatement(false), redisotel.WithTracerProvider(tp)); err != nil {
 			return nil, nil, xerror.Newf("xredis", "new", "install tracing hook: %w", err)
 		}
 	}
@@ -181,10 +187,10 @@ func newClient(ctx context.Context, name string, cfg ClientConfig) (*redis.Clien
 
 // probePolicy 建连验证怎么试。认证失败（WRONGPASS / NOAUTH）不重试：密码不对，
 // 再试几次也不对，只是让启动多等两次退避（默认最多 1s + 2s）才报出来
-func probePolicy(cfg ClientConfig) xclient.ProbePolicy {
+func probePolicy(opt *redis.Options) xclient.ProbePolicy {
 	return xclient.ProbePolicy{
 		Attempts:   pingAttempts,
-		Timeout:    pingTimeout(cfg),
+		Timeout:    pingTimeout(opt),
 		Interval:   pingInterval,
 		AuthFailed: redis.IsAuthError,
 	}
@@ -216,10 +222,14 @@ func probe(client *redis.Client) func(context.Context) error {
 	}
 }
 
-// pingTimeout 单次 Ping 的超时：建连加一个往返，两个都是 0 时用兜底值。
-// Validate 已经拦下了负的时长，所以两者之和只会是 0 或正数
-func pingTimeout(cfg ClientConfig) time.Duration {
-	return cmp.Or(cfg.DialTimeout+cfg.ReadTimeout, fallbackPingTimeout)
+// pingTimeout 单次 Ping 的超时：建连加一个往返。
+//
+// 读的是 go-redis 补完默认值之后的 Options（client.Options()），不是配置：配置里的 0
+// 在 go-redis v9.22.0 里是「用它的默认值」——DialTimeout 5s、ReadTimeout 5s（options.go init），
+// 按 0 + 0 算的话预算只剩兜底的 1s，go-redis 自己还愿意等的一次慢建连会被判超时。
+// Validate 拦下了负的时长，补完之后两者都是正数；兜底值只防 go-redis 哪天改了默认值
+func pingTimeout(opt *redis.Options) time.Duration {
+	return cmp.Or(opt.DialTimeout+opt.ReadTimeout, fallbackPingTimeout)
 }
 
 type clientCloser struct {

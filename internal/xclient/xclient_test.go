@@ -600,3 +600,41 @@ func BenchmarkGet_Default_Parallel(b *testing.B) {
 		}
 	})
 }
+
+func TestBuild_CloseErrorsOfBuiltOnesJoinedIntoBuildError(t *testing.T) {
+	// 建到一半失败、回头关已经建好的那几个时，关不掉的错误从前被丢掉：
+	// 漏着的连接池在日志里一个字都没有
+	closeErr := errors.New("close a failed")
+	boom := errors.New("dial refused")
+	for name, fail := range map[string]func(context.CancelFunc, string) error{
+		"new 失败": func(_ context.CancelFunc, n string) error {
+			if n == "b" {
+				return boom
+			}
+			return nil
+		},
+		"收到退出信号": func(cancel context.CancelFunc, n string) error {
+			if n == "a" {
+				cancel()
+			}
+			return nil
+		},
+	} {
+		l := &log{}
+		ctx, cancel := context.WithCancel(context.Background())
+		err := Build(ctx, newReg(), map[string]cfg{"a": {}, "b": {}}, func(_ context.Context, n string, _ cfg) (*conn, io.Closer, error) {
+			if err := fail(cancel, n); err != nil {
+				return nil, nil, err
+			}
+			v := &conn{name: n, log: l, err: closeErr}
+			return v, v, nil
+		})
+		cancel()
+		if !errors.Is(err, closeErr) {
+			t.Errorf("%s：关不掉的错误要并进 Build 的错误，got %v", name, err)
+		}
+		if !errors.Is(err, boom) && !errors.Is(err, context.Canceled) {
+			t.Errorf("%s：原来的错误要留着，got %v", name, err)
+		}
+	}
+}

@@ -172,6 +172,7 @@ func nameOf(name []string) string {
 //
 // 任何一个建不起来就把已经建好的全关掉再返回错误：启动钩子返回错误时，
 // 这一包的停止钩子不会被执行，不自己收拾就会漏掉那几个连接池。
+// 关不掉的那几个的错误并进返回的错误里，漏了哪个连接池看得见。
 //
 // new 收到实例名：建好时的日志要写是哪一个——配了好几个时只写地址分不出来。
 //
@@ -181,17 +182,23 @@ func Build[C, T any](ctx context.Context, r *Registry[T], cfgs map[string]C,
 	new func(ctx context.Context, name string, cfg C) (T, io.Closer, error)) error {
 	built := make(map[string]T, len(cfgs))
 	var closers []io.Closer
+	// abort 关掉已经建好的，关不掉的并在 err 后面；都关掉了就原样返回 err，
+	// 最外层照旧是本模块的 *xerror.Error
+	abort := func(err error) error {
+		if cerr := closeAll(r.module, closers); cerr != nil {
+			return errors.Join(err, cerr)
+		}
+		return err
+	}
 
 	// 名字排序后再建，让失败顺序可复现，日志顺序也稳定
 	for _, name := range slices.Sorted(maps.Keys(cfgs)) {
 		if err := ctx.Err(); err != nil {
-			closeAll(r.module, closers)
-			return xerror.Newf(r.module, "new", "shutdown signal received before building instance %q: %w", name, err)
+			return abort(xerror.Newf(r.module, "new", "shutdown signal received before building instance %q: %w", name, err))
 		}
 		v, closer, err := safeNew(ctx, r.module, name, cfgs[name], new)
 		if err != nil {
-			closeAll(r.module, closers)
-			return err
+			return abort(err)
 		}
 		built[name] = v
 		closers = append(closers, closer)

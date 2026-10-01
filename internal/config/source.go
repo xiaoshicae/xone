@@ -1,7 +1,10 @@
 package config
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -180,7 +183,7 @@ func importsOf(doc *yaml.Node, path string) ([]string, error) {
 	expand(node, &missing, nil)
 	if len(missing) > 0 {
 		return nil, xerror.Newf("xconfig", "config",
-			"environment variables not set in %s.%s of %s: %s", AppKey, ImportKey, path, strings.Join(missing, ", "))
+			"environment variables not set in %s.%s of %s: %s", AppKey, ImportKey, path, missingNames(missing))
 	}
 
 	out, ok := scalarList(node)
@@ -216,6 +219,7 @@ func scalarList(n *yaml.Node) (out []string, ok bool) {
 
 // parse 解析一个配置文件，把两件只能在合并之前做的事一并做掉。
 //
+//   - 一个文件只能有一份文档，见 onlyDocument。
 //   - 重复的 key 报错，带文件和行号。合并按名字对齐 key，重复在那一步就被
 //     吞掉了，后面的严格解码再也看不见它——于是同一个块写两遍能正常加载，
 //     静默地以后一份为准，而写的人多半以为两份都生效了。从前只有第一个文件
@@ -223,9 +227,10 @@ func scalarList(n *yaml.Node) (out []string, ok bool) {
 //   - 别名换成它指向的内容。各顶层块是分开解码的，别名若指向另一个块里的
 //     锚点，解码那一块时锚点已经不在了（unknown anchor）；展开之后
 //     profile 文件也就能覆盖别名带进来的字段。
+//   - 合并键 `<<` 摊平成普通的 key，见 flattenMerges。
 func parse(path string, raw []byte) (*yaml.Node, error) {
-	var doc yaml.Node
-	if err := yaml.Unmarshal(raw, &doc); err != nil {
+	doc, err := onlyDocument(raw)
+	if err != nil {
 		return nil, xerror.Newf("xconfig", "config", "parse config %s: %w", path, err)
 	}
 	if err := checkDuplicates(&doc); err != nil {
@@ -236,7 +241,46 @@ func parse(path string, raw []byte) (*yaml.Node, error) {
 	if err != nil {
 		return nil, xerror.Newf("xconfig", "config", "config %s: %w", path, err)
 	}
+	if err := flattenMerges(out); err != nil {
+		return nil, xerror.Newf("xconfig", "config", "config %s: %w", path, err)
+	}
 	return out, nil
+}
+
+// onlyDocument 解析 raw 里唯一的那份文档；空文件（只有注释也算）得到 Kind 为 0 的节点。
+//
+// 一个文件里用 --- 隔开好几份文档不支持：yaml.Unmarshal 只读第一份，
+// 后面的整段静默丢掉，连「没人读的配置块」都报不出来——写的人以为那段生效了。
+// 分环境的写法是 application-{profile}.yml，所以直接报错，指过去。
+//
+// 只有「空」的文档不算第二份（量过，go.yaml.in/yaml/v3 v3.0.4）：开头一个 ---、
+// 结尾多写一个 ---（后面什么都没有、只有注释、或者写着 ~）解出来都是一个 null，
+// 结尾的 ... 则根本不产生文档。它们照常加载。
+func onlyDocument(raw []byte) (yaml.Node, error) {
+	dec := yaml.NewDecoder(bytes.NewReader(raw))
+	var doc yaml.Node
+	found := false
+	for {
+		var d yaml.Node
+		err := dec.Decode(&d)
+		if errors.Is(err, io.EOF) {
+			return doc, nil
+		}
+		if err != nil {
+			return yaml.Node{}, err
+		}
+		if len(d.Content) == 0 || isNull(d.Content[0]) {
+			if !found && doc.Kind == 0 {
+				doc = d // 全是空文档时留第一份：「只有一个 --- 的文件」照旧是它
+			}
+			continue
+		}
+		if found {
+			return yaml.Node{}, fmt.Errorf("multiple YAML documents in one file are not supported "+
+				"(another document starts at line %d): put per-environment settings in application-{profile}.yml instead", d.Line)
+		}
+		doc, found = d, true
+	}
 }
 
 // checkDuplicates 查出同一个 mapping 里重复的 key
@@ -281,6 +325,76 @@ func resolveAliases(n *yaml.Node, budget *int) (*yaml.Node, error) {
 		out.Content[i] = r
 	}
 	return &out, nil
+}
+
+// flattenMerges 把每个 mapping 里的合并键 `<<` 摊平成普通的 key，就地改 n。
+//
+// yaml 的规矩是「写明的 key 压过 << 并进来的」，这条规矩只该在一个文件内部用。
+// 留到几个文件合并完再交给解码器的话，profile 文件里 `<<: *prod` 带进来的
+// Addr 会输给 base 里写明的 Addr——优先级高的文件反而没生效。
+// 在解析时摊平，合并时看到的就只有普通的 key，谁压过谁全按文件的优先级。
+//
+// 规则和 yaml.v3 解码时一致（量过，go.yaml.in/yaml/v3 v3.0.4）：
+//   - 写明的 key 压过并进来的，不论写在 << 之前还是之后；
+//   - << 后面是列表时，靠前的压过靠后的；
+//   - 并进来的只有那一层：写明了 Nested 就整个用写明的，不和并进来的 Nested 再合；
+//   - 并进来的 mapping 自己也能带 <<，先摊平它。
+//
+// 调用前别名已经展开成各自的副本（见 resolveAliases），所以就地改不会改到别处。
+func flattenMerges(n *yaml.Node) error {
+	for _, c := range n.Content {
+		if err := flattenMerges(c); err != nil {
+			return err
+		}
+	}
+	if n.Kind != yaml.MappingNode {
+		return nil
+	}
+
+	own := map[string]bool{} // 写明的 key
+	merges := false
+	for i := 0; i+1 < len(n.Content); i += 2 {
+		if isMergeKey(n.Content[i]) {
+			merges = true
+		} else {
+			own[n.Content[i].Value] = true
+		}
+	}
+	if !merges {
+		return nil
+	}
+
+	// 并进来的 key 放在 << 原来的位置上，节点顺序因此和文件里读到的一致
+	out := make([]*yaml.Node, 0, len(n.Content))
+	for i := 0; i+1 < len(n.Content); i += 2 {
+		k, v := n.Content[i], n.Content[i+1]
+		if !isMergeKey(k) {
+			out = append(out, k, v)
+			continue
+		}
+		sources := []*yaml.Node{v}
+		if v.Kind == yaml.SequenceNode {
+			sources = v.Content
+		}
+		for _, src := range sources {
+			if src.Kind != yaml.MappingNode {
+				return fmt.Errorf("line %d: merge key << needs a mapping or a list of mappings", k.Line)
+			}
+			for j := 0; j+1 < len(src.Content); j += 2 {
+				if key := src.Content[j].Value; !own[key] {
+					own[key] = true // 靠前的来源压过靠后的
+					out = append(out, src.Content[j], src.Content[j+1])
+				}
+			}
+		}
+	}
+	n.Content = out
+	return nil
+}
+
+// isMergeKey 是不是合并键：`<<` 且没加引号（加了引号的 "<<" 是个普通字符串 key）
+func isMergeKey(k *yaml.Node) bool {
+	return k.Kind == yaml.ScalarNode && k.Value == "<<" && k.ShortTag() == "!!merge"
 }
 
 // takeFromApp 取出 XApp 下面的某个 key 并把它从文档里摘掉，没有则返回 nil。

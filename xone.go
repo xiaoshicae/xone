@@ -237,11 +237,18 @@ func Run(r Runnable, opts ...Option) error {
 		case e := <-runErr:
 			first = errors.Join(first, e)
 		case <-serverCtx.Done():
-			// 服务用完了它那一段还没退出。不再等它：剩下的是留给组件的——
-			// 继续等下去，关不成的就是注册中心那条记录、那把分布式锁。
-			// 不肯退出的服务不该顺带让每个资源都漏着
-			o.log().Warn("server did not exit within its share of the stop budget, closing the rest",
-				"budget", o.stopTimeout)
+			// 守规矩的 Stop 看着截止时间返回，Start 紧跟着返回：两边同时就绪时
+			// select 随机挑，挑中这一支就把 Start 的错误丢了。所以先不阻塞地看一眼
+			select {
+			case e := <-runErr:
+				first = errors.Join(first, e)
+			default:
+				// 服务用完了它那一段还没退出。不再等它：剩下的是留给组件的——
+				// 继续等下去，关不成的就是注册中心那条记录、那把分布式锁。
+				// 不肯退出的服务不该顺带让每个资源都漏着
+				o.log().Warn("server did not exit within its share of the stop budget, closing the rest",
+					"budget", o.stopTimeout)
+			}
 		}
 	}
 

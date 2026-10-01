@@ -50,13 +50,16 @@ type ClientConfig struct {
 	// DB 数据库编号。默认 0。
 	DB int `yaml:"DB"`
 
-	// DialTimeout 建连超时。默认 500ms。
+	// DialTimeout 建连超时。默认 500ms；配 0 交给 go-redis（5s）。
+	//
+	// 下面几个时长配 0 都不是「不限时」，是 go-redis v9.22.0 的默认值（options.go init，实测一致）。
+	// 启动时建连验证的单次预算按换算之后的 DialTimeout + ReadTimeout 算。
 	DialTimeout time.Duration `yaml:"DialTimeout"`
 
-	// ReadTimeout 读超时。默认 500ms。
+	// ReadTimeout 读超时。默认 500ms；配 0 交给 go-redis（5s）。
 	ReadTimeout time.Duration `yaml:"ReadTimeout"`
 
-	// WriteTimeout 写超时。默认 500ms。
+	// WriteTimeout 写超时。默认 500ms；配 0 跟着换算之后的 ReadTimeout。
 	WriteTimeout time.Duration `yaml:"WriteTimeout"`
 
 	// PoolSize 连接池大小。默认 0，交给 go-redis（10 × GOMAXPROCS）。
@@ -71,13 +74,13 @@ type ClientConfig struct {
 	// MaxActiveConns 最大活跃连接数。默认 0，即不限制。
 	MaxActiveConns int `yaml:"MaxActiveConns"`
 
-	// PoolTimeout 池子没有空闲连接时的等待上限。默认 1s。
+	// PoolTimeout 池子没有空闲连接时的等待上限。默认 1s；配 0 是换算之后的 ReadTimeout + 1s。
 	PoolTimeout time.Duration `yaml:"PoolTimeout"`
 
-	// ConnMaxIdleTime 空闲连接最长存活时间。默认 5m。
+	// ConnMaxIdleTime 空闲连接最长存活时间。默认 5m；配 0 交给 go-redis（30m）。
 	ConnMaxIdleTime time.Duration `yaml:"ConnMaxIdleTime"`
 
-	// ConnMaxLifetime 连接最长存活时间。默认 5m。
+	// ConnMaxLifetime 连接最长存活时间。默认 5m；配 0 是不按存活时间换连接（go-redis 的默认）。
 	//
 	// 定期换连接，服务端扩缩容后流量才会重新摊开。
 	ConnMaxLifetime time.Duration `yaml:"ConnMaxLifetime"`

@@ -991,7 +991,7 @@
             "boolean",
             "string"
           ],
-          "description": "是否只重试幂等方法。默认开启。 传输层超时分不出「请求没到服务端」和「服务端处理完了但响应丢了」， 重发一个 POST 就可能变成重复下单、重复扣款。 确认接口幂等（比如带幂等键）之后再关掉它。",
+          "description": "是否只重试幂等方法。默认开启。 传输层超时分不出「请求没到服务端」和「服务端处理完了但响应丢了」， 重发一个 POST 就可能变成重复下单、重复扣款。 确认接口幂等（比如带幂等键）之后再关掉它。 自己在 client 上 AddRetryCondition 挂的条件也放不回没拿到响应的 POST（xhttp 另在 RetryAfter 上否决）； 放得回的只有拿到了响应之后按状态码重试的条件（比如 5xx）——那时否决只能把响应换成一个编出来的错误， 所以这种条件里的方法要自己判断。自己 SetRetryAfter 会换掉这道关。 不论开关，body 是 io.Reader 的请求都不重试：第一次尝试就把它读完了，重发的是空 body。",
           "pattern": "\\$\\{"
         },
         "RetryWaitTime": {
@@ -1207,11 +1207,11 @@
             },
             "ConnMaxIdleTime": {
               "type": "string",
-              "description": "空闲连接最长存活时间。默认 5m。（时长，写成 30s / 1500ms / 1h30m 这种形式；写裸数字会启动失败）"
+              "description": "空闲连接最长存活时间。默认 5m；配 0 交给 go-redis（30m）。（时长，写成 30s / 1500ms / 1h30m 这种形式；写裸数字会启动失败）"
             },
             "ConnMaxLifetime": {
               "type": "string",
-              "description": "连接最长存活时间。默认 5m。 定期换连接，服务端扩缩容后流量才会重新摊开。（时长，写成 30s / 1500ms / 1h30m 这种形式；写裸数字会启动失败）"
+              "description": "连接最长存活时间。默认 5m；配 0 是不按存活时间换连接（go-redis 的默认）。 定期换连接，服务端扩缩容后流量才会重新摊开。（时长，写成 30s / 1500ms / 1h30m 这种形式；写裸数字会启动失败）"
             },
             "DB": {
               "type": [
@@ -1223,7 +1223,7 @@
             },
             "DialTimeout": {
               "type": "string",
-              "description": "建连超时。默认 500ms。（时长，写成 30s / 1500ms / 1h30m 这种形式；写裸数字会启动失败）"
+              "description": "建连超时。默认 500ms；配 0 交给 go-redis（5s）。 下面几个时长配 0 都不是「不限时」，是 go-redis v9.22.0 的默认值（options.go init，实测一致）。 启动时建连验证的单次预算按换算之后的 DialTimeout + ReadTimeout 算。（时长，写成 30s / 1500ms / 1h30m 这种形式；写裸数字会启动失败）"
             },
             "Log": {
               "type": [
@@ -1295,11 +1295,11 @@
             },
             "PoolTimeout": {
               "type": "string",
-              "description": "池子没有空闲连接时的等待上限。默认 1s。（时长，写成 30s / 1500ms / 1h30m 这种形式；写裸数字会启动失败）"
+              "description": "池子没有空闲连接时的等待上限。默认 1s；配 0 是换算之后的 ReadTimeout + 1s。（时长，写成 30s / 1500ms / 1h30m 这种形式；写裸数字会启动失败）"
             },
             "ReadTimeout": {
               "type": "string",
-              "description": "读超时。默认 500ms。（时长，写成 30s / 1500ms / 1h30m 这种形式；写裸数字会启动失败）"
+              "description": "读超时。默认 500ms；配 0 交给 go-redis（5s）。（时长，写成 30s / 1500ms / 1h30m 这种形式；写裸数字会启动失败）"
             },
             "SlowThreshold": {
               "type": "string",
@@ -1350,7 +1350,7 @@
             },
             "WriteTimeout": {
               "type": "string",
-              "description": "写超时。默认 500ms。（时长，写成 30s / 1500ms / 1h30m 这种形式；写裸数字会启动失败）"
+              "description": "写超时。默认 500ms；配 0 跟着换算之后的 ReadTimeout。（时长，写成 30s / 1500ms / 1h30m 这种形式；写裸数字会启动失败）"
             }
           },
           "additionalProperties": false
@@ -1370,11 +1370,11 @@
                   },
                   "ConnMaxIdleTime": {
                     "type": "string",
-                    "description": "空闲连接最长存活时间。默认 5m。（时长，写成 30s / 1500ms / 1h30m 这种形式；写裸数字会启动失败）"
+                    "description": "空闲连接最长存活时间。默认 5m；配 0 交给 go-redis（30m）。（时长，写成 30s / 1500ms / 1h30m 这种形式；写裸数字会启动失败）"
                   },
                   "ConnMaxLifetime": {
                     "type": "string",
-                    "description": "连接最长存活时间。默认 5m。 定期换连接，服务端扩缩容后流量才会重新摊开。（时长，写成 30s / 1500ms / 1h30m 这种形式；写裸数字会启动失败）"
+                    "description": "连接最长存活时间。默认 5m；配 0 是不按存活时间换连接（go-redis 的默认）。 定期换连接，服务端扩缩容后流量才会重新摊开。（时长，写成 30s / 1500ms / 1h30m 这种形式；写裸数字会启动失败）"
                   },
                   "DB": {
                     "type": [
@@ -1386,7 +1386,7 @@
                   },
                   "DialTimeout": {
                     "type": "string",
-                    "description": "建连超时。默认 500ms。（时长，写成 30s / 1500ms / 1h30m 这种形式；写裸数字会启动失败）"
+                    "description": "建连超时。默认 500ms；配 0 交给 go-redis（5s）。 下面几个时长配 0 都不是「不限时」，是 go-redis v9.22.0 的默认值（options.go init，实测一致）。 启动时建连验证的单次预算按换算之后的 DialTimeout + ReadTimeout 算。（时长，写成 30s / 1500ms / 1h30m 这种形式；写裸数字会启动失败）"
                   },
                   "Log": {
                     "type": [
@@ -1458,11 +1458,11 @@
                   },
                   "PoolTimeout": {
                     "type": "string",
-                    "description": "池子没有空闲连接时的等待上限。默认 1s。（时长，写成 30s / 1500ms / 1h30m 这种形式；写裸数字会启动失败）"
+                    "description": "池子没有空闲连接时的等待上限。默认 1s；配 0 是换算之后的 ReadTimeout + 1s。（时长，写成 30s / 1500ms / 1h30m 这种形式；写裸数字会启动失败）"
                   },
                   "ReadTimeout": {
                     "type": "string",
-                    "description": "读超时。默认 500ms。（时长，写成 30s / 1500ms / 1h30m 这种形式；写裸数字会启动失败）"
+                    "description": "读超时。默认 500ms；配 0 交给 go-redis（5s）。（时长，写成 30s / 1500ms / 1h30m 这种形式；写裸数字会启动失败）"
                   },
                   "SlowThreshold": {
                     "type": "string",
@@ -1513,7 +1513,7 @@
                   },
                   "WriteTimeout": {
                     "type": "string",
-                    "description": "写超时。默认 500ms。（时长，写成 30s / 1500ms / 1h30m 这种形式；写裸数字会启动失败）"
+                    "description": "写超时。默认 500ms；配 0 跟着换算之后的 ReadTimeout。（时长，写成 30s / 1500ms / 1h30m 这种形式；写裸数字会启动失败）"
                   }
                 },
                 "additionalProperties": false

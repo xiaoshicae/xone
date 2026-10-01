@@ -27,9 +27,12 @@ const (
 	faultRedisStartBudget = faultPingAttempts*faultRedisAttemptBudget + faultPingBackoffs // 6s
 )
 
-// faultStartSlack 进程起停本身的开销：配置写错时整个进程 16–20ms 就退出了（本机实测）。
-// 给到 1s，远大于这个开销，又远小于任何一个被测的预算
-const faultStartSlack = time.Second
+// faultStartSlack 进程起停本身的开销：配置写错时整个进程 16–20ms 就退出了（本机空闲时实测）。
+// 但 Uptime 从 exec 算起，并发跑整套 e2e 时光把进程拉起来就要等很久：GitHub runner（4 核、-parallel=16）上
+// ClickHouse 密码错的那一例 1.075s 才退出，进程自己的日志从读配置到退出只占 140ms。
+// 给到 2s，留一倍余量，又远小于任何一个被测的预算（最小 6s）。
+// 「不重试」靠数代理收到的连接，不靠这个时长：重试第一次退避 1s，落在余量之内也照样被连接数抓到
+const faultStartSlack = 2 * time.Second
 
 // faultStartFails 起一个注定起不来的进程，等它退出：必须是非 0 退出、从没开始监听
 func faultStartFails(t *testing.T, o harness.Options) (harness.Exit, *harness.Process) {

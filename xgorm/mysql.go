@@ -1,6 +1,7 @@
 package xgorm
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	mysqldriver "github.com/go-sql-driver/mysql"
 	"gorm.io/driver/mysql"
@@ -69,11 +71,21 @@ func resolveMySQL(c ClientConfig) (string, ConnInfo, error) {
 	}
 
 	// 预算读的是注入之后的值：DSN 里写了的以 DSN 为准。
-	// timeout 管建连，readTimeout 管探测那个往返
+	// timeout 管建连（拨号），readTimeout 管之后的每一读：握手、认证、探测的那个往返
+	// （go-sql-driver v1.10.1 connector.go / connection.go）
 	return cfg.FormatDSN(), ConnInfo{
 		Driver: "mysql", Addr: cfg.Addr, DB: cfg.DBName,
-		ProbeTimeout: cfg.Timeout + cfg.ReadTimeout,
+		ProbeTimeout: mysqlProbeTimeout(cfg.Timeout, cfg.ReadTimeout),
 	}, nil
+}
+
+// mysqlProbeTimeout 建连加一个往返的预算。
+//
+// 哪一段配成 0（驱动不限时）就按另一段的量级给：0 说的是「驱动不管」，不是「这一段不花时间」，
+// 只拿建连超时当整体预算的话，ReadTimeout: 0 时连接刚建成、登录包还没回来就被判超时。
+// 两段都是 0 返回 0，由 probeTimeout 用兜底值
+func mysqlProbeTimeout(dial, read time.Duration) time.Duration {
+	return cmp.Or(dial, read) + cmp.Or(read, dial)
 }
 
 // mysqlParamSet DSN 里有没有写 key 这个参数，写成什么值都算。

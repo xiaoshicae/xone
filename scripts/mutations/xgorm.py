@@ -83,7 +83,10 @@ mutate("探测预算按 DSN 里写的超时放宽", "xgorm/xgorm.go", "./xgorm",
 mutate("PG 的探测预算用 DSN 里的 connect_timeout", "xgorm/dsn.go", "./xgorm", "TestProbeTimeout_DSN",
        swap('ProbeTimeout: postgresProbeTimeout(pc.ConnectTimeout, c.DialTimeout),', 'ProbeTimeout: postgresProbeTimeout(0, c.DialTimeout),'))
 mutate("MySQL 的探测预算用 DSN 里的超时", "xgorm/mysql.go", "./xgorm", "TestProbeTimeout_DSN",
-       swap('\t\tProbeTimeout: cfg.Timeout + cfg.ReadTimeout,\n', '\t\tProbeTimeout: c.DialTimeout + c.MySQL.ReadTimeout,\n'))
+       swap('ProbeTimeout: mysqlProbeTimeout(cfg.Timeout, cfg.ReadTimeout),', 'ProbeTimeout: mysqlProbeTimeout(c.DialTimeout, c.MySQL.ReadTimeout),'))
+# ReadTimeout: 0 是「驱动不限时」：预算照旧只加上 0 的话，只剩建连超时，登录包还没回来就判超时
+mutate("MySQL 配成 0 的那段超时按另一段的量级算预算", "xgorm/mysql.go", "./xgorm", "TestProbeTimeout$",
+       swap('\treturn cmp.Or(dial, read) + cmp.Or(read, dial)\n', '\treturn cmp.Or(dial) + read\n'))
 # GORM 只在 Logger 实现了 ParamsFilter 时才不把参数代进 SQL：否则日志里就是真实的参数值，凭证跟着出去
 mutate("SQL 日志里没有参数值", "xgorm/logger.go", "./xgorm", "TestLogger",
        swap('func (l *gormLogger) ParamsFilter(', 'func (l *gormLogger) paramsFilter('))
@@ -142,6 +145,17 @@ mutate("Span 不记服务端错误原文", "xgorm/trace.go", "./xgorm", "TestSpa
 mutate("Span 服务端报错时不调 RecordError", "xgorm/trace.go", "./xgorm", "TestSpan_ServerErrorRecordsCodeNotMessage",
        swap('\t\tspan.SetAttributes(semconv.DBResponseStatusCode(code), semconv.ErrorTypeKey.String(code))\n',
             '\t\tspan.SetAttributes(semconv.DBResponseStatusCode(code), semconv.ErrorTypeKey.String(code))\n\t\tspan.RecordError(err)\n'))
+# 客户端的错也带参数值：pgx 编码失败用 %#v 写出整个参数、database/sql 扫描失败用 %q 写出读回来的值。
+# 白名单放行打在 redactedError 上，Span 那个出口的 RecordError 另打一条，
+# 外加「只记认出来的那一个，不记整条链」（GORM 的 AddError 把前一个错误的原文拼在前面）
+mutate("客户端的错不在白名单里就不记原文", "xgorm/dialect.go", "./xgorm", "TestRedactedError_ClientErrors|TestLogger_ClientErrorKeepsParamValuesOut|TestSpan_ClientErrorKeepsParamValuesOut",
+       swap('\treturn clientErrorOmitted, ""\n', '\treturn err.Error(), ""\n'))
+mutate("Span 的 exception.message 只记认出来的安全错误", "xgorm/trace.go", "./xgorm", "TestSpan_ClientErrorKeepsParamValuesOut",
+       swap('\t\t\tspan.RecordError(safe)\n', '\t\t\tspan.RecordError(err)\n'))
+mutate("认不出的客户端错误不调 RecordError", "xgorm/trace.go", "./xgorm", "TestSpan_ClientErrorKeepsParamValuesOut",
+       swap('\t\tspan.SetAttributes(semconv.ErrorTypeOther)\n', '\t\tspan.RecordError(err)\n\t\tspan.SetAttributes(semconv.ErrorTypeOther)\n'))
+mutate("白名单里的错误只记认出来的那一个", "xgorm/dialect.go", "./xgorm", "TestRedactedError_ClientErrors",
+       swap('\t\tif errors.Is(err, safe) {\n\t\t\treturn safe\n', '\t\tif errors.Is(err, safe) {\n\t\t\treturn err\n'))
 mutate("MySQL 方言认得出服务端错误码", "xgorm/dialect.go", "./xgorm", "TestLogger_ServerErrorLogsCodeNotMessage|TestSpan_ServerErrorRecordsCodeNotMessage",
        swap('AuthFailed: mysqlAuthFailed, ErrorCode: mysqlErrorCode,', 'AuthFailed: mysqlAuthFailed,'))
 mutate("PG 方言认得出服务端错误码", "xgorm/dialect.go", "./xgorm", "TestLogger_ServerErrorLogsCodeNotMessage|TestSpan_ServerErrorRecordsCodeNotMessage",
@@ -208,6 +222,12 @@ mutate("PG TLS 块不收 Unix socket", "xgorm/dsn.go", "./xgorm", "TestResolveDS
        swap('\t\tif err := checkPostgresTCP(pc); err != nil {', '\t\tif err := checkPostgresTCP(pc); false && err != nil {'))
 mutate("MySQL TLS 块和 DSN 里的 tls 不能同时写", "xgorm/mysql.go", "./xgorm", "TestResolveDSN_MySQL_TLSBlockConflictsWithDSNTLS",
        swap('\t\tif err := checkMySQLTLS(c.DSN, cfg); err != nil {', '\t\tif err := checkMySQLTLS(c.DSN, cfg); false && err != nil {'))
+# 问候包里的 CLIENT_SSL 是明文的，中间人清掉它，allowFallbackToPlaintext=true 的驱动就改发明文登录包。
+# 校验的调用点和交给驱动的配置各打一条
+mutate("MySQL TLS 块不收 allowFallbackToPlaintext", "xgorm/tls.go", "./xgorm", "TestNew_MySQL_TLSBlockRejectsPlaintextFallbackParam",
+       swap('\tif mysqlParamSet(dsn, "allowFallbackToPlaintext") {', '\tif false && mysqlParamSet(dsn, "allowFallbackToPlaintext") {'))
+mutate("MySQL TLS 块的连接配置钉死不退回明文", "xgorm/tls.go", "./xgorm", "TestOpenMySQLTLS_NeverFallsBackToPlaintext",
+       swap('\tdc.AllowFallbackToPlaintext = false\n', ''))
 mutate("MySQL 连接配置带上 TLS 块", "xgorm/tls.go", "./xgorm", "TestNew_MySQL_TLS",
        swap('\tdc.TLS = cfg.Clone()\n', ''))
 mutate("Log 关掉时 GORM 不自己往标准输出写", "xgorm/xgorm.go", "./xgorm", "TestNew",

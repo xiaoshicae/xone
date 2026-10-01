@@ -10,12 +10,16 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+# 只读代码：这里没有一步要写仓库，token 给多了，被测代码或依赖里有什么就能拿它写
+permissions:
+  contents: read
+
 jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
         with:
           # 取各模块里最高的那个下限。核心自己只要 1.23，
           # 但集成模块因为上游需要 1.25，CI 得跑得动全部
@@ -34,8 +38,8 @@ jobs:
   core-go-floor:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
         with:
           go-version: '1.23'
           cache: true

@@ -13,8 +13,12 @@ name: release
 #   - e2e（真实的 PG / MySQL / Redis / ClickHouse，同 e2e.yml）；
 #   - release.sh --smoke：和 --verify 同一个外部工程、同一套检查，依赖指向本地代码；
 #   - 只推这一组 tag（--atomic：要么全上去，要么一个都不上去）；
-#   - release.sh --verify：在一个全新的外部工程里 go get，验证装得上、跑得起来。
+#   - release.sh --verify（单独的 verify job）：在一个全新的外部工程里 go get，验证装得上、跑得起来。
 # 前面任何一步红了都不推送。tag 推出去就被 Go 的 module proxy 永久缓存，删不掉。
+#
+# verify 单独成一个 job，是为了红了能重跑：推送之后的失败（最常见的是 proxy 还没拉到新 tag）
+# 点「Re-run failed jobs」只重跑 verify。和打 tag 放在同一个 job 里的话，重跑会从头来一遍，
+# 重新拉下来的 tag 让 release.sh --tag 在第一步就停下，而那时版本早已发出去了。
 on:
   workflow_dispatch:
     inputs:
@@ -28,12 +32,15 @@ concurrency:
   group: release
   cancel-in-progress: false
 
+# 默认只读；只有 release job 要写（推 tag）
 permissions:
-  contents: write # 推 tag
+  contents: read
 
 jobs:
   release:
     if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: write # 推 tag
     runs-on: ubuntu-latest
     timeout-minutes: 45
     # 和 e2e.yml 同一套服务容器，账号密码与 e2e/compose.yml、e2e/harness 的默认值一致
@@ -86,10 +93,13 @@ jobs:
       XONE_E2E_CH_ADDR: 127.0.0.1:9000
       XONE_E2E_CH_HTTP_ADDR: 127.0.0.1:8123
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0 # release.sh 要看这个版本的 tag 是不是已经有了
-      - uses: actions/setup-go@v5
+          # 不把能写仓库的 token 留在 .git/config 里：后面的检查、单测、e2e 跑的是仓库和依赖的代码，
+          # 用不着它。token 只交给推送和 summary 两步，经环境变量，不落盘
+          persist-credentials: false
+      - uses: actions/setup-go@v6
         with:
           go-version: '1.25'
           cache: true
@@ -109,23 +119,70 @@ jobs:
         run: scripts/release.sh "$VERSION" --smoke
 
       - name: 推送 tag
+        env:
+          TOKEN: ${{ github.token }}
         run: |
           refs=$(git tag --points-at "$VERSION" | sed 's|^|refs/tags/|')
           echo "$refs"
-          git push --atomic origin $refs
+          git push --atomic "https://x-access-token:$TOKEN@${GITHUB_SERVER_URL#https://}/$GITHUB_REPOSITORY.git" $refs
+
+      # 推没推出去以远端为准，不看本地：本地有 tag 只说明打了，前面哪一步红了的话它从没离开过这台 runner。
+      # 推送那一步自己的退出码也不够：连接在服务端收下之后断掉，推送红了，tag 却已经上去了
+      - name: summary
+        if: always()
+        env:
+          TOKEN: ${{ github.token }}
+        run: |
+          local_tags=$(git tag --list "$VERSION" "*/$VERSION" | tr '\n' ' ')
+          {
+            echo "### release $VERSION"
+            echo
+            if ! remote=$(git ls-remote --tags --refs "https://x-access-token:$TOKEN@${GITHUB_SERVER_URL#https://}/$GITHUB_REPOSITORY.git" "$VERSION"); then
+              echo "⚠ 查不到远端的 tag（git ls-remote 失败），推没推出去看「推送 tag」那一步。本地打了的：${local_tags:-无}"
+            elif [ -n "$remote" ]; then
+              echo "远端已有（已推送）：$(echo "$remote" | sed 's|.*refs/tags/||' | tr '\n' ' ')"
+            elif [ -n "$local_tags" ]; then
+              echo "只在本地打了 tag，没有推送（tagged locally, not pushed）：$local_tags"
+              echo
+              echo "这些 tag 随这台 runner 一起丢掉，修好之后重新点发布按钮即可。"
+            else
+              echo "没有打 tag，也没有推送。"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # 推送之后的验证单独一个 job：红了点「Re-run failed jobs」只重跑这里（见文件开头）。
+  # 它只读 main 上的脚本、从 module proxy 拉已经发布的版本，不需要写权限，也不需要 tag
+  verify:
+    needs: release
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.25'
+          cache: true
+          cache-dependency-path: '**/go.sum'
 
       - name: release.sh --verify（外部工程装得上、跑得起来）
         run: scripts/release.sh "$VERSION" --verify
 
       - name: summary
         if: always()
+        env:
+          STATUS: ${{ job.status }}
         run: |
           {
-            echo "### release $VERSION"
+            echo "### verify $VERSION"
             echo
-            if git rev-parse -q --verify "refs/tags/$VERSION" >/dev/null; then
-              echo "tag：$(git tag --points-at "$VERSION" | tr '\n' ' ')"
+            if [ "$STATUS" = success ]; then
+              echo "✓ 外部工程 go get 得到、跑得起来。"
             else
-              echo "没有打 tag，也没有推送。"
+              echo "✗ --verify 没过。tag 已经推出去了：proxy 还没拉到新版本的话，过几分钟点「Re-run failed jobs」只重跑这个 job；"
+              echo "真有回归的话，这一版撤不回，修好之后发下一版。"
             fi
           } >> "$GITHUB_STEP_SUMMARY"

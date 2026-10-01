@@ -2,7 +2,7 @@ package xgorm
 
 import (
 	"context"
-	"errors"
+	"database/sql/driver"
 	"fmt"
 	"strings"
 	"testing"
@@ -144,7 +144,7 @@ func TestSpan_MarksErrorStatus(t *testing.T) {
 	spans := recording(t)
 	db := stmtDB(context.Background())
 	startSpan(ConnInfo{})("query")(db)
-	db.Error = errors.New("连接断了")
+	db.Error = fmt.Errorf("exec: %w", driver.ErrBadConn) // 认得出是安全的客户端错误才记成事件
 	endSpan(pgDialect())(db)
 
 	s := spans()[0]

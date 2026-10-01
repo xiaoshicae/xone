@@ -5,6 +5,20 @@ section("客户端")
 # 挂上重试条件，resty 自己「不重试」的判断就作废了：200 + 坏 JSON 会被同一个 GET 重发
 mutate("只重试传输层的错", "xhttp/xhttp.go", "./xhttp", "TestRetry",
        swap('\tif !isTransportError(err) {\n', '\tif err == nil {\n'))
+# 超时分不出请求到没到服务端，重发 POST 就是重复下单：打在挂条件的调用点和方法判断上
+mutate("POST 不重试", "xhttp/xhttp.go", "./xhttp", "TestRetry",
+       swap('\tif _, ok := idempotentMethods[method]; ok || !p.onlyIdempotent {', '\tif true {'))
+# resty 的条件是「或」：使用者挂一个 err != nil 就重试的条件，POST 的重试就回来了。veto 挂在 RetryAfter 上兜住
+mutate("使用者的重试条件放不回 POST 的重试", "xhttp/xhttp.go", "./xhttp", "TestRetry_UserCondition|TestRetry_UserStatusConditionWithConsumedReader",
+       swap('\t\t\tAddRetryCondition(p.condition).\n\t\t\tSetRetryAfter(p.veto)\n', '\t\t\tAddRetryCondition(p.condition)\n'))
+# 拿到了响应时否决，调用方拿到的就是我们编出来的错误，不是那个 503
+mutate("拿到了响应不因为方法否决", "xhttp/xhttp.go", "./xhttp", "TestRetry_UserStatusConditionNotVetoedAndNoBogusError",
+       swap('if err == nil || errors.Is(err, errNotIdempotent) && resp != nil && resp.RawResponse != nil {', 'if err == nil {'))
+# resty 每次尝试都拿同一个 io.Reader 重建请求：第二次发出去 0 字节、服务端回 200
+mutate("读过的 io.Reader 不重发", "xhttp/xhttp.go", "./xhttp", "TestRetry_ConsumedReaderBodyNotResent|TestRetry_UserStatusConditionWithConsumedReader",
+       swap('\tif consumedReader(resp.Request) {', '\tif false {'))
+mutate("没有 body 的 PUT 照旧重试", "xhttp/xhttp.go", "./xhttp", "TestRetry_RewindableBodyStillRetried",
+       swap('\treturn ok && r.Body != http.NoBody\n', '\treturn ok\n'))
 mutate("关闭时清掉空闲连接", "xhttp/xhttp.go", "./xhttp", "TestNew",
        swap('\treturn client, &clientCloser{pool: pool}, nil','\treturn client, &clientCloser{pool: traced(cfg, pool)}, nil'))
 mutate("重试耗时算整次逻辑请求", "xhttp/metric.go", "./xhttp", "TestMetric",

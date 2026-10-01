@@ -22,8 +22,8 @@ mutate("Redis 一次建连只拨一次号", "xredis/xredis.go", "./xredis", "Tes
        swap('\t\tDialerRetries: 1,\n', ''))
 # 打在调用点上：绕开 probe 直接 Ping，启动期间的退出信号要等到 ReadTimeout 才生效
 mutate("Redis 建连探测收到退出信号当场放弃", "xredis/xredis.go", "./xredis", "TestNew_ExitSignalAtStartupSkipsReadTimeout",
-       swap('xclient.Probe(ctx, probePolicy(cfg), probe(client))',
-            'xclient.Probe(ctx, probePolicy(cfg), func(ctx context.Context) error { return client.Ping(ctx).Err() })'))
+       swap('xclient.Probe(ctx, probePolicy(client.Options()), probe(client))',
+            'xclient.Probe(ctx, probePolicy(client.Options()), func(ctx context.Context) error { return client.Ping(ctx).Err() })'))
 mutate("Redis 建连探测取消时不等这次读", "xredis/xredis.go", "./xredis", "TestNew_ExitSignalAtStartupSkipsReadTimeout",
        swap('\t\t\tif errors.Is(ctx.Err(), context.Canceled) {\n', '\t\t\tif false && errors.Is(ctx.Err(), context.Canceled) {\n'))
 mutate("Redis 认证失败不重试", "xredis/xredis.go", "./xredis", "TestNew_AuthFailureReportedClearlyWithoutRetry",
@@ -35,8 +35,23 @@ mutate("go-redis 自己的日志进 slog", "xredis/xredis.go", "./xredis", "Test
        swap('\tredis.SetLogger(slogLogger{})\n', ''))
 mutate("go-redis 的日志带着调用方的 ctx", "xredis/xredis.go", "./xredis", "TestGoRedisOwnLogsGoToSlogWithCallerCtx",
        swap('slog.WarnContext(ctx, "xredis go-redis log"', 'slog.WarnContext(context.Background(), "xredis go-redis log"'))
+# 配置里的 0 在 go-redis 里是它的默认值（DialTimeout / ReadTimeout 各 5s）：预算按配置里的 0 算，只剩 1s 兜底，
+# go-redis 还愿意等的慢建连被建连验证先判了超时。打在交出 Options 的调用点上
+mutate("Redis 建连预算按 go-redis 补完默认值之后的超时算", "xredis/xredis.go", "./xredis", "TestNew_ZeroTimeoutsProbeWithGoRedisDefaults",
+       swap('xclient.Probe(ctx, probePolicy(client.Options()), probe(client))',
+            'xclient.Probe(ctx, probePolicy(&redis.Options{DialTimeout: cfg.DialTimeout, ReadTimeout: cfg.ReadTimeout}), probe(client))'))
 mutate("Redis 命令参数不进 Span", "xredis/xredis.go", "./xredis", "TestTrace",
-       swap('redisotel.InstrumentTracing(client, redisotel.WithDBStatement(false))', 'redisotel.InstrumentTracing(client)'))
+       swap('redisotel.InstrumentTracing(client, redisotel.WithDBStatement(false), ', 'redisotel.InstrumentTracing(client, '))
+# redisotel v9.22.0 把服务端的错误原文写进 exception.message 和状态描述（实测真 Redis 上 ERR unknown command … 'secretarg1'）。
+# 打在交给 redisotel 的那个 provider 上，和包装里改写的两处
+mutate("Redis Span 上的错误用收过的文本", "xredis/xredis.go", "./xredis", "TestTrace_ServerErrorTextNotInSpan",
+       swap('redisotel.WithTracerProvider(tp))', 'redisotel.WithTracerProvider(tp.TracerProvider))'))
+mutate("Redis Span 不把服务端原文记成事件", "xredis/trace.go", "./xredis", "TestTrace_ServerErrorTextNotInSpan",
+       swap('\tif clientSafe(err) {\n\t\ts.Span.RecordError(err, opts...)', '\tif true {\n\t\ts.Span.RecordError(err, opts...)'))
+mutate("Redis Span 的状态描述用收过的文本", "xredis/trace.go", "./xredis", "TestTrace_ServerErrorTextNotInSpan",
+       swap('\t\tdesc = s.text\n', '\t\t_ = s.text\n'))
+mutate("Redis Span 上网络错误照原文记", "xredis/trace.go", "./xredis", "TestTrace_ClientSafeErrorKeptInSpan",
+       swap('\tif clientSafe(err) {\n\t\ts.Span.RecordError(err, opts...)', '\tif false {\n\t\ts.Span.RecordError(err, opts...)'))
 mutate("Metric 关掉的 Redis 实例不导出", "xredis/xredis.go", "./xredis", "TestInstall", swap('\t\tif inst.metric {\n', '\t\tif true {\n'))
 mutate("xmetric 重装后 Redis 连接池指标照样导出", "xredis/xredis.go", "./xredis", "TestInstall",
        swap('func installPoolMetrics() {\n\tif _, err := xmetric.RegisterAs(',
@@ -66,8 +81,8 @@ mutate("Redis 不开维护通知", "xredis/xredis.go", "./xredis", "TestNew_NoCl
        swap('Mode: maintnotifications.ModeDisabled}', 'Mode: maintnotifications.ModeAuto}'))
 # 钩子挂在建连验证之前：启动时每次 Ping 尝试都是一个没有父 Span 的 ping
 mutate("Redis 链路钩子在建连验证成功之后才挂", "xredis/xredis.go", "./xredis", "TestTrace_StartupConnectCheckOpensNoSpan",
-       swap('\tif err := xclient.Probe(ctx, probePolicy(cfg), probe(client)); err != nil {',
-            '\tif cfg.Trace {\n\t\t_ = redisotel.InstrumentTracing(client, redisotel.WithDBStatement(false))\n\t}\n\tif err := xclient.Probe(ctx, probePolicy(cfg), probe(client)); err != nil {'))
+       swap('\tif err := xclient.Probe(ctx, probePolicy(client.Options()), probe(client)); err != nil {',
+            '\tif cfg.Trace {\n\t\t_ = redisotel.InstrumentTracing(client, redisotel.WithDBStatement(false))\n\t}\n\tif err := xclient.Probe(ctx, probePolicy(client.Options()), probe(client)); err != nil {'))
 mutate("xredis connected 日志带着实例名", "xredis/xredis.go", "./xredis", "TestInstall_LogsNameAndAddrButNotPassword",
        swap('"xredis connected", "name", name,', '"xredis connected", "name", "",'))
 
@@ -146,13 +161,13 @@ mutate("不是 UTF-8 的长 key 不截成空串", "xredis/log.go", "./xredis", "
        swap('\tif !utf8.RuneStart(key[cut]) {\n\t\tcut = maxLoggedKey\n\t}\n', ''))
 # 实测 Redis 7.0.15：ERR unknown command 的原文把参数带出来
 mutate("Redis 服务端错误只记错误码", "xredis/log.go", "./xredis", "TestLog_FailedCommandLogsOnlyErrorCode",
-       swap('"error", "redis server error " + code + " (message omitted, it may contain argument values)", "error_code", code}',
-            '"error", err.Error(), "error_code", code}'))
+       swap('return "redis server error " + code + " (message omitted, it may contain argument values)", code',
+            'return err.Error(), code'))
 # EVAL 里 return {err=ARGV[1]}：错误原文整个就是值，取第一个词当错误码就把值记下来了
 mutate("Redis 错误码只认已知的", "xredis/log.go", "./xredis", "TestLog_FailedCommandLogsOnlyErrorCode",
        swap('if _, ok := knownErrorCodes[code]; ok {', 'if code != "" {'))
 # go-redis 解析回复失败时把回复内容写进错误
 mutate("不认得的客户端错误不记原文", "xredis/log.go", "./xredis", "TestErrorAttrs",
-       swap('return []any{"error", "redis client error (message omitted, it may contain reply data)"}', 'return []any{"error", err.Error()}'))
+       swap('return "redis client error (message omitted, it may contain reply data)", ""', 'return err.Error(), ""'))
 mutate("Redis SlowThreshold 为负要被拦住", "xredis/config.go", "./xredis", "TestValidate",
        swap('\t\t{"SlowThreshold", c.SlowThreshold},\n', ''))

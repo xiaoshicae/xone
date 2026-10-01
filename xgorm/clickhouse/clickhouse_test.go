@@ -35,6 +35,25 @@ func TestRegister_ImportRegisters(t *testing.T) {
 	}
 }
 
+// 库名可以写在路径里，也可以写成 ?database=：驱动两处都认，query 里的盖掉路径
+// （clickhouse-go v2.48.0 clickhouse_options.go fromDSN）。日志和 Span 里的 db 要是真正连上的那个
+func TestResolve_DBIsTheOneDriverUses(t *testing.T) {
+	for dsn, want := range map[string]string{
+		"clickhouse://u:p@h:9000/analytics":                 "analytics",
+		"clickhouse://u:p@h:9000?database=events":           "events",
+		"clickhouse://u:p@h:9000/analytics?database=events": "events",
+		"clickhouse://u:p@h:9000/":                          "",
+	} {
+		_, info, err := resolve(cfg(dsn, 0))
+		if err != nil {
+			t.Fatalf("%s：%v", dsn, err)
+		}
+		if info.DB != want {
+			t.Errorf("%s：DB want %q，got %q", dsn, want, info.DB)
+		}
+	}
+}
+
 func TestResolve_InjectsDialTimeout(t *testing.T) {
 	dsn, info, err := resolve(cfg("clickhouse://u:p@h:9000/analytics", 300*time.Millisecond))
 	if err != nil {

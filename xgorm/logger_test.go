@@ -2,6 +2,7 @@ package xgorm
 
 import (
 	"context"
+	"database/sql/driver"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -89,13 +90,14 @@ func TestLogger_SlowQueryLogsWarn(t *testing.T) {
 
 func TestLogger_ErrorLogsError(t *testing.T) {
 	lines := capture(t)
-	traceOnce(newGormLogger(DefaultClientConfig(), pgDialect(), postgres.Dialector{}), errors.New("连接断了"), time.Millisecond)
+	// 客户端的错只有认得出是安全的才记原文（见 TestRedactedError_ClientErrors），坏连接是其中之一
+	traceOnce(newGormLogger(DefaultClientConfig(), pgDialect(), postgres.Dialector{}), fmt.Errorf("exec: %w", driver.ErrBadConn), time.Millisecond)
 
 	got := lines()
 	if len(got) != 1 || got[0]["level"] != "ERROR" {
 		t.Fatalf("出错应记 error，got=%v", got)
 	}
-	if got[0]["error"] != "连接断了" {
+	if got[0]["error"] != driver.ErrBadConn.Error() {
 		t.Errorf("该带上错误，got=%v", got[0])
 	}
 }

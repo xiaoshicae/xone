@@ -183,11 +183,14 @@ func resolve(c xgorm.ClientConfig) (string, xgorm.ConnInfo, error) {
 	// URL 的 Host 是整串 "h1:9000,h2:9000"，驱动按逗号切开、依次去连（默认 in_order）。
 	// 整串当地址的话 Span 的 server.address 是整串、没有 server.port（SplitHostPort 解不开），
 	// 建连日志里也不是一个「主机:端口」。和 PostgreSQL 的多主机一样记第一个。
-	// ParseDSN 在 Host 为空时报错，走到这里 Addr 至少有一项
+	// ParseDSN 在 Host 为空时报错，走到这里 Addr 至少有一项。
+	//
+	// 库名也取驱动解出来的：路径和 ?database= 两处都能写，query 里的盖掉路径
+	// （v2.48.0 clickhouse_options.go fromDSN），只看路径的话日志里的 db 不是真正连上的那个
 	return dsn, xgorm.ConnInfo{
 		Driver:       string(Driver),
 		Addr:         opts.Addr[0],
-		DB:           strings.TrimPrefix(u.Path, "/"),
+		DB:           opts.Auth.Database,
 		ProbeTimeout: 2 * opts.DialTimeout,
 	}, nil
 }
@@ -225,7 +228,8 @@ func authFailed(err error) bool {
 
 // errorCode 服务端报的错误码。原文（Exception.Message）里可能就有参数值，
 // 比如解析不了的输入会被原样引出来，所以日志和 Span 只记码。
-// HTTP 协议下错误链上同样有 *clickhouse.Exception（见 authCodes）；解析不出来的（比如代理回的 502）照原文记
+// HTTP 协议下错误链上同样有 *clickhouse.Exception（见 authCodes）；解析不出来的（比如代理回的 502）
+// 交给 xgorm 按客户端的错处理：网络错误、ctx 取消这类照原文记，其余只说原文收掉了
 func errorCode(err error) string {
 	var ex *chgo.Exception
 	if errors.As(err, &ex) {

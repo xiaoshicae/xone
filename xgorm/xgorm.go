@@ -80,9 +80,9 @@ func open(ctx context.Context, name string, cfg ClientConfig) (*gorm.DB, io.Clos
 	// 内置的 MySQL 和 ClickHouse 方言在 Initialize 里各有一次查版本，也会建连，
 	// 两者都在 Open 里关掉、挪进了 Dialect.Ready（见 openMySQL）。
 	//
+	// SkipDefaultTransaction、PrepareStmt、CreateBatchSize 交给配置（默认值和 GORM 一样），
 	// 其余几项 GORM 的默认值原样保留，量过，理由见 xgorm/README.md「通用」：
-	// SkipDefaultTransaction=false（每次写多两个往返，换来钩子失败时整体回滚）、
-	// PrepareStmt=false、NowFunc 用本地时间、TranslateError=false。
+	// NowFunc 用本地时间、TranslateError=false。
 	gormCfg := &gorm.Config{
 		DisableAutomaticPing:                     true,
 		DisableForeignKeyConstraintWhenMigrating: cfg.DisableForeignKeyConstraintWhenMigrating,

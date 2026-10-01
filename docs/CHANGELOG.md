@@ -8,6 +8,17 @@
 
 ## [未发布]
 
+### 修复
+
+- 安全：xgorm 的 MySQL 开着 `TLS:` 块时，DSN 里的 `allowFallbackToPlaintext=true` 会让驱动在服务端（或中间人）不报 TLS 能力时改走明文、把登录包和之后的 SQL 明文发出去；现在 DSN 里写了这个参数直接启动失败（`the DSN sets allowFallbackToPlaintext while the TLS block is enabled`），交给驱动的连接配置里也钉死不退回明文。迁移：把这个参数从 DSN 里删掉。
+- xhttp：body 是 `io.Reader` 的请求（`SetBody(strings.NewReader(…))` 这类）不再重试——第一次尝试就把它读完了，重试发出去的是空 body，服务端回 200 时调用方看到的是成功；现在调用方拿到第一次的错误。要重试就传 `[]byte` / `string`，或 `SetContentLength(true)`。
+- xhttp：`RetryOnlyIdempotent` 开着时，自己 `AddRetryCondition` 挂的条件不再能让没拿到响应的 POST / PATCH 重试；按状态码（比如 5xx）重试的条件照旧生效，那种条件里的方法要自己判断。
+- xredis：链路里出错的 Span 不再带服务端的错误原文（`ERR unknown command 'foo', with args beginning with: '<参数>'`、`EVAL` 里 `error_reply(ARGV[1])` 的值），状态描述和命令日志的 `error` 字段一样只写错误码，`exception` 事件只记网络错误、超时这类。
+- xgorm：`SQL failed` 日志和 Span 里不再带客户端一侧错误里的参数值（pgx 编码不了的参数会被整个写进错误，`database/sql` 扫描失败会引出读回来的值）；网络错误、ctx 取消 / 超时、`record not found` 这类照原文记，其余写 `client error (message omitted, it may contain parameter values)`。返回给调用方的错误不变。
+- xgorm 的 MySQL：`MySQL.ReadTimeout: 0`（或 `DialTimeout: 0`）时启动建连探测的单次预算不再只剩另一个超时，配成 0 的那一段按另一段算（`ReadTimeout: 0`、`DialTimeout: 500ms` 是 1s）。
+- xredis：时长配 0 时（go-redis 换成它的默认值 `DialTimeout` / `ReadTimeout` 5s）启动建连探测的预算按换算之后的值算，不再只有 1s 兜底，慢一点但合法的建连不再在启动时失败；配置文档写明了每个时长配 0 的含义。
+- xgorm/clickhouse：库名写成 `?database=` 时，建连日志和 Span 里的 `db` 是真正连上的那个库，不再是空的或路径里被盖掉的那个。
+
 ## [v1.21.0] - 2026-09-30
 
 ### 不兼容变更

@@ -68,12 +68,12 @@ func New(cfg Config) (*resty.Client, io.Closer, error) {
 	}, cfg.Log)
 
 	if cfg.RetryCount > 0 {
+		p := retryPolicy{onlyIdempotent: cfg.RetryOnlyIdempotent}
 		client.SetRetryCount(cfg.RetryCount).
 			SetRetryWaitTime(cfg.RetryWaitTime).
-			SetRetryMaxWaitTime(cfg.RetryMaxWaitTime)
-		if cfg.RetryOnlyIdempotent {
-			client.AddRetryCondition(retryOnlyIdempotent)
-		}
+			SetRetryMaxWaitTime(cfg.RetryMaxWaitTime).
+			AddRetryCondition(p.condition).
+			SetRetryAfter(p.veto)
 	}
 
 	if cfg.Metric {
@@ -288,32 +288,86 @@ var idempotentMethods = map[string]struct{}{
 	http.MethodTrace: {}, http.MethodPut: {}, http.MethodDelete: {},
 }
 
-// retryOnlyIdempotent 只让幂等方法重试
+// retryPolicy 哪些请求可以重试。两道关：
 //
-// resty 默认「传输层出错就重试」，不看方法。但超时分不出
-// 「请求没到服务端」和「服务端处理完了但响应丢了」，重发一个 POST
-// 就可能变成重复下单。
+//   - condition：挂成重试条件。只有传输层的错才重试（理由见下），body 发得了第二次才重试，
+//     onlyIdempotent 时还得是幂等方法。
+//   - veto：挂成 RetryAfter，重试之前的最后一道关。resty 的条件是「或」（v2.17.2 retry.go Backoff：
+//     一个返回 true 就不看后面的），使用者自己 AddRetryCondition 挂的条件会把 condition 的 false 盖掉；
+//     RetryAfter 在决定重试之后、等待之前调用，返回错误就不再重试。
 //
-// 挂上任何一个重试条件，resty 自己的判断就整个作废，只听条件的
+// veto 返回的错误只在「这一次没有错误」时才交到调用方手里（Backoff：if err == nil { err = err2 }），
+// 有错误时调用方拿到的仍是原来那个。所以它只在两种情况下否决：
+//
+//   - 没拿到响应（RawResponse 为 nil，一定是传输层错误）而方法不幂等：那正是 RetryOnlyIdempotent 防的
+//     「分不出请求到没到」，调用方拿到的是原来的传输层错误；
+//   - body 是读过的 io.Reader：再发就是一个空 body，服务端回 200 就是一次静默的数据丢失，
+//     拿到了响应也照样否决（这时调用方拿到 errBodyNotRewindable 和那个响应）。
+//
+// 拿到了响应、方法不幂等、body 发得了第二次的，否决的代价是把一个 503 换成我们编出来的错误，
+// 所以不否决：使用者按状态码重试的条件照旧生效，自己判断方法。使用者 SetRetryAfter 会换掉 veto。
+type retryPolicy struct{ onlyIdempotent bool }
+
+// condition 挂上任何一个重试条件，resty 自己的判断就整个作废，只听条件的
 // （resty v2.17.2 retry.go 的 Backoff）。它自己不重试的那些——请求前的中间件
 // 失败、响应已经完整收到之后的解析失败——传进条件时已经剥掉了「不重试」
 // 的标记，看上去和传输层错误一样。从前这里对幂等方法一律返回 true，实测
 // SetResult 遇上 200 + 坏 JSON、RetryCount=3，同一个请求发了 4 次，
 // 不挂条件时 resty 只发 1 次。所以这里先自己认一遍「是不是传输层的错」。
-func retryOnlyIdempotent(resp *resty.Response, err error) bool {
+func (p retryPolicy) condition(resp *resty.Response, err error) bool {
 	if !isTransportError(err) {
 		return false // 拿到响应、或者错在拿到响应之后，都不重试，与 resty 的默认条件一致
 	}
-	method := ""
-	if resp != nil && resp.Request != nil {
-		method = strings.ToUpper(resp.Request.Method)
+	return p.refusal(resp) == nil
+}
+
+// veto 见 retryPolicy。返回 0 是交给 resty 按退避算等多久
+func (p retryPolicy) veto(_ *resty.Client, resp *resty.Response) (time.Duration, error) {
+	err := p.refusal(resp)
+	if err == nil || errors.Is(err, errNotIdempotent) && resp != nil && resp.RawResponse != nil {
+		return 0, nil
 	}
-	if _, ok := idempotentMethods[method]; ok {
-		return true
+	return 0, err
+}
+
+var (
+	// errNotIdempotent 不会交到调用方手里：只在没拿到响应时否决，那时调用方拿到的是原来的传输层错误。
+	// 不是 xerror：它只在 resty 的重试判断里流转
+	errNotIdempotent = errors.New("not retrying a non-idempotent method")
+
+	errBodyNotRewindable = xerror.Newf("xhttp", "execute",
+		"not retrying: the request body is an io.Reader that the first attempt already consumed "+
+			"(pass []byte or string to make the request retryable)")
+)
+
+// refusal 这个请求为什么不能重试，能重试是 nil
+func (p retryPolicy) refusal(resp *resty.Response) error {
+	if resp == nil || resp.Request == nil {
+		return errNotIdempotent // 认不出方法时保守地不重试
+	}
+	if consumedReader(resp.Request) {
+		return errBodyNotRewindable
+	}
+	method := strings.ToUpper(resp.Request.Method)
+	if _, ok := idempotentMethods[method]; ok || !p.onlyIdempotent {
+		return nil
 	}
 	slog.Debug("xhttp skipped retrying a non-idempotent method",
 		"method", method, "to_allow_set", ConfigKey+".RetryOnlyIdempotent=false")
-	return false
+	return errNotIdempotent
+}
+
+// consumedReader body 是不是一个读过就没了的 io.Reader。
+//
+// resty v2.17.2 每次尝试都拿 Request.Body 重新建 http.Request（middleware.go createHTTPRequest）：
+// []byte、string、结构体每次重新序列化，是完整的；io.Reader 在第一次尝试就读到了头，
+// 实测 PUT strings.NewReader(…)、第一次连接被掐断，第二次发出去 0 字节，服务端回 200。
+// resty 不替它倒回去（RetryResetReaders 只管 multipart）。例外是 SetContentLength(true)：
+// resty 把 io.Reader 读进缓冲、Body 置 nil，之后每次都发那份缓冲（实测照样完整）。
+// http.NoBody 是 resty 给没有 body 的 PUT / POST 补的，空的，发几次都一样
+func consumedReader(r *resty.Request) bool {
+	_, ok := r.Body.(io.Reader)
+	return ok && r.Body != http.NoBody
 }
 
 // isTransportError 报告 err 是不是 resty 默认会重试的那种传输层错误

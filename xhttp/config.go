@@ -83,6 +83,11 @@ type Config struct {
 	// 传输层超时分不出「请求没到服务端」和「服务端处理完了但响应丢了」，
 	// 重发一个 POST 就可能变成重复下单、重复扣款。
 	// 确认接口幂等（比如带幂等键）之后再关掉它。
+	//
+	// 自己在 client 上 AddRetryCondition 挂的条件也放不回没拿到响应的 POST（xhttp 另在 RetryAfter 上否决）；
+	// 放得回的只有拿到了响应之后按状态码重试的条件（比如 5xx）——那时否决只能把响应换成一个编出来的错误，
+	// 所以这种条件里的方法要自己判断。自己 SetRetryAfter 会换掉这道关。
+	// 不论开关，body 是 io.Reader 的请求都不重试：第一次尝试就把它读完了，重发的是空 body。
 	RetryOnlyIdempotent bool `yaml:"RetryOnlyIdempotent"`
 
 	// Trace 是否为出站请求开 Span。默认开启。

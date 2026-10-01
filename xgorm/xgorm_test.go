@@ -120,6 +120,25 @@ func TestProbeTimeout(t *testing.T) {
 		t.Errorf("MySQL 的探测预算应为建连 + 读超时，got=%v", got)
 	}
 
+	// 配 0 是「驱动不限时」，不是「这一段不花时间」：那一段按另一段的量级给，
+	// 和方言推算不出来时的 2 × DialTimeout 同一个道理。只给建连超时的话，
+	// ReadTimeout: 0 时连接刚建成、登录包还没回来就被判超时
+	for _, z := range []struct {
+		name       string
+		dial, read time.Duration
+		want       time.Duration
+	}{
+		{"ReadTimeout 为 0", time.Second, 0, 2 * time.Second},
+		{"DialTimeout 为 0", 0, 2 * time.Second, 4 * time.Second},
+		{"两个都是 0 用兜底值", 0, 0, fallbackPingTimeout},
+	} {
+		c := mysqlCfg("u:p@tcp(h:3306)/d")
+		c.DialTimeout, c.MySQL.ReadTimeout = z.dial, z.read
+		if got := resolvedProbeTimeout(t, c); got != z.want {
+			t.Errorf("%s：MySQL 的探测预算 want %v，got %v", z.name, z.want, got)
+		}
+	}
+
 	// PG 注入的 connect_timeout 是向上取整的整秒，管的是整个建连（TCP、TLS、认证）。
 	// 预算比它短的话，一次慢一点但合法的握手会在 pgx 放弃之前就被我们判超时
 	c = pgCfg("host=h dbname=d")

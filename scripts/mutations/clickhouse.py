@@ -6,6 +6,9 @@ mutate("ClickHouse 的探测预算用 DSN 里的 dial_timeout", "xgorm/clickhous
        swap('\t\tProbeTimeout: 2 * opts.DialTimeout,\n', '\t\tProbeTimeout: 2*c.DialTimeout + 0*opts.DialTimeout,\n'))
 # 驱动在 Initialize 里用 context.Background() 查版本：ctx 取消了也要等满
 # dial_timeout，失败了一次重试都没有
+# 库名写成 ?database= 时 URL 的路径是空的：只看路径的话日志和 Span 里的 db 是空串或者是被盖掉的那个
+mutate("ClickHouse 的 db 是驱动真正用的库名", "xgorm/clickhouse/clickhouse.go", "./xgorm/clickhouse", "TestResolve_DBIsTheOneDriverUses",
+       swap('\t\tDB:           opts.Auth.Database,\n', '\t\tDB:           strings.TrimPrefix(u.Path, "/"),\n'))
 mutate("ClickHouse 首次建连受 ctx 管也会重试", "xgorm/clickhouse/clickhouse.go", "./xgorm/clickhouse", "TestNew",
        swap('SkipInitializeWithVersion: true', 'SkipInitializeWithVersion: false'))
 # 解开再 q.Encode() 会把使用者的参数按 key 重排、逗号斜杠转义掉：打在注入的调用点上

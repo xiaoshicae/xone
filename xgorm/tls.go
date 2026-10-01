@@ -147,11 +147,20 @@ func disallowed(err error) (string, bool) {
 	return key, uerr == nil
 }
 
-// checkMySQLTLS 开了 TLS 块时，DSN 里不许再写 tls=，也不能走 Unix socket
+// checkMySQLTLS 开了 TLS 块时，DSN 里不许再写 tls= 和 allowFallbackToPlaintext=，也不能走 Unix socket。
+//
+// allowFallbackToPlaintext=true 的意思是「服务端的问候包里没有 CLIENT_SSL 就改走明文」
+// （go-sql-driver v1.10.1 packets.go readHandshakePacket）。这一位是明文发过来的，
+// 中间人清掉它，客户端就把登录包连同之后的每条 SQL 明文交出去——开了 TLS 块也一样。
+// 写成 false 也拒：这个参数和 tls= 一样只该在一处配
 func checkMySQLTLS(dsn string, cfg *mysqldriver.Config) error {
 	if mysqlParamSet(dsn, "tls") {
 		return fmt.Errorf("the DSN sets tls while the TLS block is enabled; configure TLS in one place only " +
 			"(remove tls= from the DSN, or drop the TLS block)")
+	}
+	if mysqlParamSet(dsn, "allowFallbackToPlaintext") {
+		return fmt.Errorf("the DSN sets allowFallbackToPlaintext while the TLS block is enabled; " +
+			"the TLS block never falls back to plaintext (remove allowFallbackToPlaintext= from the DSN)")
 	}
 	if cfg.Net != "tcp" && cfg.Net != "tcp6" && cfg.Net != "tcp4" {
 		return fmt.Errorf("the TLS block is enabled but the DSN connects over %s, TLS only runs over TCP", cfg.Net)
@@ -172,6 +181,9 @@ func openMySQLTLS(dsn string, cfg *tls.Config) (gorm.Dialector, error) {
 		return nil, errMalformedDSN // 不回传驱动的错误，理由见 resolveMySQL
 	}
 	dc.TLS = cfg.Clone()
+	// 兜底：checkMySQLTLS 已经拒了 DSN 里的这个参数，这里再钉死一次，
+	// 服务端（或中间人）不给 CLIENT_SSL 时报 ErrNoTLS，不改走明文
+	dc.AllowFallbackToPlaintext = false
 	connector, err := mysqldriver.NewConnector(dc)
 	if err != nil {
 		return nil, errMalformedDSN

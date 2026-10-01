@@ -32,6 +32,7 @@ import (
 	"github.com/xiaoshicae/xone/xerror"
 	"github.com/xiaoshicae/xone/xgin/middleware"
 	"github.com/xiaoshicae/xone/xgin/trans"
+	"github.com/xiaoshicae/xone/xlog"
 	"github.com/xiaoshicae/xone/xmetric"
 )
 
@@ -1570,5 +1571,217 @@ func TestLoadConfig_IPv4MappedProxyFailsStartup(t *testing.T) {
 	err := loadErr(t, "XGin:\n  TrustedProxies: [private, \"::ffff:10.0.0.1\"]\n")
 	if err == nil || !strings.Contains(err.Error(), "IPv4-mapped") || !strings.Contains(err.Error(), "write it as 10.0.0.1") {
 		t.Fatalf("IPv4 映射写法该启动失败并给出 IPv4 写法，got=%v", err)
+	}
+}
+
+// servingHijacked 起一个服务，/ws 劫持连接后一直等请求的 ctx（WebSocket 的读循环就是这样），
+// 返回服务和「handler 已经劫持、正在等」的信号
+func servingHijacked(t *testing.T) (*XGin, <-chan struct{}) {
+	t.Helper()
+	port := testkit.FreePort(t)
+	entered, release := make(chan struct{}), make(chan struct{})
+	g := New().WithConfig(configWith(quiet, on(port))).WithRoutes(func(e *gin.Engine) {
+		e.GET("/ping", func(c *gin.Context) { c.Status(200) })
+		e.GET("/ws", func(c *gin.Context) {
+			conn, _, err := c.Writer.Hijack()
+			if err != nil {
+				return
+			}
+			defer conn.Close()
+			close(entered)
+			select {
+			case <-c.Request.Context().Done():
+			case <-release: // 测试失败时也让 Cleanup 里的 Stop 返回
+			}
+		})
+	})
+	base := serving(t, g, port)
+	t.Cleanup(func() { close(release) }) // 在 serving 的 Stop 之前跑
+	conn, err := net.Dial("tcp", strings.TrimPrefix(base, "http://"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { conn.Close() })
+	fmt.Fprint(conn, "GET /ws HTTP/1.1\r\nHost: x\r\n\r\n")
+	select {
+	case <-entered:
+	case <-time.After(3 * time.Second):
+		t.Fatal("请求没进到 handler")
+	}
+	return g, entered
+}
+
+func TestStop_HijackedConnGetsCancelled(t *testing.T) {
+	// 回归用例。被劫持的连接（WebSocket）Shutdown 不等、Close 也断不掉，请求的 ctx 原先永远不取消：
+	// 等着它的 handler 不返回，Stop 把整份预算耗完再报 1 handler(s) still running
+	g, _ := servingHijacked(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	start := time.Now()
+	err := g.Stop(ctx)
+	if err != nil {
+		t.Fatalf("劫持走的 handler 看到 ctx 取消就返回了，Stop 不该报错：%v", err)
+	}
+	if d := time.Since(start); d > time.Second {
+		t.Errorf("Stop 该在 Shutdown 返回之后马上取消劫持连接的 ctx，却用了 %v", d)
+	}
+}
+
+func TestStart_RetryAfterListenFailure(t *testing.T) {
+	// 回归用例。监听失败（端口被占）之后 s.srv 原先留着，之后每次 Start 都说 already running
+	port := testkit.FreePort(t)
+	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := New().WithConfig(configWith(quiet, on(port))).WithRoutes(func(e *gin.Engine) {
+		e.GET("/ping", func(c *gin.Context) { c.Status(200) })
+	})
+	if err := startErr(t, g); err == nil || !strings.Contains(err.Error(), "listen on") {
+		t.Fatalf("端口被占时该报 listen 失败，got=%v", err)
+	}
+	ln.Close()
+
+	done := make(chan error, 1)
+	go func() { done <- g.Start(context.Background()) }()
+	t.Cleanup(func() { _ = g.Stop(context.Background()) })
+	select {
+	case err := <-done:
+		t.Fatalf("端口空出来之后该能再起来，got=%v", err)
+	case <-time.After(300 * time.Millisecond):
+	}
+	waitServing(t, fmt.Sprintf("http://127.0.0.1:%d/ping", port))
+}
+
+func TestBuild_TrailingSlashGoesThroughMiddlewareAs404(t *testing.T) {
+	// 回归用例。gin 的 RedirectTrailingSlash 默认开着（v1.12.0 gin.go 的 handleHTTPRequest）：
+	// /users/ 对不上 /users 时直接回 301，整条中间件链都不跑——没有访问日志、指标和 Span。
+	// 关掉之后它走 NoRoute，记成 404 unmatched
+	buf := captureLog(t)
+	route := func(e *gin.Engine) { e.GET("/users", func(c *gin.Context) { c.String(200, "ok") }) }
+	e := New().WithConfig(configWith(func(c *Config) { c.Metric, c.Trace = false, false })).WithRoutes(route).Engine()
+
+	if w := doRequest(t, e, "GET", "/users/"); w.Code != 404 {
+		t.Errorf("末尾多一个斜杠该是 404，不该被重定向，got=%d Location=%q", w.Code, w.Header().Get("Location"))
+	}
+	if out := buf.String(); !strings.Contains(out, `"route":"unmatched","path":"/users/","status":404`) {
+		t.Errorf("该留下一条 404 unmatched 的访问日志：%s", out)
+	}
+
+	// 要重定向的使用者在 WithRoutes 里打开，它盖得过配置
+	e = New().WithConfig(configWith(quiet)).WithRoutes(func(e *gin.Engine) { e.RedirectTrailingSlash = true }, route).Engine()
+	if w := doRequest(t, e, "GET", "/users/"); w.Code != http.StatusMovedPermanently {
+		t.Errorf("WithRoutes 里打开 RedirectTrailingSlash 该照 gin 的默认重定向，got=%d", w.Code)
+	}
+}
+
+// xlogCapture 把默认 logger 换成真的 xlog（trace_id、xlog.AddKV 的字段是它的 handler 加上的），返回取日志行的函数
+func xlogCapture(t *testing.T) func() string {
+	t.Helper()
+	dir := t.TempDir()
+	c := xlog.DefaultConfig()
+	c.Console = false
+	c.File = xlog.FileConfig{Enable: true, Path: dir, Name: "app.log", RotateTime: time.Hour, Perm: "0644"}
+	l, closer, err := xlog.New(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := slog.Default()
+	slog.SetDefault(l)
+	t.Cleanup(func() { slog.SetDefault(old); closer.Close() })
+	return func() string {
+		closer.Close()
+		files, _ := filepath.Glob(filepath.Join(dir, "app.log.*"))
+		if len(files) == 0 {
+			return ""
+		}
+		b, _ := os.ReadFile(files[0])
+		return string(b)
+	}
+}
+
+func TestBuild_GinContextAsContextKeepsSpanLogScopeAndCancel(t *testing.T) {
+	// 回归用例。*gin.Context 本身就是 context.Context，业务里常直接传它：xlog.AddKV(c, ...)、db.WithContext(c)。
+	// 不开 ContextWithFallback 时它的 Value 只查 c.Keys、Done 返回 nil：日志作用域、父 Span 全丢，取消也传不下去
+	logs := xlogCapture(t)
+	exp := tracetest.NewInMemoryExporter()
+	old := otel.GetTracerProvider()
+	otel.SetTracerProvider(sdktrace.NewTracerProvider(sdktrace.WithSyncer(exp)))
+	t.Cleanup(func() { otel.SetTracerProvider(old) })
+
+	var done <-chan struct{}
+	e := New().WithConfig(configWith(func(c *Config) { c.Metric = false })).WithRoutes(func(e *gin.Engine) {
+		e.GET("/a", func(c *gin.Context) {
+			xlog.AddKV(c, "user_id", "u9")
+			_, span := otel.Tracer("test").Start(c, "child")
+			span.End()
+			done = c.Done()
+			c.Status(200)
+		})
+	}).Engine()
+	reqCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	e.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", "/a", nil).WithContext(reqCtx))
+
+	var server, child sdktrace.ReadOnlySpan
+	for _, s := range exp.GetSpans().Snapshots() {
+		if s.Name() == "child" {
+			child = s
+		} else {
+			server = s
+		}
+	}
+	if server == nil || child == nil || child.Parent().SpanID() != server.SpanContext().SpanID() {
+		t.Errorf("拿 *gin.Context 开的 Span 该挂在服务端 Span 下面")
+	}
+	if done == nil || done != reqCtx.Done() {
+		t.Error("c.Done() 该是请求 ctx 的 Done，客户端走了才传得下去")
+	}
+	if out := logs(); !strings.Contains(out, `"user_id":"u9"`) {
+		t.Errorf("xlog.AddKV(c, ...) 的字段该进访问日志：\n%s", out)
+	}
+}
+
+func TestTrace_MetricsScrapeNotTraced(t *testing.T) {
+	// 回归用例。抓取系统按秒轮询 /metrics，访问日志早就跳过了它，Span 却每次都开一个
+	exp := tracetest.NewInMemoryExporter()
+	old := otel.GetTracerProvider()
+	otel.SetTracerProvider(sdktrace.NewTracerProvider(sdktrace.WithSyncer(exp)))
+	t.Cleanup(func() { otel.SetTracerProvider(old) })
+
+	e := New().WithConfig(configWith(func(c *Config) { c.Log = false; c.MetricPath = "/internal/metrics" })).Engine()
+	if w := doRequest(t, e, "GET", "/internal/metrics"); w.Code != 200 {
+		t.Fatalf("指标端点该是 200，got=%d", w.Code)
+	}
+	if n := len(exp.GetSpans()); n != 0 {
+		t.Errorf("抓一次指标不该开 Span，got %d 个", n)
+	}
+	doRequest(t, e, "GET", "/work")
+	if n := len(exp.GetSpans()); n != 1 {
+		t.Errorf("别的路径照常开 Span，got %d 个", n)
+	}
+}
+
+func TestStart_GinUseH2CDoesNotBypassShutdown(t *testing.T) {
+	// 回归用例。gin 的 engine.Handler() 在 UseH2C 开着时包一层 x/net 的 h2c.NewHandler：
+	// 连接被劫持走，Shutdown 不等在途请求。服务交给 net/http 的应该是 engine 本身，
+	// h2c 由 XGin.UseH2C 走标准库。这里在回调里打开 gin 自己的 UseH2C，服务端看到的请求不该是 h2c 包出来的
+	port := testkit.FreePort(t)
+	var proto int
+	g := New().WithConfig(configWith(quiet, on(port))).WithRoutes(func(e *gin.Engine) {
+		e.UseH2C = true
+		e.GET("/ping", func(c *gin.Context) { proto = c.Request.ProtoMajor; c.Status(200) })
+	})
+	go func() { _ = g.Start(context.Background()) }()
+	t.Cleanup(func() {
+		// 带截止时间：包成 h2c 的连接被劫持走，不带的话这里会一直等那个协程
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = g.Stop(ctx)
+	})
+	base := fmt.Sprintf("http://127.0.0.1:%d", port)
+	waitServing(t, base+"/ping")
+	if r := <-h2cGet(base + "/ping"); r.err == nil {
+		t.Errorf("XGin.UseH2C 没开，gin 自己的 UseH2C 不该让明文 HTTP/2 绕过 net/http 进来，got=HTTP/%d handler=HTTP/%d", r.proto, proto)
 	}
 }

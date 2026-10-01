@@ -571,3 +571,96 @@ func TestRedactText_KeepsLinesSeparated(t *testing.T) {
 		t.Errorf("RedactBody should keep dropping newlines, got=%q", got)
 	}
 }
+
+func TestRedactHeaders_ResponseURLHeadersStripQueryFragmentAndUserinfo(t *testing.T) {
+	// 回归用例。响应头里的 Location / Content-Location / Refresh 也是 URL：OAuth 回调的
+	// 302 Location 带着 ?code=、隐式授权带着 #access_token=，原先原样进了 response_headers
+	got := headerLog(http.Header{
+		"Location":         {"https://app.example.com/cb?code=" + secret + "#access_token=" + secret},
+		"Content-Location": {"/orders/1?token=" + secret},
+		"Refresh":          {"0; url=https://app:" + secret + "@example.com/next?sig=" + secret},
+		"Referer":          {"https://tok" + secret + "@example.com/prev"},
+	})
+	mustNotLeak(t, got)
+	for _, want := range []string{
+		`"Location":"https://app.example.com/cb"`,
+		`"Content-Location":"/orders/1"`,
+		`"Refresh":"0; url=https://example.com/next"`,
+		`"Referer":"https://example.com/prev"`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("该留下 %s，got=%s", want, got)
+		}
+	}
+}
+
+func TestRedactHeaders_ValuesNamingSensitiveHeadersKept(t *testing.T) {
+	// 值里出现的是头名，不是凭证：套敏感词规则整段遮掉的话头日志就没法看了
+	got := headerLog(http.Header{
+		"Vary":                          {"Cookie"},
+		"Access-Control-Allow-Headers":  {"Authorization, X-Api-Key"},
+		"Access-Control-Expose-Headers": {"Set-Cookie"},
+		"X-Upstream-Dsn":                {"postgres://u:" + secret + "@h/db"},
+	})
+	mustNotLeak(t, got)
+	for _, want := range []string{
+		`"Vary":"Cookie"`,
+		`"Access-Control-Allow-Headers":"Authorization, X-Api-Key"`,
+		`"Access-Control-Expose-Headers":"Set-Cookie"`,
+		`"X-Upstream-Dsn":"postgres://u:` + Redacted + `@h/db"`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("该记成 %s，got=%s", want, got)
+		}
+	}
+}
+
+func TestRedactHeaders_DSNInValueMasked(t *testing.T) {
+	// 回归用例。名字里没有敏感词、值里夹着整串 DSN 的头（调试用的 X-Upstream、代理回写的错误头），
+	// 原先原样进日志；值里 DSN 的密码和错误文本一样遮掉
+	got := headerLog(http.Header{
+		"X-Upstream": {"dial postgres://app:" + secret + "@db:5432/prod failed"},
+		"X-Db":       {"app:" + secret + "@tcp(db:3306)/prod"},
+		"Accept":     {"application/json"},
+	})
+	mustNotLeak(t, got)
+	if !strings.Contains(got, `"X-Upstream":"dial postgres://app:`+Redacted+`@db:5432/prod failed"`) || !strings.Contains(got, `"Accept":"application/json"`) {
+		t.Errorf("只遮掉密码，别的原样留着，got=%s", got)
+	}
+}
+
+func TestRedactBody_JSONWithoutJSONContentType(t *testing.T) {
+	// 回归用例。gin 的 ShouldBindJSON 不看 Content-Type，text/plain 或者不带 Content-Type 的 JSON 照样解得开；
+	// 原先它们走纯文本那一支只做字面扫描，键名用 JSON 的 Unicode 转义写（见 esc）就认不出来，密码原样进日志
+	body := []byte(`{"user":"alice","p` + esc('a') + `ssword":"` + secret + `"}`)
+	for _, ct := range []string{"", "text/plain", "text/plain; charset=utf-8"} {
+		t.Run(ct, func(t *testing.T) {
+			got := RedactBody(body, ct)
+			mustNotLeak(t, got)
+			if !strings.Contains(got, `"user":"alice"`) {
+				t.Errorf("认出是 JSON 就按字段遮，别的字段留着，got=%s", got)
+			}
+		})
+	}
+	// 不是 JSON 的纯文本照旧
+	if got := RedactBody([]byte("hello world"), "text/plain"); got != "hello world" {
+		t.Errorf("纯文本照原样，got=%s", got)
+	}
+}
+
+func TestRedactBody_JSONStringValueDSNMasked(t *testing.T) {
+	// 回归用例。键名里没有敏感词、值是整串 DSN：原先按键判断之后原样留着，连解析都不进（快路径）
+	for name, body := range map[string]string{
+		"对象里": `{"dsn":"postgres://app:` + secret + `@db:5432/prod"}`,
+		"数组里": `{"targets":["app:` + secret + `@tcp(db:3306)/prod"]}`,
+		"顶层":  `"redis://:` + secret + `@cache:6379/0"`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := RedactBody([]byte(body), "application/json")
+			mustNotLeak(t, got)
+			if !strings.Contains(got, Redacted) {
+				t.Errorf("密码该换成 %s，got=%s", Redacted, got)
+			}
+		})
+	}
+}

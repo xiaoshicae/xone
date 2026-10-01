@@ -672,7 +672,7 @@ mutate("敏感词预检按 Unicode 折叠", "internal/web/redact.go", ".", "Test
        swap('|| sensitive(body, ws)', '|| slices.ContainsFunc(ws, func(w string) bool { return strings.Contains(strings.ToLower(body), w) })'))
 # path 特意不带查询串，Referer 却带着上一个页面的完整 URL
 mutate("URL 类请求头去掉查询串", "internal/web/redact.go", ".", "TestRedactHeaders_URL",
-       swap('\t\t\tv = stripQuery(v)\n', ''))
+       swap('\t\t\tv = stripURL(v)\n', ''))
 # 原先是精确匹配：new_password、client_secret、sessionToken 原样进日志
 mutate("JSON 字段名里带敏感词也遮", "internal/web/redact.go", ".", "TestRedactBody",
        swap('\t\t\tif sensitive(k, ws) {\n\t\t\t\tt[k] = Redacted', '\t\t\tif slices.Contains(ws, normalize(k)) {\n\t\t\t\tt[k] = Redacted'))
@@ -725,15 +725,15 @@ mutate("访问日志的 errors 字段脱过敏", "internal/web/accesslog.go", ".
 mutate("错误文本里 URL 的密码被遮掉", "internal/web/redact.go", ".", "TestRedactText_MasksPasswordInURLUserinfo",
        swap('\ts = urlUserinfo.ReplaceAllString(s, "$1:"+Redacted+"@")\n', ''))
 mutate("错误文本里 MySQL DSN 的密码被遮掉", "internal/web/redact.go", ".", "TestRedactText_MasksPasswordInMySQLDSN",
-       swap('\ts = mysqlUserinfo.ReplaceAllString(s, "$1:"+Redacted+"@$2")\n', ''))
+       swap('\treturn mysqlUserinfo.ReplaceAllString(s, "$1:"+Redacted+"@$2")\n', '\treturn s\n'))
 # 密码里没转义的 @：按第一个 @ 截的话，@ 后面那半截密码留在日志里
 mutate("URL 里的密码按最后一个 @ 算", "internal/web/redact.go", ".", "TestRedactText_MasksPasswordInURLUserinfo",
        swap('`(://[^:/?#@\\s]*):[^/\\s]+@`', '`(://[^:/?#@\\s]*):[^@/\\s]+@`'))
 mutate("错误文本里有敏感词仍整段遮掉", "internal/web/redact.go", ".", "TestRedactText_SensitiveWordRedactsWholeText",
-       swap('\tif sensitive(s, words()) {\n\t\treturn Redacted\n\t}\n\ts = urlUserinfo', '\ts = urlUserinfo'))
+       swap('\tif sensitive(s, words()) {\n\t\treturn Redacted\n\t}\n\treturn textNewlines', '\treturn textNewlines'))
 # gin 的 c.Errors.String() 一条错误一行：换行像 body 那样直接删掉，两条错误粘成一句
 mutate("错误文本的多行用分号隔开", "internal/web/redact.go", ".", "TestRedactText_KeepsLinesSeparated",
-       swap('return textNewlines.Replace(strings.TrimRight(s, "\\r\\n"))', 'return newlines.Replace(s)'))
+       swap('return textNewlines.Replace(strings.TrimRight(redactCredentials(s), "\\r\\n"))', 'return newlines.Replace(redactCredentials(s))'))
 
 section("Web 集成共用：代理网段")
 # gin v1.12.0 把单个的 ::ffff:10.0.0.1 解成信任 ::1、::5，ParseProxies 不 Unmap 网段：同一行配置各处理解不一样
@@ -741,3 +741,30 @@ mutate("IPv4 映射写法的代理网段要拦住", "internal/web/proxy.go", "."
        swap('\t\tif plain, ok := unmapped(p); ok {', '\t\tif plain, ok := unmapped(p); ok && false {'))
 mutate("映射网段的建议写法减掉 96 位", "internal/web/proxy.go", ".", "TestValidateProxies_RejectsIPv4MappedEntries",
        swap('pfx.Bits()-96', 'pfx.Bits()'))
+
+section("Web 集成共用：响应头与 JSON 值的脱敏")
+# 响应头也是 URL：OAuth 回调的 302 Location 带着 ?code=，隐式授权带着 #access_token=
+mutate("Location 响应头去掉查询串", "internal/web/redact.go", ".", "TestRedactHeaders_ResponseURL",
+       swap('\t"location":         true,\n', ''))
+# 只写用户名的 userinfo（https://<token>@host）用户名本身就是凭证，RedactText 只遮 user:pass 的密码
+mutate("URL 头去掉 userinfo", "internal/web/redact.go", ".", "TestRedactHeaders_ResponseURL",
+       swap("\t\tif at := strings.LastIndexByte(host, '@'); at >= 0 {\n\t\t\tu = u[:i+3] + u[i+3+at+1:]\n\t\t}\n", ''))
+# 调用点：名字里没有敏感词的头，值里照样夹着整串 DSN
+mutate("请求头的值遮掉 DSN 的密码", "internal/web/redact.go", ".", "TestRedactHeaders_DSNInValue|TestRedactHeaders_ValuesNaming",
+       swap('attrs = append(attrs, slog.String(k, redactCredentials(v)))', 'attrs = append(attrs, slog.String(k, v))'))
+# 值里的 Cookie、Authorization 是头名不是凭证：套 RedactText 的敏感词规则的话 Vary、CORS 头整段遮掉
+mutate("请求头的值不按敏感词整段遮", "internal/web/redact.go", ".", "TestRedactHeaders_ValuesNaming",
+       swap('attrs = append(attrs, slog.String(k, redactCredentials(v)))', 'attrs = append(attrs, slog.String(k, RedactText(v)))'))
+# gin 的 ShouldBindJSON 不看 Content-Type：text/plain 的 JSON 走纯文本那一支，转义过的键名认不出来
+mutate("不是 JSON 类型的 JSON body 按 JSON 遮", "internal/web/redact.go", ".", "TestRedactBody_JSONWithoutJSONContentType",
+       swap('\tcase isJSON(body):\n\t\treturn redactJSON(body)\n', ''))
+mutate("JSON 的字符串值过 RedactText", "internal/web/redact.go", ".", "TestRedactBody_JSONStringValueDSN",
+       swap('\tcase string:\n\t\treturn RedactText(t)\n', ''))
+# 快路径只看敏感词的话，{"dsn":"postgres://u:p@h"} 连解析都不进
+mutate("值里有 @ 的 JSON 不走快路径", "internal/web/redact.go", ".", "TestRedactBody_JSONStringValueDSN",
+       swap("if !mayContainField(s, ws) && strings.IndexByte(s, '@') < 0 {", "if !mayContainField(s, ws) {"))
+mutate("没有 @ 才跳过 DSN 的正则", "internal/web/redact.go", ".", "TestRedactText_MasksPassword",
+       swap("\tif strings.IndexByte(s, '@') < 0 {\n\t\treturn s\n", "\tif strings.IndexByte(s, '@') >= 0 {\n\t\treturn s\n"))
+# 留空取默认要写明 1.2，落到 tls.Config 的零值就是随 Go 版本变的默认
+mutate("MinVersion 留空是 1.2", "internal/web/config.go", ".", "TestServerTLS_EmptyMinVersionMeansTLS12",
+       swap('"": tls.VersionTLS12, ', ''))

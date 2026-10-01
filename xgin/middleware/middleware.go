@@ -74,11 +74,11 @@ func Recover(handle gin.RecoveryFunc) gin.HandlerFunc {
 				panic(err)
 			}
 
-			// 连接断了不算故障，不值得打一份完整栈
+			// 连接断了不算故障：不打栈，记 WARN 而不是 ERROR——客户端的网络抖动不该触发服务的告警
 			broken := web.IsBrokenPipe(err)
 			ctx := c.Request.Context()
 			if broken {
-				slog.ErrorContext(ctx, "connection broken", "error", err)
+				slog.WarnContext(ctx, "connection broken", "error", err)
 				_ = c.Error(err.(error)) //nolint:errcheck // web.IsBrokenPipe 保证它是 *net.OpError
 				c.Abort()
 				return

@@ -1881,3 +1881,99 @@ func TestHandler_RequestUsedAfterReturnIsRaceFree(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+// servingHijacked 起一个服务，/ws 劫持连接后一直等请求的 ctx（WebSocket 的读循环就是这样）
+func servingHijacked(t *testing.T) *XEcho {
+	t.Helper()
+	port := testkit.FreePort(t)
+	entered, release := make(chan struct{}), make(chan struct{})
+	x := New().WithConfig(configWith(quiet, on(port))).WithRoutes(func(e *echo.Echo) {
+		e.GET("/ping", ok)
+		e.GET("/ws", func(c echo.Context) error {
+			conn, _, err := c.Response().Hijack()
+			if err != nil {
+				return err
+			}
+			defer conn.Close()
+			close(entered)
+			select {
+			case <-c.Request().Context().Done():
+			case <-release: // 测试失败时也让 Cleanup 里的 Stop 返回
+			}
+			return nil
+		})
+	})
+	base := serving(t, x, port)
+	t.Cleanup(func() { close(release) }) // 在 serving 的 Stop 之前跑
+	conn, err := net.Dial("tcp", strings.TrimPrefix(base, "http://"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { conn.Close() })
+	fmt.Fprint(conn, "GET /ws HTTP/1.1\r\nHost: x\r\n\r\n")
+	select {
+	case <-entered:
+	case <-time.After(3 * time.Second):
+		t.Fatal("请求没进到 handler")
+	}
+	return x
+}
+
+func TestStop_HijackedConnGetsCancelled(t *testing.T) {
+	// 回归用例。被劫持的连接（WebSocket）Shutdown 不等、Close 也断不掉，请求的 ctx 原先永远不取消：
+	// 等着它的 handler 不返回，Stop 把整份预算耗完再报 1 handler(s) still running
+	x := servingHijacked(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	start := time.Now()
+	if err := x.Stop(ctx); err != nil {
+		t.Fatalf("劫持走的 handler 看到 ctx 取消就返回了，Stop 不该报错：%v", err)
+	}
+	if d := time.Since(start); d > time.Second {
+		t.Errorf("Stop 该在 Shutdown 返回之后马上取消劫持连接的 ctx，却用了 %v", d)
+	}
+}
+
+func TestStart_RetryAfterListenFailure(t *testing.T) {
+	// 回归用例。监听失败（端口被占）之后原先还记着「在跑」，之后每次 Start 都说 already running
+	port := testkit.FreePort(t)
+	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+	if err != nil {
+		t.Fatal(err)
+	}
+	x := New().WithConfig(configWith(quiet, on(port))).WithRoutes(func(e *echo.Echo) { e.GET("/ping", ok) })
+	if err := startErr(t, x); err == nil || !strings.Contains(err.Error(), "listen on") {
+		t.Fatalf("端口被占时该报 listen 失败，got=%v", err)
+	}
+	ln.Close()
+
+	done := make(chan error, 1)
+	go func() { done <- x.Start(context.Background()) }()
+	t.Cleanup(func() { _ = x.Stop(context.Background()) })
+	select {
+	case err := <-done:
+		t.Fatalf("端口空出来之后该能再起来，got=%v", err)
+	case <-time.After(300 * time.Millisecond):
+	}
+	waitServing(t, fmt.Sprintf("http://127.0.0.1:%d/ping", port))
+}
+
+func TestTrace_MetricsScrapeNotTraced(t *testing.T) {
+	// 回归用例。抓取系统按秒轮询 /metrics，访问日志早就跳过了它，Span 却每次都开一个
+	exp := tracetest.NewInMemoryExporter()
+	old := otel.GetTracerProvider()
+	otel.SetTracerProvider(sdktrace.NewTracerProvider(sdktrace.WithSyncer(exp)))
+	t.Cleanup(func() { otel.SetTracerProvider(old) })
+
+	e := New().WithConfig(configWith(func(c *Config) { c.Log = false; c.MetricPath = "/internal/metrics" })).Engine()
+	if w := doRequest(t, e, "GET", "/internal/metrics"); w.Code != 200 {
+		t.Fatalf("指标端点该是 200，got=%d", w.Code)
+	}
+	if n := len(exp.GetSpans()); n != 0 {
+		t.Errorf("抓一次指标不该开 Span，got %d 个", n)
+	}
+	doRequest(t, e, "GET", "/work")
+	if n := len(exp.GetSpans()); n != 1 {
+		t.Errorf("别的路径照常开 Span，got %d 个", n)
+	}
+}

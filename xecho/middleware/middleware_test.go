@@ -260,11 +260,12 @@ func TestRecover_BrokenPipeLoggedWithoutStack(t *testing.T) {
 			t.Errorf("断连不该当成 panic 打栈，got=%v", l)
 		}
 		if l["msg"] == "connection broken" {
-			sawBroken = true
+			// 客户端走了不是服务的故障，记 WARN：ERROR 会让告警跟着客户端的网络抖动响
+			sawBroken = l["level"] == "WARN"
 		}
 	}
 	if !sawBroken {
-		t.Errorf("应记一条 connection broken，got=%v", got)
+		t.Errorf("应记一条 WARN 级别的 connection broken，got=%v", got)
 	}
 	if a := accessLogs(got); len(a) != 1 || !strings.Contains(fmt.Sprint(a[0]["errors"]), "broken pipe") {
 		t.Errorf("访问日志的 errors 里该带着断连的原因，got=%v", a)

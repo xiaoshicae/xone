@@ -209,10 +209,10 @@ func Recover(handle func(c echo.Context, recovered any) error) echo.MiddlewareFu
 					panic(r)
 				}
 
-				// 连接断了不算故障，不值得打一份完整栈
+				// 连接断了不算故障：不打栈，记 WARN 而不是 ERROR——客户端的网络抖动不该触发服务的告警
 				ctx := contextOf(c)
 				if web.IsBrokenPipe(r) {
-					slog.ErrorContext(ctx, "connection broken", "error", r)
+					slog.WarnContext(ctx, "connection broken", "error", r)
 					c.Set(errKey, r.(error)) // web.IsBrokenPipe 保证它是 *net.OpError
 					err = nil
 					return

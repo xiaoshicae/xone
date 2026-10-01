@@ -124,6 +124,11 @@ admin := xgin.New().WithConfig(c).WithRoutes(adminRoutes)
 - **超时**：`ReadHeaderTimeout`、`IdleTimeout` 必须 > 0；`ReadTimeout` / `WriteTimeout` 默认不限，
   因为它们会打断大文件上传、SSE 和长轮询。
 - handler 里 `c.Error(err)` 登记的错误进访问日志的 `errors` 字段和 Span；validator 报错要中文就开 `ZHTranslations`，再 `trans.ToZH(err)`。
+- **末尾斜杠不重定向**：只注册了 `/users` 时 `/users/` 是 404（访问日志、指标、Span 里是 `unmatched`），不是 gin 默认的 301 / 307。
+  要 gin 的重定向就在 `WithRoutes` 里写 `e.RedirectTrailingSlash = true`，或者两条路由都注册；重定向的请求不经过任何中间件，
+  不进访问日志、指标和链路。见[「行为与实测」](#行为与实测)。
+- **`*gin.Context` 可以直接当 ctx 传**：`xlog.AddKV(c, ...)`、`db.WithContext(c)`、`otel.Tracer(...).Start(c, ...)` 和传
+  `c.Request.Context()` 一样带着日志作用域、父 Span 和取消（engine 开了 `ContextWithFallback`）。
 
 ## 在负载均衡 / Cloudflare 后面
 
@@ -177,17 +182,20 @@ admin := xgin.New().WithConfig(c).WithRoutes(adminRoutes)
 | | 规则 |
 |---|---|
 | 默认敏感词 | `password` `passwd` `secret` `token` `authorization` `apikey` `accesskey` `privatekey` `credential` `cookie` `session` `signature` |
-| body（JSON / 表单） | 键含敏感词就遮这个值，任意嵌套层级都算；其余的值原样写回 |
-| 其它 body（纯文本、XML…） | 定位不了字段，出现敏感词就整个遮掉 |
-| 请求头 | 名字在名单里（`Authorization` `Proxy-Authorization` `Cookie` `Set-Cookie` `X-Api-Key` `X-Auth-Token`，加上 `AddSensitiveHeaders` 追加的）**或者**名字含敏感词 |
-| 值是 URL 的请求头 | `Referer`、`X-Original-URL`、`X-Original-URI`、`X-Rewrite-URL`、`X-Forwarded-URI` 去掉 `?` 和 `#` 之后的部分 |
+| body（JSON / 表单） | 键含敏感词就遮这个值，任意嵌套层级都算；JSON 的字符串值再按 `errors` 字段的规矩过一遍（含敏感词整个遮，DSN 只遮密码）；其余的值原样写回 |
+| 其它 body（纯文本、XML、没带 Content-Type…） | 本身是合法 JSON 对象 / 数组 / 字符串的按 JSON 遮（`ShouldBindJSON` 不看 Content-Type）；别的定位不了字段，出现敏感词就整个遮掉 |
+| 请求头 / 响应头 | 名字在名单里（`Authorization` `Proxy-Authorization` `Cookie` `Set-Cookie` `X-Api-Key` `X-Auth-Token`，加上 `AddSensitiveHeaders` 追加的）**或者**名字含敏感词就遮；其余的值只遮 `postgres://app:pw@db`、`app:pw@tcp(db:3306)` 里的密码，不按敏感词整段遮：`Vary: Cookie`、`Access-Control-Allow-Headers: Authorization` 原样记 |
+| 值是 URL 的头 | `Referer`、`X-Original-URL`、`X-Original-URI`、`X-Rewrite-URL`、`X-Forwarded-URI`，响应头 `Location`、`Content-Location`、`Refresh`：去掉 `?` 和 `#` 之后的部分，再去掉 `://` 后面的 userinfo（`https://tok@host` 记成 `https://host`） |
+
+**结构上的局限**：JSON 只认键名。`[{"name":"password","value":"x"}]` 这种名值对数组，密码在 `value` 里、键名里没有敏感词，
+`x` 原样进日志（`name` 的值 `password` 本身会被遮掉）。这种形状的 body 要么用 `AddSensitiveFields("value")` 把键加进词表，要么别记 body。
 
 `middleware.AddSensitiveFields(...)` 追加敏感词（body 和请求头一起生效），`middleware.AddSensitiveHeaders(...)`
 追加精确的头名。大小写按 Unicode 折叠比较，与 `encoding/json` 匹配字段名一致。词表故意不收 `auth`、`key`、`pwd`：
 会误中 `author`、`Idempotency-Key`、随机串。
 
 panic 由 Recover 中间件记一条 `panic while handling request`（ERROR，带 `error`、`stack`、`path`、`method`；`error` 按 `errors` 字段的规矩脱敏，`stack` 只有函数和行号、原样记）并回 500；
-客户端提前断开导致的写失败记 `connection broken`，不打栈。响应已经开始写了（写出了状态码）再 panic 的，不再改状态码：
+客户端提前断开导致的写失败记 `connection broken`（WARN：不是服务的故障，不该触发告警），不打栈。响应已经开始写了（写出了状态码）再 panic 的，不再改状态码：
 访问日志、指标、链路记的是已经发出去的那个（通常 200），`errors` 为空、Span 不标错，那条 panic 日志是唯一的迹象。
 
 ### 日志
@@ -215,6 +223,8 @@ panic 由 Recover 中间件记一条 `panic while handling request`（ERROR，�
 | 来源 | Span 名 | 关键属性 |
 |---|---|---|
 | xgin（入站） | `GET /users/:id`：方法 + 路由模板；没匹配上是 `GET unmatched` | `http.request.method`（收敛过的）、`http.request.method_original`（原始值和收敛值不同时）、`http.route`、`url.path`、`http.response.status_code`、`gin.errors` |
+
+`Metric` 开着时抓 `MetricPath` 的请求不开 Span、不回带 `X-Trace-Id`：抓取系统按秒轮询它，理由同访问日志跳过它。
 
 链路的全貌、传播与信任边界见 [`docs/observability.md`「链路」](../docs/observability.md#链路)。
 
@@ -255,7 +265,15 @@ IPv4 映射成 IPv6 的写法启动失败：实测 gin v1.12.0 把 `::ffff:10.0.
 
 **`UseH2C`** 用标准库的 `Protocols.SetUnencryptedHTTP2`，不用 x/net 的 `h2c.NewHandler`：后者把连接劫持走，
 `Shutdown` 约 60µs 就返回 nil，在途请求照跑。只认先验知识的 h2c（gRPC、`curl --http2-prior-knowledge`），
-`Upgrade: h2c` 握手拿到的是普通 HTTP/1.1 响应。
+`Upgrade: h2c` 握手拿到的是普通 HTTP/1.1 响应。交给 net/http 的是 engine 本身、不是 `engine.Handler()`：
+在 `WithRoutes` 里设 gin 自己的 `e.UseH2C = true` 不起作用（它会包一层 `h2c.NewHandler`，问题同上），h2c 只看 `XGin.UseH2C`。
+
+**`RedirectTrailingSlash`** gin 默认开着：只注册了 `/users` 时 `GET /users/` 直接回 301（`Location: /users`），POST 回 307，
+整条中间件链都不跑——不进访问日志、指标和链路。这里关掉，`/users/` 和别的对不上的路径一样走 `NoRoute`，记 404 `unmatched`。
+`RedirectFixedPath`（大小写、`..` 修正后重定向）gin 默认就是关的，没动。要重定向就在 `WithRoutes` 里设回 `e.RedirectTrailingSlash = true`。
+
+**`ContextWithFallback`** gin 默认关着：`*gin.Context` 当 `context.Context` 传时 `Value` 只查 `c.Keys`、`Done()` 返回 nil、`Err()` 永远是 nil，
+`xlog.AddKV(c, ...)` 写不进访问日志、`Start(c, ...)` 开的 Span 没有父 Span，客户端走了也取消不到下游。这里开着，这几样都转到 `c.Request.Context()`。
 
 **`MetricPath`** gin 不拒绝不以 `/` 开头的写法，而是悄悄改写：`metrics` 注册成 `/metrics`，访问日志却跳不过它；
 留空挂在根路径 `/` 上，业务再注册首页时 gin 在业务自己的路由代码里 panic。所以读配置时就失败。
@@ -276,6 +294,10 @@ IPv4 映射成 IPv6 的写法启动失败：实测 gin v1.12.0 把 `::ffff:10.0.
   到截止时间还有没返回的，错误里写明几个（`N handler(s) still running when the shutdown deadline passed`）。
 - 单独调 `Stop`、传不带截止时间的 ctx 时一直等到在途请求全部做完（实测 1.5s 的请求，`Shutdown` 等了 1.57s）。
 - 被劫持走的连接（WebSocket）不归 `Shutdown` / `Close()` 管，它的 handler 同样算在「还没返回」里。
+  所以 `Shutdown` / `Close()` 返回之后取消所有请求 ctx 的根（`http.Server.BaseContext`）：WebSocket 的读循环、长轮询看
+  `c.Request.Context()` 就能退出。实测一个劫持了连接、等着请求 ctx 的 handler，`Stop` 约 10ms 返回 nil；原先等满整份预算再报
+  `1 handler(s) still running`。不看 ctx、只阻塞在 `conn.Read` 上的 handler 照样停不下来——要自己在 ctx 取消时关掉连接。
+- 监听失败（端口被占、证书读不出来）之后可以再调 `Start`：失败的那次不算在跑。
 
 **`http.ErrAbortHandler` 中止的请求**（`httputil.ReverseProxy` 转发到一半上游断开时也是这样）往往已经写出了 200 的响应头，
 照读 `c.Writer.Status()` 的话一个被截断的响应记成成功，所以访问日志、指标、链路里记 499，见

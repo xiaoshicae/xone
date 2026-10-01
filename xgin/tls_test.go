@@ -141,12 +141,14 @@ func get(p serverPKI, base string, cfg *tls.Config) (string, error) {
 	return string(b), err
 }
 
+// withCert 配上证书（Validate 不读文件，路径随便写），TLS 就算开了
+func withCert(c *Config) { c.TLS.CertFile, c.TLS.KeyFile = "c.pem", "k.pem" }
+
 func TestValidate_ServerTLSNewFields(t *testing.T) {
 	bad := map[string]func(*Config){
 		"只配 ClientCAFile 没配证书": func(c *Config) { c.TLS.ClientCAFile = "ca.pem" },
-		"MinVersion 写成 1.1":    func(c *Config) { c.TLS.MinVersion = "1.1" },
-		"MinVersion 留空":        func(c *Config) { c.TLS.MinVersion = "" },
-		"MinVersion 写成 TLS1.3": func(c *Config) { c.TLS.MinVersion = "TLS1.3" },
+		"MinVersion 写成 1.1":    func(c *Config) { withCert(c); c.TLS.MinVersion = "1.1" },
+		"MinVersion 写成 TLS1.3": func(c *Config) { withCert(c); c.TLS.MinVersion = "TLS1.3" },
 	}
 	for name, m := range bad {
 		if err := configWith(m).Validate(); err == nil {
@@ -158,6 +160,9 @@ func TestValidate_ServerTLSNewFields(t *testing.T) {
 		"MinVersion 1.3":       func(c *Config) { c.TLS.MinVersion = "1.3" },
 		"证书加 ClientCAFile":     func(c *Config) { c.TLS.CertFile, c.TLS.KeyFile, c.TLS.ClientCAFile = "c", "k", "ca" },
 		"没配证书时 MinVersion 不管用": func(c *Config) { c.TLS.MinVersion = "1.3" },
+		// 回归用例：没开 TLS 时 MinVersion 原先也要校验，一个用不上的值让服务起不来
+		"没配证书时 MinVersion 写错也不管": func(c *Config) { c.TLS.MinVersion = "1.1" },
+		"MinVersion 留空取默认":       func(c *Config) { withCert(c); c.TLS.MinVersion = "" },
 	}
 	for name, m := range good {
 		if err := configWith(m).Validate(); err != nil {

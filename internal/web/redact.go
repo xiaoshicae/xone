@@ -191,6 +191,10 @@ var newlines = strings.NewReplacer("\r", "", "\n", "")
 // application/vnd.api+json、application/problem+json、text/json
 // 都是 JSON，精确匹配会把它们整个漏过去。认错了也不会更糟——
 // 解不出 JSON 的那一支本来就是整个遮掉。
+//
+// 别的类型（text/plain、没带 Content-Type 的）本身是合法 JSON 的，也按 JSON 遮：
+// gin 的 ShouldBindJSON 不看 Content-Type，这样的 body 服务端照样按 JSON 读。
+// 走纯文本那一支的话只做字面扫描，键名用 \u 转义写的 password 认不出来，密码原样进日志
 func RedactBody(body []byte, contentType string) string {
 	if len(body) == 0 {
 		return ""
@@ -201,9 +205,20 @@ func RedactBody(body []byte, contentType string) string {
 		return redactJSON(body)
 	case strings.Contains(ct, "x-www-form-urlencoded"):
 		return redactForm(string(body))
+	case isJSON(body):
+		return redactJSON(body)
 	default:
 		return redactOpaque(body)
 	}
+}
+
+// isJSON body 是不是一个 JSON 对象、数组或字符串，见 RedactBody。
+//
+// 先看第一个非空白字符再 json.Valid：纯文本 body 解不开时 json.Valid 要造一个 SyntaxError，
+// 实测一段 56 字节的纯文本从 2 次分配变成 6 次、慢了约 300ns。数字、true 这些标量里也没有可遮的东西
+func isJSON(body []byte) bool {
+	b := bytes.TrimLeft(body, " \t\r\n")
+	return len(b) > 0 && (b[0] == '{' || b[0] == '[' || b[0] == '"') && json.Valid(b)
 }
 
 // RedactText 脱敏一段没有结构的文本，比如 handler 返回的错误、panic 的值。三条规矩：
@@ -226,9 +241,21 @@ func RedactText(s string) string {
 	if sensitive(s, words()) {
 		return Redacted
 	}
+	return textNewlines.Replace(strings.TrimRight(redactCredentials(s), "\r\n"))
+}
+
+// redactCredentials 只遮 URL 和 MySQL DSN 里 userinfo 的密码，别的一概不动：RedactText 的第二条规矩。
+// 请求头的值只过这一条，不套敏感词整段遮掉的那条——Vary: Cookie、
+// Access-Control-Allow-Headers: Authorization 里的词是头名，不是凭证，敏感的头名由名单和词表按名字遮。
+//
+// 两种 DSN 的写法都离不开 @：没有 @ 就不跑正则。请求头、JSON 的字符串值每个都要过这里，
+// 绝大多数不带 @，省下的是两次正则扫描和一次拷贝
+func redactCredentials(s string) string {
+	if strings.IndexByte(s, '@') < 0 {
+		return s
+	}
 	s = urlUserinfo.ReplaceAllString(s, "$1:"+Redacted+"@")
-	s = mysqlUserinfo.ReplaceAllString(s, "$1:"+Redacted+"@$2")
-	return textNewlines.Replace(strings.TrimRight(s, "\r\n"))
+	return mysqlUserinfo.ReplaceAllString(s, "$1:"+Redacted+"@$2")
 }
 
 // 文本里夹着的凭证。规则同 internal/config 的 urlUserinfo / mysqlDSN，只是不锚在开头：
@@ -261,7 +288,11 @@ func redactOpaque(body []byte) string {
 	return newlines.Replace(s)
 }
 
-// redactJSON 解析 JSON 并遮掉敏感字段
+// redactJSON 解析 JSON 并遮掉敏感字段，字符串值另外过一遍 RedactText（值里夹着的整串 DSN）
+//
+// 结构上的局限：只认键名。[{"name":"password","value":"x"}] 这种「名值对」的数组，
+// 敏感的是 name 的值、密码在 value 里，键名里都没有敏感词——name 的值因为含敏感词被 RedactText 遮掉，
+// value 的 x 原样留着。这种形状的 body 要遮就用 AddSensitiveFields 把 value 这样的键加进词表，或者别记 body
 //
 // 解码用 UseNumber、编码关掉 HTML 转义：默认的 any 会把数字解成 float64，
 // 12345678901234567890 重新写出来成了 12345678901234567000；
@@ -269,7 +300,8 @@ func redactOpaque(body []byte) string {
 func redactJSON(body []byte) string {
 	ws := words()
 	s := string(body)
-	if !mayContainField(s, ws) {
+	// 有 @ 也得解析：值里可能夹着 DSN（postgres://u:p@h、u:p@tcp(h)），见 RedactText
+	if !mayContainField(s, ws) && strings.IndexByte(s, '@') < 0 {
 		return newlines.Replace(s)
 	}
 
@@ -282,7 +314,7 @@ func redactJSON(body []byte) string {
 		return Redacted
 	}
 
-	redactValue(data, ws)
+	data = redactValue(data, ws)
 	var out bytes.Buffer
 	enc := json.NewEncoder(&out)
 	enc.SetEscapeHTML(false)
@@ -311,7 +343,8 @@ func mayContainField(body string, ws []string) bool {
 	return strings.IndexByte(body, '\\') >= 0 || sensitive(body, ws)
 }
 
-func redactValue(v any, ws []string) {
+// redactValue 键名敏感的整个遮掉，字符串值过一遍 RedactText，返回遮过的 v（map 和切片就地改）
+func redactValue(v any, ws []string) any {
 	switch t := v.(type) {
 	case map[string]any:
 		for k, val := range t {
@@ -319,13 +352,16 @@ func redactValue(v any, ws []string) {
 				t[k] = Redacted
 				continue
 			}
-			redactValue(val, ws)
+			t[k] = redactValue(val, ws)
 		}
 	case []any:
-		for _, item := range t {
-			redactValue(item, ws)
+		for i, item := range t {
+			t[i] = redactValue(item, ws)
 		}
+	case string:
+		return RedactText(t)
 	}
+	return v
 }
 
 // redactForm 脱敏 form-urlencoded 请求体
@@ -392,34 +428,53 @@ func RedactHeaders(h http.Header) slog.Value {
 		}
 		v := strings.Join(h[k], ", ") // 单值时原样返回、不分配，绝大多数头都是单值
 		if urlHeaders[name] {
-			v = stripQuery(v)
+			v = stripURL(v)
 		}
-		attrs = append(attrs, slog.String(k, v))
+		// 名字里没有敏感词的头，值里照样可能夹着整串 DSN：只遮其中的密码（redactCredentials）。
+		// 不套 RedactText 的敏感词规则：Vary: Cookie、Access-Control-Allow-Headers: Authorization
+		// 里的词是头名不是凭证，整段遮掉的话头日志就没法看了。
+		// 没有 @ 的值原样返回、不分配：五个请求头的 RedactHeaders 实测仍是 11 allocs、约 1.9µs
+		attrs = append(attrs, slog.String(k, redactCredentials(v)))
 	}
 	return slog.GroupValue(attrs...)
 }
 
-// urlHeaders 值是一个 URL 的请求头，记日志时去掉查询串和片段。
+// urlHeaders 值是一个 URL 的请求头和响应头，记日志时去掉查询串、片段和 userinfo。
 //
 // 访问日志的 path 特意不带查询串（凭证常在那里：?token=、OAuth 回调的 ?code=），
 // 而 Referer 带的正是上一个页面的完整 URL，照抄的话等于从侧门又记了一遍。
-// 后面几个是反向代理转发原始请求 URI 用的，内容就是这次请求的 path 加查询串。
+// x- 开头的几个是反向代理转发原始请求 URI 用的，内容就是这次请求的 path 加查询串。
+// 后三个是响应头：OAuth 回调的 302 Location 带着 ?code=，隐式授权带着 #access_token=；
+// Refresh 的值是「秒数; url=…」，截断的规则对它一样适用。
 // Origin 按规范只有协议、主机和端口，不在此列
 var urlHeaders = map[string]bool{
-	"referer":         true,
-	"x-original-url":  true,
-	"x-original-uri":  true,
-	"x-rewrite-url":   true,
-	"x-forwarded-uri": true,
+	"referer":          true,
+	"x-original-url":   true,
+	"x-original-uri":   true,
+	"x-rewrite-url":    true,
+	"x-forwarded-uri":  true,
+	"location":         true,
+	"content-location": true,
+	"refresh":          true,
 }
 
-// stripQuery 去掉第一个 ? 或 # 之后的全部内容。
+// stripURL 去掉第一个 ? 或 # 之后的全部内容，再去掉 :// 之后、主机之前的 userinfo（https://tok@host）。
 //
 // 按字符截断而不是 url.Parse：解析失败时还得决定怎么办，截断没有失败这回事。
-// 多值拼在一起时会连后面的值一起去掉——多遮一点，不会漏
-func stripQuery(u string) string {
+// 多值拼在一起时会连后面的值一起去掉——多遮一点，不会漏。
+// userinfo 整个去掉而不是只遮密码：只写用户名的那种（https://<token>@host）用户名本身就是凭证
+func stripURL(u string) string {
 	if i := strings.IndexAny(u, "?#"); i >= 0 {
-		return u[:i]
+		u = u[:i]
+	}
+	if i := strings.Index(u, "://"); i >= 0 {
+		host := u[i+3:]
+		if j := strings.IndexByte(host, '/'); j >= 0 {
+			host = host[:j]
+		}
+		if at := strings.LastIndexByte(host, '@'); at >= 0 {
+			u = u[:i+3] + u[i+3+at+1:]
+		}
 	}
 	return u
 }

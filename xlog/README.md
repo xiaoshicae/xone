@@ -2,9 +2,9 @@
 
 日志：装好之后 `slog.Default()` 就是按 `XLog` 配好的原生 `*slog.Logger`，业务代码直接用标准库 `log/slog`。
 
-- 核心模块，零依赖，跟着 xgin / xecho 一起来：用了它们就装好了，不用另外 import；不写配置就是 info 级别的 JSON 打到标准输出
-- 只用 xhook、xgorm、xredis、xhttp、xcache 的程序不会被装上 xlog，`slog.Default()` 保持原样；
-  想用就匿名 import `github.com/xiaoshicae/xone/xlog`。没 import 却写了 `XLog` 块，启动报错并给出这一行
+- 核心模块，零依赖，只跟着 xgin / xecho 一起来：用了它们就装好了；不写配置就是 info 级别的 JSON 打到标准输出
+- 根包 `xone` 不带它。只用数据类集成（xgorm、xredis、xhttp、xcache）或 xtrace、xmetric 的程序不会被装上 xlog，
+  `slog.Default()` 保持原样；想用就 `import _ "github.com/xiaoshicae/xone/xlog"`。没 import 却写了 `XLog` 块，启动失败并提示这一行
 - 有链路时每条日志自动带 `trace_id` / `span_id`
 - `xlog.AddKV` 给整个请求加字段（访问日志也带上），`xlog.CtxWithKV` 只给一段调用加
 - 文件输出按时间轮转、按保留时长清理，只删自己命名的文件
@@ -51,7 +51,7 @@ XLog:
   Console: true            # 打到标准输出，默认开
   File:
     Enable: false          # 默认关
-    Path: /var/log/app     # 目录
+    Path: ""               # 目录，默认空 = 进程的工作目录；不存在时自动创建
     Name: app.log          # 默认 app.log；实际文件带时间后缀，另有同名符号链接指向当前文件
     RotateTime: 24h        # 轮转周期，按本地时区对齐，默认一天，至少 1m
     MaxAge: 168h           # 历史保留时长，默认 7 天；0 = 不清理，负数启动失败
@@ -60,6 +60,7 @@ XLog:
 ```
 
 - 文件名后缀随 `RotateTime` 的粒度：≥ 24h 是 `app.log.20260918`，≥ 1h 是 `app.log.2026091815`，更短是 `app.log.202609181504`。
+  最细到分钟，所以短于 1m 启动失败（0s 实际每分钟一个文件，30s 两个周期落在同一个文件名上）。
 - 清理启动时一次、之后每次轮转一次，只删 `app.log.<时间后缀>`；`app.log.bak`、`app.log.1.gz` 不碰。
 
 ## 每条日志都带的字段
@@ -73,8 +74,8 @@ XLog:
 | `hostname` | `os.Hostname()` | 虚拟机上是机器名，K8s 里就是 Pod 名。不叫 `host`：xgin 访问日志的 `host` 是请求的 Host 头 |
 | `pid` | `os.Getpid()` | 同一台机器上的多个实例、重启前后分得开 |
 
-部署环境才知道的（Pod、节点、命名空间、机房、Pod IP）用 `XLog.Fields` 从环境变量注入，框架不去猜——
-一台机器常有好几块网卡，自动挑一个 IP 很可能挑错，而且看起来像是对的：
+部署环境才知道的（Pod、节点、命名空间、机房、Pod IP）用 `XLog.Fields` 从环境变量注入。框架不去猜：
+一台机器常有好几块网卡，自动挑的 IP 可能是错的，而且看起来像是对的。
 
 ```yaml
 XLog:
@@ -93,9 +94,8 @@ env:
   - {name: POD_NAMESPACE, valueFrom: {fieldRef: {fieldPath: metadata.namespace}}}
 ```
 
-- 日志写 stdout、由 Fluent Bit / Filebeat / Vector 这类采集组件收的，它们多半已经附上了 Pod、命名空间、节点，
-  再配一遍就是重复，白白多占字节。
-- 这些值启动时算一次、序列化一次。实测默认的 4 个每行多 88 字节（hostname 是 Pod 名那么长时），时间和分配都量不出差别。
+- 日志写 stdout、由 Fluent Bit / Filebeat / Vector 收的，采集组件多半已经附上了 Pod、命名空间、节点，不必再配。
+- 这些值启动时算一次、序列化一次，开销见[「行为与实测」](#行为与实测)。
 - `UseHandler` 换了后端照样带上；`New` 是纯构造器，只带 `cfg.Fields`，不带默认的 4 个。
 
 ## API
@@ -111,7 +111,8 @@ env:
 | `UseHandler(h slog.Handler)` | 日志改由你自己的 handler 写（zap 的 slog 桥、公司的日志 SDK……），在 `xone.Run` 之前调；见[「用自己的日志后端」](#用自己的日志后端) |
 | `New(cfg) (*slog.Logger, io.Closer, error)` | 纯构造器：不碰全局、不读配置文件，离开框架也能用 |
 
-`SetTraceExtractor` / `AddObserver` 是给 xtrace、xmetric 这类集成注入能力用的，业务代码用不到。
+`SetTraceExtractor` / `AddObserver`（及类型 `TraceExtractor`、`Observer`）是给集成注入能力的扩展点，业务代码用不到；
+xtrace、xmetric 走的是同一处注入点（`internal/logext`），不 import xlog。
 
 ## 用自己的日志后端
 
@@ -124,8 +125,8 @@ func main() {
 }
 ```
 
-- xlog 照样把它包一层再装成 `slog.Default()`：`trace_id`、`AddKV` / `CtxWithKV` 的字段、错误日志计数都还在，
-  框架的访问日志、SQL 日志、启停日志也都写进它。不会出现「框架日志一条路、业务日志另一条路」。
+- xlog 照样把它包一层再装成 `slog.Default()`：`trace_id`、`AddKV` / `CtxWithKV` 的字段、错误日志计数、`Fields` 都还在，
+  框架的访问日志、SQL 日志、启停日志也写进它。
 - 级别、格式、输出去向都由你的 handler 决定，`XLog` 里除了 `Fields` 一项都不起作用：**写了就启动失败**
   （`XLog has no effect when xlog.UseHandler is set`），免得以为 `Level: debug` 生效了。只写默认值不算冲突。
 - 你的 handler 归你管：退出时 xlog 不关它，也不把 `slog.Default()` 换掉。
@@ -134,24 +135,23 @@ func main() {
 ## 注意事项
 
 - **用 `slog.InfoContext(ctx, …)`**：不带 ctx 的 `slog.Info` 拿不到 `trace_id`，也带不上 `AddKV` / `CtxWithKV` 的字段。
-- **`AddKV` 要有作用域**：xgin 在每个请求开头开好；自己的非 Web 入口用 `xlog.CtxWithScope(ctx)` 开，否则字段被丢掉（计进 `DroppedKVCount`）。
+- **`AddKV` 要有作用域**：xgin / xecho 在每个请求开头开好（`Log: false` 时不开）；自己的非 Web 入口用 `xlog.CtxWithScope(ctx)` 开，否则字段被丢掉（计进 `DroppedKVCount`）。
   见 [observability.md「日志」](../docs/observability.md#日志)。
 - **`AddKV` 和 `CtxWithKV` 的分工在影响范围**：`AddKV` 原地写，整个请求都带上；`CtxWithKV` 只影响它返回的 ctx，
   批量处理的每一条、起的每个 goroutine 各派生一个，互相不串，也不回流到访问日志。派生之后父 ctx 再 `AddKV` 的字段它看不到。
-- **`Timezone` 配了却加载不到直接启动失败**；scratch / distroless 镜像要 `import _ "time/tzdata"`。见[「行为与实测」](#行为与实测)。
-- **`Name` 的位置上已经有一个普通文件**（不是符号链接）时启动失败，不会把旧日志吞掉。
+- **`Timezone` 配了却加载不到直接启动失败**，不会悄悄退回本地时区；scratch / distroless 镜像要 `import _ "time/tzdata"`，见[「行为与实测」](#行为与实测)。
+- **`Name` 的位置上已经有一个不是符号链接的文件**时启动失败，不会把旧日志覆盖掉。
 
 ## 行为与实测
 
 实测环境和跨模块的总表见 [`docs/behavior.md`](../docs/behavior.md)。
 
-**`Perm` 为什么是字符串**：实测 yaml.v3 把 `0644` 解析成 420（对的），漏掉前导 0 写成 `644` 却是十进制 644 = 0o1204，
-不报错。所以按八进制解析字符串，`0644`、`644`、`0o644` 都认。
+**`Perm`**：yaml.v3 把数字 `0644` 解析成 420（对的），`644` 却是十进制 644 = 0o1204（`--w----r-T`），不报错。所以用字符串、一律按八进制解析。
 
-**`RotateTime` 的文件名后缀**按周期取粒度：一天及以上是 `app.log.20260918`，一小时及以上是 `app.log.2026091815`，
-更短是 `app.log.202609181504`。最细到分钟，所以短于 1m 直接启动失败：0s 实际每分钟一个文件，
-30s 两个周期落在同一个文件名上。轮转按本地时区对齐。
+**`RotateTime`** 的对齐和文件名后缀都按进程本地时区，不跟 `Timezone`（它只管日志里的时间戳）。
 
-**`Timezone` 配了却加载不到直接启动失败**，不会悄悄退回本地时区。scratch / distroless 镜像里没有
-`/usr/share/zoneinfo`，要在自己的 `main` 包加一行 `import _ "time/tzdata"`（约 400KB）；框架不替你编，
-没用到这项的人不该背这 400KB。
+**`Timezone`**：scratch / distroless 镜像里没有 `/usr/share/zoneinfo`，要在自己的 `main` 包加一行 `import _ "time/tzdata"`（约 400KB）。
+框架不替你编：没用到这项的人不该背这 400KB。
+
+**默认字段的开销**：实测默认的 4 个（hostname 是 Pod 名那么长时）每行多 88 字节，时间和分配量不出差别
+（`BenchmarkHandle_WithIdentityFields` 对照 `BenchmarkHandle_Bare`）。

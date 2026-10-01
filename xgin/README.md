@@ -60,7 +60,7 @@ XGin:
     CertFile: ""           # 与 KeyFile 同时配或同时留空
     KeyFile: ""
     ClientCAFile: ""       # 校验客户端证书的 CA；配了就是双向认证，需同时配证书
-    MinVersion: "1.2"      # "1.2" / "1.3"，只在配了证书时生效
+    MinVersion: "1.2"      # "1.2" / "1.3"，留空同 "1.2"；只在配了证书时生效、也只在那时校验
   ReadHeaderTimeout: 10s   # 慢连接攻击的主要防线，必须 > 0
   ReadTimeout: 0s          # 默认不限：限制它会打断大文件上传
   WriteTimeout: 0s         # 默认不限：限制它会打断 SSE、长轮询、大文件下载
@@ -121,12 +121,10 @@ admin := xgin.New().WithConfig(c).WithRoutes(adminRoutes)
   开之前用 `middleware.AddSensitiveFields(...)` 补上业务自己的敏感字段。见[「访问日志」](#访问日志)。
 - **`WithRoutes` 回调里的设置盖过配置**（如 `e.SetTrustedProxies`），但透传 Header 的可信判断只看配置里的 `TrustedProxies`，
   两边要一起改就改配置。XGin 块在装配（`Engine()` 或 `Start`）那一刻才读。
-- **超时**：`ReadHeaderTimeout`、`IdleTimeout` 必须 > 0；`ReadTimeout` / `WriteTimeout` 默认不限，
-  因为它们会打断大文件上传、SSE 和长轮询。
 - handler 里 `c.Error(err)` 登记的错误进访问日志的 `errors` 字段和 Span；validator 报错要中文就开 `ZHTranslations`，再 `trans.ToZH(err)`。
-- **末尾斜杠不重定向**：只注册了 `/users` 时 `/users/` 是 404（访问日志、指标、Span 里是 `unmatched`），不是 gin 默认的 301 / 307。
-  要 gin 的重定向就在 `WithRoutes` 里写 `e.RedirectTrailingSlash = true`，或者两条路由都注册；重定向的请求不经过任何中间件，
-  不进访问日志、指标和链路。见[「行为与实测」](#行为与实测)。
+- **路由和 gin 的默认不同**：末尾斜杠不重定向（只注册了 `/users` 时 `/users/` 是 404 `unmatched`，gin 默认 301 / 307）；
+  路径对、方法不对回 405（gin 默认 404）。要 gin 的重定向就在 `WithRoutes` 里写 `e.RedirectTrailingSlash = true`，
+  但重定向的请求不经过任何中间件，不进访问日志、指标和链路。见[「行为与实测」](#行为与实测)。
 - **`*gin.Context` 可以直接当 ctx 传**：`xlog.AddKV(c, ...)`、`db.WithContext(c)`、`otel.Tracer(...).Start(c, ...)` 和传
   `c.Request.Context()` 一样带着日志作用域、父 Span 和取消（engine 开了 `ContextWithFallback`）。
 
@@ -202,8 +200,10 @@ panic 由 Recover 中间件记一条 `panic while handling request`（ERROR，�
 
 | 消息 | 级别 | 字段 |
 |---|---|---|
-| `xgin listening` | INFO | `addr`、`tls`、`mtls`、`h2c` |
+| `xgin listening` | INFO | `addr`、`tls`、`mtls`、`h2c`；证书读好、端口绑上之后才打 |
 | `xgin http server error` | WARN | `error`：net/http 自己报的那一行（`http.Server.ErrorLog`），如 `http: TLS handshake error from 203.0.113.9:1234: EOF` |
+| `xgin received the shutdown signal before starting, the server will not start` | WARN | 退出信号早于监听到达 |
+| `xgin invalid config, assembling the engine with defaults; Start will return the error` | WARN | `error`；配置不合法时 `Engine()` 按默认值装配，`Start` 返回那个错误 |
 
 日志的全局约定（`trace_id` 注入、`xlog.AddKV`、框架的启停日志）见 [`docs/observability.md`](../docs/observability.md#日志)。
 
@@ -224,7 +224,7 @@ panic 由 Recover 中间件记一条 `panic while handling request`（ERROR，�
 |---|---|---|
 | xgin（入站） | `GET /users/:id`：方法 + 路由模板；没匹配上是 `GET unmatched` | `http.request.method`（收敛过的）、`http.request.method_original`（原始值和收敛值不同时）、`http.route`、`url.path`、`http.response.status_code`、`gin.errors` |
 
-`Metric` 开着时抓 `MetricPath` 的请求不开 Span、不回带 `X-Trace-Id`：抓取系统按秒轮询它，理由同访问日志跳过它。
+5xx 和中止标成错误，4xx 不算。`Metric` 开着时抓 `MetricPath` 的请求不开 Span、不回带 `X-Trace-Id`：抓取系统按秒轮询它，理由同访问日志跳过它。
 
 链路的全貌、传播与信任边界见 [`docs/observability.md`「链路」](../docs/observability.md#链路)。
 
@@ -238,9 +238,9 @@ xgin 的 `Trace` 开着时，每个响应带 `X-Trace-Id: <32 位 trace id>`，�
 两种请求在访问日志、指标、链路里的状态码记成 **499**（借 nginx 的 client closed request）。这个码不会发给客户端：
 
 - handler 以 `panic(http.ErrAbortHandler)` 中止的（`httputil.ReverseProxy` 转发到一半上游断开时也是这样）：连接直接断了，
-  响应往往已经写出了 200 的响应头，不这样记的话一个被截断的响应在三处都记成成功。Span 标为错误，访问日志的 `errors` 里带着 `net/http: abort Handler`。
+  响应往往已经写出了 200 的响应头，照读 `c.Writer.Status()` 的话被截断的响应在三处都记成成功。Span 标为错误，访问日志的 `errors` 里带着 `net/http: abort Handler`。
 - 客户端已经走了（断开连接、HTTP/2 的流被重置，或者停止时到点强制断连——请求的 ctx 被 net/http 取消），而响应一个字节都还没写：
-  什么都没写就返回的原本记成 `bytes_out` 为 0 的 200，客户端其实什么都没收到。Span **不**标错：那不是服务端的错。
+  否则会记成 `bytes_out` 为 0 的 200，而客户端什么都没收到。Span **不**标错：那不是服务端的错。
 
 响应已经开始写了的照记已经写出去的状态码：客户端至少收到了一部分。「客户端走了」只看中间件一进来时请求的 ctx——
 里面几层换上的、业务自己的 ctx 到了截止时间或者被 cancel 掉，不算（客户端还在等）。
@@ -295,14 +295,9 @@ IPv4 映射成 IPv6 的写法启动失败：实测 gin v1.12.0 把 `::ffff:10.0.
 - 单独调 `Stop`、传不带截止时间的 ctx 时一直等到在途请求全部做完（实测 1.5s 的请求，`Shutdown` 等了 1.57s）。
 - 被劫持走的连接（WebSocket）不归 `Shutdown` / `Close()` 管，它的 handler 同样算在「还没返回」里。
   所以 `Shutdown` / `Close()` 返回之后取消所有请求 ctx 的根（`http.Server.BaseContext`）：WebSocket 的读循环、长轮询看
-  `c.Request.Context()` 就能退出。实测一个劫持了连接、等着请求 ctx 的 handler，`Stop` 约 10ms 返回 nil；原先等满整份预算再报
-  `1 handler(s) still running`。不看 ctx、只阻塞在 `conn.Read` 上的 handler 照样停不下来——要自己在 ctx 取消时关掉连接。
+  `c.Request.Context()` 就能退出。实测一个劫持了连接、等着请求 ctx 的 handler，`Stop` 约 10ms 返回 nil。
+  不看 ctx、只阻塞在 `conn.Read` 上的 handler 照样停不下来——要自己在 ctx 取消时关掉连接。
 - 监听失败（端口被占、证书读不出来）之后可以再调 `Start`：失败的那次不算在跑。
-
-**`http.ErrAbortHandler` 中止的请求**（`httputil.ReverseProxy` 转发到一半上游断开时也是这样）往往已经写出了 200 的响应头，
-照读 `c.Writer.Status()` 的话一个被截断的响应记成成功，所以访问日志、指标、链路里记 499，见
-[「499：中止的请求」](#499中止的请求)。
-
 
 ## 排错
 
@@ -312,7 +307,7 @@ IPv4 映射成 IPv6 的写法启动失败：实测 gin v1.12.0 把 `::ffff:10.0.
 | `TLS.ClientCAFile requires TLS.CertFile and TLS.KeyFile, mutual TLS runs on top of TLS`（XGin） | 配了双向认证却没配服务端证书 | 补上 `TLS.CertFile` / `TLS.KeyFile` |
 | `unknown TLS.MinVersion="1.1", supported: 1.2 / 1.3`（XGin） | 写了不收的版本，或者写成了 `TLS1.3` | 写 `"1.2"` 或 `"1.3"` |
 | `read TLS.ClientCAFile: ...` / `TLS.ClientCAFile ... contains no PEM certificate`（XGin） | CA 文件读不出来，或者里面没有 PEM 证书 | 检查路径和文件内容；服务不监听 |
-| `field CertFile not found in type xgin.Config (did you mean TLS.CertFile? move it under TLS:)`（`KeyFile`、`ClientCAFile`、`MinVersion` 同理） | 照旧的平铺写法写的（这几项在 `TLS:` 块里） | 这几行缩进进 `TLS:` 块，见[「配置」](#配置) |
+| `field CertFile not found in type xgin.Config (did you mean TLS.CertFile? move it under TLS:)`（`KeyFile`、`ClientCAFile`、`MinVersion` 同理） | 写在了 `XGin` 顶层，这几项属于 `TLS:` 块 | 这几行缩进进 `TLS:` 块，见[「配置」](#配置) |
 | `TrustedProxies entry "::ffff:10.0.0.1" is an IPv4-mapped IPv6 address; write it as 10.0.0.1`（XGin） | `TrustedProxies` 里写了 IPv4 映射成 IPv6 的地址或网段 | 照报错给的写：`::ffff:10.0.0.1` → `10.0.0.1`，`::ffff:10.0.0.0/104` → `10.0.0.0/8` |
 
 停止时的 `N handler(s) still running when the shutdown deadline passed` 见 [`docs/troubleshooting.md`「Runnable 与退出」](../docs/troubleshooting.md#runnable-与退出)；客户端 TLS 的报错见 [xtls「排错」](../xtls/README.md#排错)。

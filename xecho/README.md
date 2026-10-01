@@ -63,7 +63,7 @@ XEcho:
     CertFile: ""           # 与 KeyFile 同时配或同时留空
     KeyFile: ""
     ClientCAFile: ""       # 校验客户端证书的 CA；配了就是双向认证，需同时配证书
-    MinVersion: "1.2"      # "1.2" / "1.3"，只在配了证书时生效
+    MinVersion: "1.2"      # "1.2" / "1.3"，留空同 "1.2"；只在配了证书时生效、也只在那时校验
   ReadHeaderTimeout: 10s   # 慢连接攻击的主要防线，必须 > 0
   ReadTimeout: 0s          # 默认不限：限制它会打断大文件上传
   WriteTimeout: 0s         # 默认不限：限制它会打断 SSE、长轮询、大文件下载
@@ -116,8 +116,8 @@ admin := xecho.New().WithConfig(c).WithRoutes(adminRoutes)
 
 ## 注意事项
 
-- **不要调 `e.Start` / `e.StartTLS`**：服务由 `Start` 起（`xone.Run` 替你调），超时、TLS、h2c、优雅退出都在那一边。
-  echo 自己的 `e.Server` 四个超时全是 0。
+- **不要调 `e.Start` / `e.StartTLS`**：服务由 `Start` 起（`xone.Run` 替你调），超时、TLS、h2c、优雅退出都在那一边；
+  `e.Server` 的四个超时全是 0，用不上。
 - **handler 返回错误就行**：`return echo.NewHTTPError(http.StatusNotFound, "no such user")` 或者普通的 `error`，
   响应由 `e.HTTPErrorHandler` 写（默认是 echo 的 JSON `{"message":...}`，普通 error 一律 500、不带原文），
   要换格式就在 `WithRoutes` 里设 `e.HTTPErrorHandler`。错误原文进访问日志的 `errors` 和 Span 的 `echo.errors`，出现敏感词（password、token……）就整段遮掉，URL / MySQL DSN 里的密码换成 `***REDACTED***`。
@@ -129,8 +129,9 @@ admin := xecho.New().WithConfig(c).WithRoutes(adminRoutes)
   `Stop` 会报 `N handler(s) still running`。
 - **`WithRoutes` 回调里的设置盖过配置**（如 `e.IPExtractor`、`e.HTTPErrorHandler`），但透传 Header 的可信判断只看配置里的
   `TrustedProxies`，两边要一起改就改配置。XEcho 块在装配（`Engine()` 或 `Start`）那一刻才读。
-- **路由比 gin 严**：末尾斜杠严格匹配（`/a/` 是 404，gin 默认 301 到 `/a`）；HEAD 不自动走 GET（405）；
-  路径参数在路由末尾时吃得下后面的 `/`（`/users/:id` 匹配 `/users/1/z`，`id` 是 `1/z`）。要放宽末尾斜杠用 `e.Pre(echomw.RemoveTrailingSlash())`。
+- **路由**：末尾斜杠严格匹配（`/a/` 是 404，和 xgin 一样）；只注册了 GET 时 HEAD 是 405（xgin 同样）；
+  路径参数在路由末尾时吃得下后面的 `/`（`/users/:id` 匹配 `/users/1/z`，`id` 是 `1/z`；xgin 是 404）。这些是 echo 的行为，框架没改；
+  要放宽末尾斜杠用 `e.Pre(echomw.RemoveTrailingSlash())`。
 - **中间件的顺序**，自外向内：`LogScope → Trace → Log → Metric → Recover →` 你的 `e.Pre` `→ router →` `WithMiddleware` / 你的 `e.Use` `→ handler`。
   内置的挂在 `e.Pre` 上、排在你的 `e.Pre` 外面：Pre 里拒掉（`return echo.ErrUnauthorized`）、重定向（`RemoveTrailingSlashWithConfig` 的 301）的请求
   照样进访问日志、指标、链路、带 `X-Trace-Id`，Pre 里的 panic 兜住回 500。这时 router 还没跑，`route` 记 `unmatched`。
@@ -183,9 +184,11 @@ panic 由 Recover 中间件记一条 `panic while handling request`（ERROR，�
 
 | 消息 | 级别 | 字段 |
 |---|---|---|
-| `xecho listening` | INFO | `addr`、`tls`、`mtls`、`h2c` |
+| `xecho listening` | INFO | `addr`、`tls`、`mtls`、`h2c`；证书读好、端口绑上之后才打 |
 | `echo internal log` | echo 的级别（默认只有 ERROR） | `message`：echo 自己写的那一行，如错误响应写失败时的 `write: broken pipe` |
 | `xecho http server error` | WARN | `error`：net/http 自己报的那一行，如 `http: TLS handshake error from 203.0.113.9:1234: EOF`；`e.StdLogger` 写的也在这里 |
+| `xecho received the shutdown signal before starting, the server will not start` | WARN | 退出信号早于监听到达 |
+| `xecho invalid config, assembling the engine with defaults; Start will return the error` | WARN | `error`；配置不合法时 `Engine()` 按默认值装配，`Start` 返回那个错误 |
 
 日志的全局约定见 [`docs/observability.md`](../docs/observability.md#日志)。
 
@@ -217,7 +220,7 @@ panic 由 Recover 中间件记一条 `panic while handling request`（ERROR，�
 
 - handler `panic(http.ErrAbortHandler)` 中止的（Span 标错）。**返回**一个包着它的错误（`fmt.Errorf("proxy: %w", http.ErrAbortHandler)`）不算：
   连接没断，客户端收到的是 `HTTPErrorHandler` 渲染的 500，记 500；
-- 客户端已经走了、响应还一个字节都没发的（Span 不标错）：handler 照惯例 `return ctx.Err()`，原本会被渲染成一个谁也收不到的 500。
+- 客户端已经走了、响应还一个字节都没发的（Span 不标错）：handler 照惯例 `return ctx.Err()`，否则会被渲染成一个谁也收不到的 500。
   echo 往断开的连接上写错误响应照样把 `Committed` 置上、`Status` 记成 500（实测），所以在交给 `HTTPErrorHandler` 之前就判。
 
 ## 行为与实测
@@ -294,8 +297,7 @@ handler 不改交进来的 `Request`，handler 把请求交给活得比它久的
 [xgin「行为与实测」](../xgin/README.md#行为与实测)：劫持了连接（WebSocket）的 handler 在停止时同样看得到请求 ctx 取消，
 监听失败之后同样可以再 `Start`。
 
-**`echo.Context` 不是 `context.Context`**（没有 `Deadline` / `Done` / `Err`），传不进要 ctx 的函数，也就没有 xgin 那种
-「传了 `*gin.Context` 却丢了父 Span」的问题：一律传 `c.Request().Context()`。
+**`echo.Context` 不是 `context.Context`**（没有 `Deadline` / `Done` / `Err`），传不进要 ctx 的函数：一律传 `c.Request().Context()`。
 
 **`MetricPath`** echo 不拒绝不以 `/` 开头的写法：`metrics` 注册成 `/metrics`，访问日志却跳不过它；留空注册在根路径 `/` 上，
 业务再注册首页时后注册的那个悄悄盖掉前一个（不报错，也不 panic）。所以读配置时就失败。
@@ -309,9 +311,6 @@ handler 不改交进来的 `Request`，handler 把请求交给活得比它久的
 （`{"a":"b"}` 记 10）；分三次写、每次 `Flush` 的 `chunk` 是 15；`c.NoContent(204)` 是 0，`Status` 是 204。
 绕过 `c.Response()`、直接写 `c.Response().Writer` 的不算在内。`?pretty` 查询参数会让 `c.JSON` 缩进输出（`{"a":"b"}` 变成 15 字节）。
 
-**路由**：末尾斜杠严格匹配，`/a/` 是 404（gin 默认 301 到 `/a`）；只注册了 GET 时 HEAD 是 405，不像 net/http 的 `ServeMux` 那样自动走 GET；
-路径参数在末尾时吃得下后面的 `/`，`/users/:id` 匹配 `/users/1/z`，`id` 是 `1/z`。框架都没改。
-
 ## 排错
 
 | 错误原文 | 原因 | 怎么改 |
@@ -320,7 +319,7 @@ handler 不改交进来的 `Request`，handler 把请求交给活得比它久的
 | `TLS.ClientCAFile requires TLS.CertFile and TLS.KeyFile, mutual TLS runs on top of TLS`（XEcho） | 配了双向认证却没配服务端证书 | 补上 `TLS.CertFile` / `TLS.KeyFile` |
 | `unknown TLS.MinVersion="1.1", supported: 1.2 / 1.3`（XEcho） | 写了不收的版本，或者写成了 `TLS1.3` | 写 `"1.2"` 或 `"1.3"` |
 | `read TLS.ClientCAFile: ...` / `TLS.ClientCAFile ... contains no PEM certificate`（XEcho） | CA 文件读不出来，或者里面没有 PEM 证书 | 检查路径和文件内容；服务不监听 |
-| `field CertFile not found in type xecho.Config (did you mean TLS.CertFile? move it under TLS:)`（`KeyFile`、`ClientCAFile`、`MinVersion` 同理） | 照旧的平铺写法写的（这几项在 `TLS:` 块里） | 这几行缩进进 `TLS:` 块，见[「配置」](#配置) |
+| `field CertFile not found in type xecho.Config (did you mean TLS.CertFile? move it under TLS:)`（`KeyFile`、`ClientCAFile`、`MinVersion` 同理） | 写在了 `XEcho` 顶层，这几项属于 `TLS:` 块 | 这几行缩进进 `TLS:` 块，见[「配置」](#配置) |
 | `TrustedProxies entry "::ffff:10.0.0.1" is an IPv4-mapped IPv6 address; write it as 10.0.0.1`（XEcho） | `TrustedProxies` 里写了 IPv4 映射成 IPv6 的地址或网段 | 照报错给的写：`::ffff:10.0.0.1` → `10.0.0.1`，`::ffff:10.0.0.0/104` → `10.0.0.0/8` |
 | `field Mode not found in type xecho.Config`（`MaxMultipartMemory`、`ZHTranslations` 同理） | 照抄了 XGin 块 | 删掉这几项，理由见[「配置」](#配置) |
 

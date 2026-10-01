@@ -1,9 +1,8 @@
 # 配置参考
 
 一个 YAML 文件，框架统一读，按顶层 key 分发给各组件。这份文档讲**所有配置块共用的规则**：文件位置、Profile、
-Import、合并、占位符。每个配置块的全部字段、默认值和最要紧的几条规则在它所属模块的 README 里，
-见[配置块 → 模块文档](#配置块--模块文档)。为什么这样定、量出来的数字在 [`behavior.md`](behavior.md) 和各模块 README；
-在代码里读自己的配置块见 [xconfig](../xconfig/README.md)，其余用法在 [`guide.md`](guide.md)。
+Import、合并、占位符。每个配置块的字段和默认值在它所属模块的 README 里，见[配置块 → 模块文档](#配置块--模块文档)；
+在代码里读自己的配置块见 [xconfig](../xconfig/README.md)。
 
 最常用的几件事：
 
@@ -55,25 +54,26 @@ Import、合并、占位符。每个配置块的全部字段、默认值和最�
 ## Profiles —— 按环境分文件
 
 写法和 Spring 一样：`application.yml` 放公共的，`application-{profile}.yml` 放这个环境特有的。
-默认激活哪个 profile 写在 `XApp.Profiles`，和应用名 `XApp.Name`、下一节的 `XApp.Import` 在同一个块里——
-对应 Spring 把 `spring.profiles.active`、`spring.config.import` 收在 `spring` 下面。
+默认激活哪个 profile 写在 `XApp.Profiles`（对应 Spring 的 `spring.profiles.active`）。
 
 ```bash
 ./app --profile=prod           # 或 XONE_PROFILE=prod
 ./app --profile=prod,eu        # 多个用逗号分隔，靠后的压过靠前的
 ```
 
-也可以写在 base 文件的 `XApp` 块里（只能写在 base 文件里）：
+也可以写在 base 文件里：
 
 ```yaml
 XApp:
   Profiles: ${APP_ENV:dev}   # 一个名字、逗号分隔的字符串或列表都收；占位符在决定读哪些文件之前就展开
 ```
 
-- 优先级：`--profile` > `XONE_PROFILE` > 文件里的 `XApp.Profiles`。
+- 优先级：`--profile` > `XONE_PROFILE` > 文件里的 `XApp.Profiles`。前两个是**替换**文件里的，不是追加。
+- `XApp.Profiles` 只能写在 base 文件里，写在被引入的文件、profile 文件里启动失败。
 - profile 文件名由 base 文件推出来，目录和扩展名都跟着它：`--config=/etc/app/svc.yaml` 配 `--profile=prod`
   找的是 `/etc/app/svc-prod.yaml`。
 - **与 Spring 的一处不同**：点名的 profile 文件不存在时**直接启动失败**，Spring 是静默跳过。
+  Import 进来的片段的 profile 变体不存在则不算错（见下一节）。
 
 ## Import —— 引入别的配置文件
 
@@ -91,7 +91,7 @@ XApp:
 - 引进来的压过引它的那个文件（import 相当于插在它正下方）。
 - 引进来的文件同样有 profile 变体：`db.yml` 配 `--profile=prod` 会再找 `db-prod.yml`；片段的变体**不存在不算错**。
 - 同一个文件只读一次（菱形引用只算一次，成环在第二次遇到时断开、不报错）；嵌套最多 16 层。
-- 被引进来的文件里可以再写 `XApp.Import`，但**不能写 `XApp.Profiles`**。
+- 被引进来的文件里可以再写 `XApp.Import`。
 - `Import` 的路径里可以写 `${VAR}`，它在读文件之前就展开。
 
 ## 合并规则
@@ -220,16 +220,15 @@ K8s 里常见的做法：镜像里带着整个 `conf/`（或者用 ConfigMap 挂
 
 ### 容易踩的几点
 
-1. **`--profile` / `XONE_PROFILE` 是替换 `XApp.Profiles`，不是追加。** 上面 `XONE_PROFILE=eu` 那一行，
-   文件里默认的 dev 就不生效了；要两个都要就写全：`--profile=dev,eu`。
+1. **`--profile` / `XONE_PROFILE` 替换 `XApp.Profiles`。** 上面 `XONE_PROFILE=eu` 那一行，
+   文件里默认的 dev 就不生效了；两个都要就写全：`--profile=dev,eu`。
 2. **列表整体替换。** prod 的 `Channels: [alipay]` 不是往 `[alipay, wechat]` 里合并，而是换掉它。
 3. **引入的文件压过引它的文件，同一个文件只读一次。** `optional:local.yml` 写在 `application-dev.yml` 的 `XApp.Import` 里，
    它压过 dev（本机覆盖优先级最高）；要是**同时**在 `application.yml` 里也引了它，只有先遇到的那一处算——
    它就落在 `application.yml` 的位置上，压不过 `application-dev.yml` 里写的同一项。
 4. **片段的 profile 变体可以没有，主文件的不行。** `common/log-dev.yml` 不存在没关系；`application-staging.yml`
    不存在是启动失败——几乎总是 profile 名写错了。
-5. **`XApp.Profiles` 只能写在主文件里**，被引入的文件、环境文件里写了是启动失败。
-6. 拿不准到底读了哪些文件、最终是什么值，`XONE_DEBUG=1` 启动一次，见[下一节](#看最终生效的配置xone_debug)。
+5. 拿不准到底读了哪些文件、最终是什么值，`XONE_DEBUG=1` 启动一次，见[下一节](#看最终生效的配置xone_debug)。
    平时的启动日志只打主文件（`loading config file=conf/application.yml`）。
 
 ## 看最终生效的配置：XONE_DEBUG
@@ -274,12 +273,14 @@ XONE_DEBUG=1 ./app --profile=prod      # 1 / true / yes / on 都算打开
 - **最终配置是合并之后的**，也就是各组件真正读到的值；配置文件里的注释不带出来（合并之后看不出是哪个文件的）。
   **来自 `${VAR}` 的值显示配置里写的原文**（`Webhook: ${ORDER_WEBHOOK}`），不显示展开出来的值——凭证多半就是这么传进来的，
   而它不一定放在叫 password 的 key 下面。
-- **凭证已遮掉**，显示成 `***`：key 名里含 password、passwd、secret、token、credential、apikey、accesskey、privatekey 的
-  （比较前转小写、去掉 `_ - .` 和空格），值不论是标量、列表还是 map 都整个换成 `***`；值里夹着的密码也遮——
-  `postgres://app:***@db`、`report:***@tcp(db:3306)/report`，密码里带 `@`、`/` 时遮到最后一个 `@`
-  （同一段里后面再有 `@` 时连主机一起遮掉，宁可多遮）；查询串和 `key=value` 写法里名字含上面那些词的
-  （`token=***`、`api_key=***`、`password=***`，外加 `pwd=***`）也遮，`${VAR:默认值}` 的默认值里的同样。
-  **空的不遮**（`""`、`[]`、`{}`、没写），一眼看得出哪个凭证没配。
+- **凭证已遮掉**，显示成 `***`：
+  - key 名里含 password、passwd、secret、token、credential、apikey、accesskey、privatekey 的（比较前转小写、去掉 `_ - .` 和空格），
+    值不论是标量、列表还是 map 都整个遮掉；
+  - 值里夹着的密码：`postgres://app:***@db`、`report:***@tcp(db:3306)/report`。密码里带 `@`、`/` 时遮到最后一个 `@`
+    （同一段里后面再有 `@` 时连主机一起遮，宁可多遮）；
+  - 查询串和 `key=value` 写法里名字含上面那些词的（`token=***`、`api_key=***`、`password=***`），外加 `pwd=***`；
+    `${VAR:默认值}` 的默认值里的同样遮；
+  - **空的不遮**（`""`、`[]`、`{}`、没写），一眼看得出哪个凭证没配。
 - **只在本地排查时开**：写的是多行的纯文本，不是 JSON，接在日志采集器后面就是几行解析失败的日志。
 
 **启动 banner**（带 xone 的版本）只在 stderr 是终端时打：本地 `go run` 能看到，容器里、重定向到文件、接在日志采集器后面时一个字都不写。
@@ -319,10 +320,10 @@ XONE_DEBUG=1 ./app --profile=prod      # 1 / true / yes / on 都算打开
 | 没人读的顶层块 | 全部启动钩子跑完时还没人读过的顶层 key **启动失败**（`config keys [...] are not read by anyone`） |
 | 值配错 | 各模块的 `Validate` 在读配置时就跑，报错带文件和行号，一个实例都还没连 |
 | 时间 | 写 `30s` / `1500ms` / `1h30m`。写裸数字启动失败——写 `30` 的人想要 30 秒，Go 会给他 30 纳秒 |
-| 超时写 0 | 各字段的注释写明 0 的含义。`XTrace.ShutdownTimeout`、`XFlow.RollbackTimeout`、`XGin.ReadHeaderTimeout` / `IdleTimeout` 写 0 启动失败 |
+| 超时写 0 | 各字段的注释写明 0 的含义。`XTrace.ShutdownTimeout`、`XFlow.RollbackTimeout`、`XGin` / `XEcho` 的 `ReadHeaderTimeout` / `IdleTimeout` 写 0 启动失败 |
 | 列表字段 | 文件里写了就整体替换默认值 |
 | map 字段 | 文件里写的**合并**进默认值，所以框架的 map 字段一律没有默认值 |
-| 建连重试 | XGorm、XRedis 启动时探一次，**最多试 3 次**，退避从 1s 起逐次翻倍、带抖动。认证失败、证书被拒不重试，报 `authentication to <addr> failed`；其余报 `cannot reach <addr>`。数字见 [behavior.md](behavior.md#启动期建连探测) |
+| 建连重试 | XGorm、XRedis 启动时探一次，最多试 3 次；认证失败、证书被拒不重试。见 [behavior.md「启动期建连探测」](behavior.md#启动期建连探测) |
 
 XGorm（PostgreSQL / MySQL / ClickHouse）、XRedis、XHttp 连出去时的 TLS 都写成同一个块（`TLS:`），
 见 [xtls](../xtls/README.md#配置)。

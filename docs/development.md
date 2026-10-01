@@ -33,6 +33,8 @@ xone/
 │   ├── config/          配置加载：定位、profile / import、合并、占位符、严格解码
 │   ├── hook/            钩子登记、配对与按档位执行
 │   ├── xclient/         xgorm / xredis / xcache 共用的具名实例管理和启动期探测
+│   ├── web/             xgin / xecho 共用的那一半：监听、TLS、优雅关闭、信任的代理、脱敏，零第三方依赖
+│   ├── logext/          xlog 的扩展点（trace_id 提取、错误日志计数），xtrace / xmetric 往这里注入
 │   ├── testkit/         仓库自己的单元测试共用的小工具，只依赖标准库
 │   ├── coreonly/        只用核心、不 import 任何集成的程序也能跑通（测试）
 │   └── schemagen/       生成 config_schema.json、核对各模块 README 的「配置」一节（独立的工具 module）
@@ -56,11 +58,12 @@ xone/
 ├── e2e/                 真实 Web 服务测试（独立 module，不发布）
 │   ├── service/         被测服务：用齐各集成，配置全部来自 YAML
 │   ├── baseline/        裸 gin 的对照服务，压测时比出框架的开销
+│   ├── covapp/          一次性任务形状的最小程序，测配置加载时机（提前读、WithConfigPath）
 │   ├── harness/         起进程、读日志 / Span / 指标 / /proc、TCP 故障代理、下游桩、压测器
 │   └── compose.yml      e2e 要的 PG / MySQL / Redis / ClickHouse
 ├── config_schema.json   配置的 JSON Schema，由结构体生成，给 IDE 用
 ├── .github/workflows/   ci.yml：check.sh + test.sh，外加用 Go 1.23 单独编译核心；e2e.yml：e2e + 全量变异；
-│                        release.yml：发布按钮（打 tag、跑 e2e、只推 tag、验证装得上）
+│                        release.yml：发布按钮（打 tag、跑 e2e、只推 tag；验证装得上是单独的 verify job）
 └── scripts/
     ├── check.sh         把设计约束编译成检查
     ├── test.sh          跑全仓库测试（go test ./... 不跨模块边界）
@@ -88,13 +91,14 @@ xone/
 |---|---|---|
 | `scripts/check.sh` | 架构约束 + 依赖边界 + 文档 + gofmt / vet | 每次（ci.yml） |
 | `scripts/test.sh [go test 参数]` | 逐模块 `GOWORK=off go test -race ./...`，几个模块同时跑（默认 CPU 核数个，`XONE_TEST_JOBS` 可改），输出按模块顺序打出；一个模块红了也跑完其余的，最后一起报。本地改代码时不加 `-count=1`，没改过的模块直接用缓存 | 每次（`-count=1`） |
-| `scripts/mutate.py [-j N] [--only X] [-k X] [--dry-run]` | 变异测试，并行跑，不动工作区 | 全量每晚（e2e.yml）；`--dry-run` 在 check.sh 里 |
-| `scripts/e2e.sh [--load] [-run X]` | 真实 Web 服务测试，要 PG / MySQL / Redis（ClickHouse 可选）；不给 `-parallel` 时用 16（测试大半时间在等，默认的 4 让它们排队） | 改了 `go.mod` / `go.sum` 的 PR、每晚、手动触发（e2e.yml，不含压测） |
+| `scripts/mutate.py [-j N] [--only X] [-k X] [--dry-run]` | 变异测试，并行跑，不动工作区 | 全量每晚、手动触发（e2e.yml）；`--dry-run` 在 check.sh 里 |
+| `scripts/e2e.sh [--load] [-run X]` | 真实 Web 服务测试，要 PG / MySQL / Redis（ClickHouse 可选）；不给 `-parallel` 时用 16（测试大半时间在等；go test 默认是 GOMAXPROCS，4 核机器上 103s，16 是 60s） | 改了 `go.mod` / `go.sum` 的 PR、每晚、手动触发（e2e.yml，不含压测） |
 | `scripts/release.sh vX.Y.Z (--bump \| --tag [--e2e-passed] \| --smoke \| --verify)` | 发布：钉版本号 / 打 tag / 推送前冒烟 / 推送后验证 | 否（打 tag 由 release 按钮做） |
 
 ### check.sh
 
-- 核心模块图不超过 3 个第三方模块，核心不依赖任何集成模块；`xhook` / `xerror` / `xutil` / `xtls` 零第三方依赖；
+- 核心模块图不超过 3 个第三方模块，核心不依赖任何集成模块；`xhook` / `xerror` / `xutil` / `xtls` / `internal/web` 零第三方依赖；
+- 只有 xgin / xecho 带进 xlog：根模块、xtrace、xmetric、数据类集成的任何包都不许 import 它；
 - `init()` 只出现在集成包里；
 - 公开 API 数量上限：根包 15、`xhook` 6、`xconfig` 6、`xonetest` 3、`xtls` 3；
 - 集成包必须导出 `New`，且不许 import 根包；`example/` 不许 import `internal/`（使用者 import 不到）；
@@ -103,7 +107,11 @@ xone/
 - 错误和日志等运行期字符串是英文；错误走 `xerror`、用 `%w` 包底层错误；
 - `*.go` / `*.md` / `*.yml` 里不再出现已经删掉的公开名字（删一个公开名字时把它加进脚本里 `gone` 那张表）；
 - `scripts/mutate.py --dry-run` 的每条变异模式都还对得上代码；
+- `scripts/lib.sh` 的 `hooks()` 认得出各种格式的钩子启停日志（`release.sh --smoke` / `--verify` 靠它比对逆序）；
+- 测试函数名是英文；
 - gofmt、每个模块的 `go vet`。
+
+它**不查** Markdown 里的相对链接和锚点，挪标题时自己搜一遍引用（见[配置与文档](#配置与文档)）。
 
 ### config_schema.json
 
@@ -141,7 +149,8 @@ scripts/release.sh v0.1.0 --verify   # 推送之后：在一个全新的外部�
 整理 CHANGELOG、开好 PR，停在那里。
 
 **第 2 步平时用发布按钮**：GitHub 上 Actions → `release` → Run workflow，填版本号。它跑 `--tag`、e2e（同 `e2e.yml`）、`--smoke`，
-只推这一组 tag（`--atomic`），再 `--verify`；任何一步红了都不推送，不推任何分支。仓库的
+只推这一组 tag（`--atomic`），不推任何分支；推送之前任何一步红了都不推送。推送之后的 `--verify` 是单独的 `verify` job：
+红了（常见是 proxy 还没拉到新 tag）点「Re-run failed jobs」只重跑它。仓库的
 Settings → Actions → General → Workflow permissions 要是 Read and write；有针对 tag 的 ruleset 的话要给它放行。
 见 `.github/workflows/release.yml`。
 
@@ -174,7 +183,7 @@ go test -run=NONE -bench=. -benchtime=100000x ./xlog/ ./xflow/ ./xgin/middleware
 - 用例之间各用各的端口、表名和 key 前缀；
 - PG / MySQL / Redis 没在跑时脚本先按本机的装法拉起来（`pg_ctlcluster` / `service mysql` / `redis-server`），
   连接参数用 `XONE_E2E_PG_ADDR`、`XONE_E2E_MYSQL_ADDR`、`XONE_E2E_REDIS_ADDR` 等覆盖；服务归别处管（CI 的服务容器、
-  docker compose、另一台机器）时设 `XONE_E2E_EXTERNAL=1`，脚本只等它就绪（最多 60 秒，只看 TCP）；
+  docker compose、另一台机器）时设 `XONE_E2E_EXTERNAL=1`（地址不在本机、或本机没有对应的启动命令时也一样），脚本只等它就绪（最多 60 秒，只看 TCP）；
 - ClickHouse 跑在 Docker 容器 `xone-ch` 里（`XONE_E2E_CH_*` 覆盖），起不来时脚本设 `XONE_E2E_CH=0`，`TestClickHouse_*` 各自跳过；
 - 后面的参数原样交给 `go test`。
 

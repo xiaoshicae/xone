@@ -2,7 +2,7 @@
 
 Prometheus 指标：原生的 `*prometheus.Registry` 用 `xmetric.Registry()` 取，日常打点有一组免样板的快捷方法。
 
-- 指标端点由 xgin 自动挂在 `/metrics`，不用 xgin 的自己挂 `xmetric.Handler()`
+- 指标端点由 xgin / xecho 自动挂在 `/metrics`，不用它们的自己挂 `xmetric.Handler()`
 - 快捷方法按名字建指标、按标签复用，不用先声明
 - 耗时指标收 `time.Duration`、自动补 `_seconds` 后缀
 - 自带 `log_errors_total`（Error 级别日志计数）和 `go_*` / `process_*`
@@ -48,11 +48,11 @@ XMetric:
   HistogramBuckets: [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10]           # 快捷方法建的直方图，即 prometheus.DefBuckets
   GoMetrics: true          # Go 运行时指标，默认开
   ProcessMetrics: true     # 进程指标，默认开
-  LogErrorMetric: true     # Error 级别日志计入 log_errors_total，默认开（需配合 xlog）
+  LogErrorMetric: true     # Error 及以上级别的日志计入 log_errors_total，默认开；只数走 xlog 的日志
 ```
 
 - 两组桶不写就是默认值，写了就整体替换；桶必须严格递增。
-- 指标端点的路径是 `XGin.MetricPath`。
+- 指标端点的路径是 `XGin.MetricPath` / `XEcho.MetricPath`。
 
 ## API
 
@@ -69,13 +69,13 @@ XMetric:
 | `MustRegister(cs...)` | 注册自定义 collector，重复注册会 panic |
 | `Register(c)` / `RegisterAs[T](c) (T, error)` | 注册，已注册过同名同标签的复用已有实例；**务必用返回值** |
 | `ConstLabels()` / `Namespace()` / `HTTPDurationBuckets()` | 读生效中的配置，自己建指标时填进 `prometheus.Opts`，和框架指标带同样的标签 |
-| `Handler() http.Handler` | `/metrics` 的 handler，不用 xgin 的服务自己挂 |
+| `Handler() http.Handler` | `/metrics` 的 handler，不用 xgin / xecho 的服务自己挂 |
 | `New(cfg) (*Metrics, io.Closer, error)` | 纯构造器：不碰全局、不读配置文件，离开框架也能用 |
 
 ## 注意事项
 
-- **名字写错读配置时就失败**：`Namespace` 和 `ConstLabels` 的 key 只收字母、数字、下划线，不以数字开头
-  （client_golang 不报错，会悄悄把 `my-app` 导出成 `my_app_…`）。见[「行为与实测」](#行为与实测)。
+- **名字写错读配置时就失败**：`Namespace` 和 `ConstLabels` 的 key 只收字母、数字、下划线，不以数字开头，
+  `ConstLabels` 的 key 也不以 `__` 开头（client_golang 不报错，会悄悄把 `my-app` 导出成 `my_app_…`）。见[「行为与实测」](#行为与实测)。
 - **`ConstLabels` 的 key 有保留字**：`le`、`quantile`、`version` 和框架指标自己的变量标签
   （`level`、`caller`、`method`、`status`、`route`、`host`、`name`）不能用，读配置时失败。
 - **桶写成空列表 `[]` 不是「用默认」**，直接失败；要默认值就别写这个字段。

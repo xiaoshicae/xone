@@ -26,12 +26,14 @@
 package clickhouse
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"net/url"
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	chproto "github.com/ClickHouse/ch-go/proto"
 	chgo "github.com/ClickHouse/clickhouse-go/v2"
@@ -47,6 +49,10 @@ const Driver xgorm.Driver = "clickhouse"
 
 // dialTimeoutKey ClickHouse DSN 里建连超时对应的 query 参数
 const dialTimeoutKey = "dial_timeout"
+
+// driverDialTimeout dial_timeout 为 0 时驱动用的值（clickhouse-go v2.48.0 clickhouse_options.go setDefaults，
+// Open / OpenDB / Connector 都先过它）。升级驱动时对一下
+const driverDialTimeout = 30 * time.Second
 
 // schemes 驱动认的 URL scheme。http / https 走 HTTP 协议，其余走 native
 var schemes = []string{"clickhouse://", "tcp://", "http://", "https://"}
@@ -176,8 +182,8 @@ func resolve(c xgorm.ClientConfig) (string, xgorm.ConnInfo, error) {
 	// 预算按驱动读出来的 dial_timeout 算：DSN 里写了更长的，xgorm 建连验证的预算
 	// 才会跟着放宽。驱动拿它管 TCP 建连，握手阶段又拿它设整条连接的 deadline
 	// （v2.48.0 conn_handshake.go），往返没有单独可依的配置，按同一量级再给一份。
-	// 两处都没写时 ParseDSN 读出来是 0（驱动建连时才补 30s），交给 xgorm 按
-	// 2 × DialTimeout 兜底
+	// 两处都没写时 ParseDSN 读出来是 0，驱动建连时才补成 driverDialTimeout：预算也按补完的算，
+	// 按 0 算的话 xgorm 只剩 1s 兜底，驱动还愿意等的慢握手被建连验证先判了超时
 	//
 	// 地址取驱动解出来的第一个：多主机写法 clickhouse://u:p@h1:9000,h2:9000/db 里
 	// URL 的 Host 是整串 "h1:9000,h2:9000"，驱动按逗号切开、依次去连（默认 in_order）。
@@ -191,7 +197,7 @@ func resolve(c xgorm.ClientConfig) (string, xgorm.ConnInfo, error) {
 		Driver:       string(Driver),
 		Addr:         opts.Addr[0],
 		DB:           opts.Auth.Database,
-		ProbeTimeout: 2 * opts.DialTimeout,
+		ProbeTimeout: 2 * cmp.Or(opts.DialTimeout, driverDialTimeout),
 	}, nil
 }
 

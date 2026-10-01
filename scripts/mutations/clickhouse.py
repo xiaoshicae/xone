@@ -3,7 +3,11 @@ from . import cut, mutate, section, swap
 
 section("客户端")
 mutate("ClickHouse 的探测预算用 DSN 里的 dial_timeout", "xgorm/clickhouse/clickhouse.go", "./xgorm/clickhouse", "TestResolve_DSNValuesNotOverridden",
-       swap('\t\tProbeTimeout: 2 * opts.DialTimeout,\n', '\t\tProbeTimeout: 2*c.DialTimeout + 0*opts.DialTimeout,\n'))
+       swap('\t\tProbeTimeout: 2 * cmp.Or(opts.DialTimeout, driverDialTimeout),\n', '\t\tProbeTimeout: 2*cmp.Or(c.DialTimeout, driverDialTimeout+0*opts.DialTimeout),\n'))
+# DialTimeout 配 0、DSN 里也没写时驱动按 30s 建连：预算按 0 算只剩 xgorm 的 1s 兜底，
+# 实测服务端第一个字节晚 1.5s 的建连 3 次全超时、启动失败
+mutate("ClickHouse 的探测预算按驱动补完默认值之后的 dial_timeout 算", "xgorm/clickhouse/clickhouse.go", "./xgorm/clickhouse", "TestResolve_ZeroTimeoutProbesWithDriverDefault",
+       swap('\t\tProbeTimeout: 2 * cmp.Or(opts.DialTimeout, driverDialTimeout),\n', '\t\tProbeTimeout: 2 * cmp.Or(opts.DialTimeout, 0*driverDialTimeout),\n'))
 # 驱动在 Initialize 里用 context.Background() 查版本：ctx 取消了也要等满
 # dial_timeout，失败了一次重试都没有
 # 库名写成 ?database= 时 URL 的路径是空的：只看路径的话日志和 Span 里的 db 是空串或者是被盖掉的那个

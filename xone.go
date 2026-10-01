@@ -39,7 +39,7 @@ import (
 
 	// XApp 块跟着框架一起来：只 import 了 xone 的程序也能写应用名。它只读配置，不改任何全局状态。
 	// xlog 不在这里：它会换掉 slog.Default，只用 xhook、xgorm 的程序不该被它接管日志。
-	// 用 xgin / xecho（或 xtrace、xmetric）时它跟着来，别的程序要用就匿名 import 它
+	// 只有 xgin / xecho 会把它带进来（xtrace、xmetric 不 import 它），别的程序要用就匿名 import 它
 	_ "github.com/xiaoshicae/xone/xapp"
 )
 

@@ -87,7 +87,7 @@ XGorm:
 
 - **DSN 里写了的参数以 DSN 为准**，配置里的超时只是默认值。时长一律不能为负。
 - 单次建连探测的预算：MySQL 是 `DialTimeout + MySQL.ReadTimeout`（其中一个配成 0 时按另一个算两份），PG 是 `connect_timeout + DialTimeout`（默认 1.5s），
-  其余驱动 `2 × DialTimeout`。见[「行为与实测」](#行为与实测)。
+  ClickHouse 是 `2 × dial_timeout`（DSN 里最终生效的；都没写时按驱动自己的 30s），其余驱动 `2 × DialTimeout`。见[「行为与实测」](#行为与实测)。
 
 ## API
 

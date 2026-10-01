@@ -168,7 +168,9 @@ func newClient(ctx context.Context, name string, cfg ClientConfig) (*redis.Clien
 		// 错误也一样：redisotel 把服务端的错误原文写进 exception.message 和状态描述，
 		// 换成包了一层的 TracerProvider，Span 上的错误文本和命令日志用同一套规则（见 trace.go）。
 		// 包的是这一刻的全局 provider：xtrace 还没装好时它是 otel 的委托，装好之后照样转过去
+		// Span 名也一样：redisotel 拿整条命令的第 1 个参数当名字，spanCmdsHook 挂在它外层，交出命令让包装重新起名
 		tp := redactingTracerProvider{otel.GetTracerProvider()}
+		client.AddHook(spanCmdsHook{})
 		if err := redisotel.InstrumentTracing(client, redisotel.WithDBStatement(false), redisotel.WithTracerProvider(tp)); err != nil {
 			return nil, nil, xerror.Newf("xredis", "new", "install tracing hook: %w", err)
 		}

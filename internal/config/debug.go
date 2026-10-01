@@ -103,8 +103,10 @@ func sensitiveKey(k string) bool {
 var (
 	urlUserinfo = regexp.MustCompile(`(://[^:/?#@\s]*):\S*@`) // postgres://u:p@h、redis://:p@h
 	mysqlDSN    = regexp.MustCompile(`^([^:@/\s]+):\S*@`)     // u:p@tcp(h:3306)/db
-	// 查询串（?token=x&page=2）和 PG 关键字写法（host=db password=x）里的一对 name=value
-	kvPair = regexp.MustCompile(`([A-Za-z0-9_.\-]+)=('[^']*'|[^\s&#;]+)`)
+	// 查询串（?token=x&page=2）和 PG 关键字写法（host=db password=x）里的一对 name=value。
+	// 值停在 } 之前：显示的是原文时它是 ${VAR:默认值} 的收尾（占位符的默认值里不会有 }），
+	// 一起遮掉的话打出来是 ${OPT:https://h/?api_key=***，后面的 /path 也跟着没了
+	kvPair = regexp.MustCompile(`([A-Za-z0-9_.\-]+)=('[^']*'|[^\s&#;}]+)`)
 )
 
 func redactString(s string) string {

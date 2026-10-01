@@ -41,7 +41,7 @@ err := xgorm.CWithCtx(ctx, "events").
 XGorm:
   Driver: clickhouse
   DSN: "${CH_DSN}"         # clickhouse://user:pass@host:9000/db，也认 tcp:// http:// https://
-  DialTimeout: 500ms       # 注入 DSN 的 dial_timeout，DSN 里已写的不覆盖
+  DialTimeout: 500ms       # 注入 DSN 的 dial_timeout，DSN 里已写的不覆盖；0 不注入，驱动用它自己的 30s
 ```
 
 - `https://` 不必再写 `secure=true`；TLS 规则见 [xtls](../../xtls/README.md)。
@@ -96,6 +96,9 @@ clickhouse-go 用它们跑集成测试，而 `go.mod` 分不出「只测试用�
 - ctx **取消**时当场返回 `context canceled`，同时给服务端发 Cancel 包、关掉这条连接：客户端断开之后 0.5ms handler 就返回了。
   服务端按数据块停下（约 115ms 从 `system.processes` 消失），`sleep(2.5)` 打断不了。
 - `Ping` 只认截止时间、不认取消。建连探测每次都带截止时间（`2 × dial_timeout`），启动期间收到退出信号约 400ms 后退出。
+- **`DialTimeout: 0` 且 DSN 里没写 `dial_timeout`** 时驱动按 30s 建连（v2.48.0 `setDefaults`），建连探测的单次预算也按它算（60s），
+  不是兜底的 1s。实测（ClickHouse 24.8.14，中间一层代理让服务端的第一个字节晚 1.5s）：按 0 算时 3 次各 1s 全部超时、5.3s 后启动失败；
+  按 30s 算 1.5s 连上。
 - 参数由驱动代进语句再发给服务端：浮点数写成 `cast(1.5, 'Float64')`，在 `system.query_log` 里按语句文本找时要按这个写法找。
 - 驱动对写入报的影响行数永远是 0，Span 的 `db.rows_affected` 在 ClickHouse 上没有意义。
 

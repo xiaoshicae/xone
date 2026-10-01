@@ -597,6 +597,9 @@ mutate("URL 的密码遮到最后一个 @", "internal/config/debug.go", ".", "Te
        swap('`(://[^:/?#@\\s]*):\\S*@`', '`(://[^:/?#@\\s]*):[^@/\\s]+@`'))
 mutate("MySQL DSN 的密码遮到最后一个 @", "internal/config/debug.go", ".", "TestRedacted_DSNPasswordMaskedUpToLastAt",
        swap('`^([^:@/\\s]+):\\S*@`', '`^([^:@/\\s]+):[^@\\s]+@`'))
+# 查询串的值从前一路遮到空白为止，${VAR:默认值} 收尾的 } 连同后面的路径一起没了
+mutate("调试输出遮查询串的值停在占位符收尾之前", "internal/config/debug.go", ".", "TestEnsure_XONE_DEBUGPlaceholderDefaultMaskedKeepsClosingBrace",
+       swap("('[^']*'|[^\\s&#;}]+)", "('[^']*'|[^\\s&#;]+)"))
 # 凭证写成列表或 map 时从前原样打出来：只遮了标量
 mutate("凭证 key 下的值不论形状整个遮掉", "internal/config/debug.go", ".", "TestRedacted_MasksWholeValueOfAnyShapeUnderSensitiveKey",
        swap('\t\t\t\tc.Content[i+1] = &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: redactedValue}\n',

@@ -257,3 +257,68 @@ func TestTrace_ClientSafeErrorKeptInSpan(t *testing.T) {
 		t.Errorf("网络错误该原样记下，got：\n%s", got)
 	}
 }
+
+// redisotel v9.22.0 的 Span 名是 cmd.FullName()：第 1 个参数原样转小写，不校验（tracing.go ProcessHook）；
+// pipeline 是 "redis.pipeline " 加各条命令的 FullName（rediscmd.CmdsString）。
+// 实测 Do(ctx, "SET k1 hunter2") 的 Span 名是 "set k1 hunter2"，整条命令连同值进了链路后端。
+// 规则同命令日志的 cmd 字段（cmdName）。XONE_E2E=1 时另对真的 Redis 跑一遍
+func TestTrace_SpanNameCarriesNoArgs(t *testing.T) {
+	backends := map[string]func(t *testing.T) ClientConfig{
+		"假服务端": func(t *testing.T) ClientConfig { return liveCfg(newFakeRedis(t)) },
+	}
+	if os.Getenv("XONE_E2E") == "1" {
+		backends["真 Redis"] = func(*testing.T) ClientConfig {
+			c := DefaultClientConfig()
+			c.Addr = cmp.Or(os.Getenv("XONE_E2E_REDIS_ADDR"), "127.0.0.1:6379")
+			return c
+		}
+	}
+	for backend, cfgOf := range backends {
+		t.Run(backend, func(t *testing.T) {
+			tp := useTP(t)
+			cfg := cfgOf(t)
+			client, closer, err := New(context.Background(), cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer closer.Close()
+			ctx := context.Background()
+
+			// 命令名里带着整条命令：真 Redis 回 unknown command，错误不是这里要验的
+			_ = client.Do(ctx, "SET k1 hunter2").Err()
+			_, _ = client.Pipelined(ctx, func(p redis.Pipeliner) error {
+				p.Do(ctx, "SET k2 pipesecret")
+				p.Get(ctx, "k2")
+				return nil
+			})
+			// 合规的命令名照旧
+			_ = client.Set(ctx, "k3", "v", 0).Err()
+			_, _ = client.Pipelined(ctx, func(p redis.Pipeliner) error {
+				p.Set(ctx, "k3", "v", 0)
+				p.Get(ctx, "k3")
+				return nil
+			})
+			_ = client.Do(ctx, "command", "count").Err()
+			// 占住池里那条空闲连接，下一条命令就得新拨一条：redis.dial 照旧
+			held := client.Conn()
+			_ = held.Ping(ctx).Err()
+			_ = client.Get(ctx, "k3").Err()
+			_ = held.Close()
+
+			got := tp.spans()
+			for _, name := range got {
+				if strings.Contains(name, "hunter2") || strings.Contains(name, "pipesecret") || strings.Contains(name, "k1") {
+					t.Errorf("命令参数进了 Span 名：%q", name)
+				}
+			}
+			for _, want := range []string{
+				"<invalid>", "redis.pipeline <invalid> get",
+				"set", "redis.pipeline set get", "command count", "redis.dial",
+			} {
+				if !slices.Contains(got, want) {
+					t.Errorf("该有 Span %q，got=%q", want, got)
+				}
+			}
+		})
+	}
+}

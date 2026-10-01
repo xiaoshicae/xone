@@ -133,7 +133,7 @@ XRedis:
 
 | 来源 | Span 名 | 关键属性 |
 |---|---|---|
-| xredis | redisotel 按命令起名 | 只有命令名，没有 `db.statement` 里的参数；出错时的状态描述和命令日志的 `error` 同一套规则 |
+| xredis | 命令名（`get`、`cluster info`），pipeline 是 `redis.pipeline get set`，建连是 `redis.dial`；不像命令名的记成 `<invalid>`，规则同命令日志的 `cmd` | 只有命令名，没有 `db.statement` 里的参数；出错时的状态描述和命令日志的 `error` 同一套规则 |
 
 链路的全貌、传播与信任边界见 [`docs/observability.md`「链路」](../docs/observability.md#链路)。
 
@@ -186,6 +186,11 @@ xredis 把 `DialerRetries` 固定成 1，同样的场景默认配置 2.1s、`Max
 它没有改写错误的选项，xredis 交给它的 TracerProvider 包了一层：状态描述换成和命令日志 `error` 字段同一份文本
 （`redis server error ERR (message omitted, it may contain argument values)`），`RecordError` 只记网络错误、超时这类
 原文可以照记的，其余不记成事件。返回给调用方的错误不变。
+
+**Span 名不带参数。** redisotel v9.22.0 拿 `cmd.FullName()` 当 Span 名——第 1 个参数原样转小写、不校验，
+实测 `Do(ctx, "SET k1 hunter2")` 的 Span 名是 `set k1 hunter2`，pipeline 里是 `redis.pipeline set k2 pipesecret get`。
+xredis 按命令重新起名，规则同命令日志的 `cmd` 字段：不像命令名的换成 `<invalid>`（`redis.pipeline <invalid> get`），
+合规的命令名和 `redis.dial` 不变。
 
 **TLS 握手受 `DialTimeout` 管**（go-redis 用 `tls.DialWithDialer`，拨号和握手共用一个超时）。
 

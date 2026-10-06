@@ -17,6 +17,10 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-latest
+    # 和发布流程（release.yml）一样不许自动换工具链：否则 go.work / go.mod 被抬到更高的 go 版本时，
+    # 这里悄悄下载新工具链照样通过，到点发布按钮时才红（v1.24.0 第一次发布就是这样失败的）
+    env:
+      GOTOOLCHAIN: local
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v6

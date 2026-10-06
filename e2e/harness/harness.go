@@ -20,6 +20,8 @@
 //	XONE_E2E_CH_PASSWORD  默认 e2e-secret-pw
 //	XONE_E2E_CH_DB        默认 xone_e2e
 //	XONE_E2E_CH           scripts/e2e.sh 起不来 ClickHouse 时设成 0，CH 的用例跳过（RequireCH）
+//	XONE_E2E_KAFKA_ADDR   Kafka broker，默认 127.0.0.1:9092
+//	XONE_E2E_KAFKA        scripts/e2e.sh 起不来 Kafka 时设成 0，Kafka 的用例跳过（RequireKafka）
 //
 // 每个 Start 默认用自己的端口、自己的表名和 Redis key 前缀，测试结束时删掉，
 // 所以用例之间互不干扰，可以 t.Parallel。

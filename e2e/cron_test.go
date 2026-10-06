@@ -45,7 +45,8 @@ func TestCron_JobLogsCarryJobAndTraceID_OverlapSkipped_SIGTERMWaitsForInFlightRu
 		switch {
 		case l.Msg() == "e2e cron drained" && drained < 0:
 			drained = i
-		case l.Msg() == "stopping" && firstClientStop < 0 && pkgOf(l.Str("hook")) != "xcron":
+		// 和 xcron 同在 StageServer 的停止钩子（xkafka 的消费者）不是客户端
+		case l.Msg() == "stopping" && firstClientStop < 0 && pkgOf(l.Str("hook")) != "xcron" && l.Str("hook") != "xkafka.stopConsumers":
 			firstClientStop = i
 		}
 	}

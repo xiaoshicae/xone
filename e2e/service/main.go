@@ -25,7 +25,10 @@
 //	POST /mysql/users 等        第二个 xgorm 实例 xgorm.C("mysql") 上的增删改查，见 mysql.go
 //	POST /ch/events 等          第三个 xgorm 实例 xgorm.C("ch")（ClickHouse，可选），见 clickhouse.go
 //
+//	POST /kafka/produce         经 xkafka.C() 写一条（Kafka 可选），见 kafka.go
+//
 // Service.CronEvery 大于 0 时另有一个定时任务 e2e-tick，见 cron.go。
+// Service.KafkaTopic 非空时消费它，见 kafka.go；Service.NoHTTP 时不起 xgin，只消费（xone.UntilSignal）。
 package main
 
 import (
@@ -49,6 +52,7 @@ import (
 	_ "github.com/xiaoshicae/xone/xgorm"
 	_ "github.com/xiaoshicae/xone/xgorm/clickhouse" // 注册 Driver: clickhouse
 	_ "github.com/xiaoshicae/xone/xhttp"
+	_ "github.com/xiaoshicae/xone/xkafka"
 	_ "github.com/xiaoshicae/xone/xredis"
 )
 
@@ -80,6 +84,14 @@ func main() {
 
 	if c.CronEvery > 0 {
 		addCron(c.CronEvery, c.CronHold) // 见 cron.go
+	}
+	if c.KafkaTopic != "" {
+		addConsumer(c) // 见 kafka.go
+	}
+	if c.NoHTTP {
+		// 只消费的进程：活全在钩子里，收到信号再跑停止钩子
+		xone.MustRun(xone.UntilSignal(), xone.WithStopTimeout(c.StopTimeout))
+		return
 	}
 
 	g := xgin.New().WithRoutes(routes, probeRoutes) // probeRoutes 见 probe.go

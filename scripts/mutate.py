@@ -103,7 +103,7 @@ def run(r, mutated, tmp):
     def go_test(*args):
         return subprocess.run(["go", "test", "-count=1", f"-overlay={overlay}", *args, "./..."],
                               cwd=ROOT / r.module, env=dict(os.environ, GOWORK="off"),
-                              capture_output=True, text=True)
+                              capture_output=True, text=True, errors="replace")  # 测试输出里可能有非 UTF-8 的字节
 
     # 先只编译不跑（-exec true：测试二进制照常编出来、连同 go test 自带的那组
     # vet 检查，但交给 true 去「执行」）。编不过的变异从前被算作「被杀掉」：

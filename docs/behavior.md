@@ -42,6 +42,12 @@
 | [`XRedis` 新连接上的握手](../xredis/README.md#行为与实测) | `CLIENT SETINFO`、维护通知都开 | 都关 | 7.2 之前的服务端每条连接留一个报错的 Span |
 | [`XRedis.Trace`](../xredis/README.md#行为与实测) | 整条命令连同参数写进 `db.statement` | 只有命令名 | 否则 `SET` 的值原样进链路后端 |
 | [go-redis 的日志](../xredis/README.md#行为与实测) | 标准库 log 写 `os.Stderr` | 接到 slog，记成 WARN | 同 go-sql-driver |
+| [`XKafka` 消费的提交](../xkafka/README.md#行为与实测) | 自动提交「上一次 poll 取到的」，不管处理完没有 | 只提交处理完的（`AutoCommitMarks`） | 每个分区一个协程时，排在队列里没处理的消息先被提交，进程一崩就丢 |
+| [`XKafka.Consumer.ResetOffset`](../xkafka/README.md#行为与实测) | earliest | latest | 否则新上线的消费组把 topic 里留着的全部历史处理一遍 |
+| [`XKafka` 停止](../xkafka/README.md#行为与实测) | `Close` 让缓冲里的消息全部失败 | 先 `Flush` 再 `Close` | 否则退出那一刻 `Produce` 出去的消息静默丢掉 |
+| [`XKafka` 启动探测](../xkafka/README.md#行为与实测) | `Ping` 对不回话的 broker 不听 ctx，等满 10s | 放进协程、看着 ctx | 否则启动期间的退出信号要等 10s |
+| [`XKafka` 的 franz-go 日志](../xkafka/README.md#行为与实测) | 不记 | 接到 slog，WARN 及以上 | 连不上、再均衡出错悄无声息 |
+| [`XKafka.Trace`](../xkafka/README.md#可观测) | kotel 把消息的 key 写进 Span | 不用 kotel，Span 里没有 key | key 里常有用户 ID、手机号 |
 | [`XCache.MaxCost`](../xcache/README.md#行为与实测) | 每条另计 56 字节内部开销 | 只算你给的 cost | 否则 `MaxCost: 2000` 实际只存得下 35 条 |
 | [`XCache` 停止](../xcache/README.md#行为与实测) | `Close` | `Clear` | `Close` 与并发读写一起跑会 panic |
 | [`XHttp` 的 resty 日志](../xhttp/README.md#行为与实测) | 写 `os.Stderr`，URL 带查询串 | 接到 slog，去掉查询串 | 令牌不落盘 |
@@ -54,15 +60,15 @@
 
 ## 启动期建连探测
 
-XGorm、XRedis 启动时各探一次，共用同一份实现（`internal/xclient.Probe`，基于 `xutil.Retry`）：
+XGorm、XRedis、XKafka 启动时各探一次，共用同一份实现（`internal/xclient.Probe`，基于 `xutil.Retry`）：
 
 - **最多试 3 次**（第一次加两次重试），两次之间的等待逐次翻倍并带抖动：退避从 1s 起，
   实际等待在 `[0, 当前退避]` 之间取值，两次退避的上界是 1s、2s。
   所以一个实例最多等 `3 × 单次探测预算 + 3s`：XGorm 连 PostgreSQL 默认 `3 × 1.5s + 3s = 7.5s`，
-  XRedis 默认 `3 × 1s + 3s = 6s`。
+  XRedis 默认 `3 × 1s + 3s = 6s`，XKafka 默认 `3 × 2s + 3s = 9s`。
 - **认证失败不重试**：PostgreSQL 的 SQLSTATE 第 28 类（密码错、用户不存在都是 28P01）；
   MySQL 的 1045（密码错、用户不存在）和 1044（没有这个库的权限——没有全局权限的账号连一个不存在的库
-  拿到的也是 1044；实测 MySQL 8.0.46）；Redis 的 `WRONGPASS` / `NOAUTH`；ClickHouse 的 516 和 192 / 193 / 194。
+  拿到的也是 1044；实测 MySQL 8.0.46）；Redis 的 `WRONGPASS` / `NOAUTH`；ClickHouse 的 516 和 192 / 193 / 194；Kafka 的 `SASL_AUTHENTICATION_FAILED` 等（未在真 Kafka 上量过，见 xkafka）。
   错误报 `authentication to <地址> failed`，不是 `cannot reach`。
 - **证书被拒不重试**：`x509` 校验失败，或者对端发来 `bad_certificate` / `unknown_ca` /
   `certificate_required` 告警。再试还是同一张证书、同一个结论。
@@ -77,6 +83,7 @@ XGorm、XRedis 启动时各探一次，共用同一份实现（`internal/xclient
 | [xgorm/clickhouse](../xgorm/clickhouse/README.md#行为与实测) | ClickHouse：超时与取消、重发、认证、TLS |
 | [xredis](../xredis/README.md#行为与实测) | go-redis：超时、建连重试、新连接上的握手、内存 |
 | [xcache](../xcache/README.md#行为与实测) | ristretto：内部开销、停止、指标开销、TTL |
+| [xkafka](../xkafka/README.md#行为与实测) | franz-go：自动提交、重置位置、`Close` 与 `Flush`、`Ping`、不存在的 topic、再均衡和会话超时 |
 | [xhttp](../xhttp/README.md#行为与实测) | resty / otelhttp / 标准库 Transport 的默认 |
 | [xcron](../xcron/README.md#行为与实测) | cronexpr：段数、时区前缀、夏令时、永远不会到的 spec；`@every` 的漂移 |
 | [xgin](../xgin/README.md#行为与实测) | gin / net/http：代理、上传、超时、h2c、TLS、优雅退出 |

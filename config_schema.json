@@ -1048,6 +1048,278 @@
       },
       "additionalProperties": false
     },
+    "XKafka": {
+      "description": "本模块的配置。两种写法",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "Brokers": {
+              "type": "array",
+              "description": "种子 broker 的地址，host:port。必填，没有默认值。 只是种子：连上任意一个之后，franz-go 从元数据里拿到整个集群的 broker。",
+              "items": {
+                "type": "string"
+              }
+            },
+            "ClientID": {
+              "type": "string",
+              "description": "发给 broker 的 client.id，broker 端的日志、配额、监控按它区分客户端。 默认空：经框架建的用 XApp.Name，XApp.Name 也没配就是 franz-go 的默认值 kgo （v1.21.7 实测）；直接调 New 的不读 XApp，空就是 kgo。"
+            },
+            "Consumer": {
+              "type": "object",
+              "description": "消费这一侧的设置，对这个集群上的每个 Consume 生效。",
+              "properties": {
+                "ResetOffset": {
+                  "type": "string",
+                  "description": "一个消费组第一次消费某个分区（还没提交过 offset）、或者提交过的 offset 已经被清理掉时， 从哪里开始：latest（只消费之后新来的）、earliest（从最早还留着的那条开始）。默认 latest。 franz-go 的默认是 earliest（v1.21.7 实测）：新上线的消费组会把 topic 里留着的全部历史消息 处理一遍。本模块默认 latest，代价是新组上线、或者 topic 刚建好的那一刻之前写进去的消息， 这个组不会处理——要它们就配 earliest。"
+                }
+              },
+              "additionalProperties": false
+            },
+            "DialTimeout": {
+              "type": "string",
+              "description": "建一条连接（TCP，加上 TLS 握手）的超时。默认 1s；franz-go 自己的默认是 10s。 启动时的连通性探测每次尝试的预算是 2 × DialTimeout：建连加一个往返，见 README「行为与实测」。（时长，写成 30s / 1500ms / 1h30m 这种形式；写裸数字会启动失败）"
+            },
+            "Log": {
+              "type": [
+                "boolean",
+                "string"
+              ],
+              "description": "是否记逐条消息的日志：生产失败（WARN）、每次处理失败（WARN）、处理成功（DEBUG）。默认开启。 关掉之后，消息进了死信、被跳过、处理函数 panic、死信写不进去这几种照样记—— 它们意味着一条消息没按正常的路走完，不记就没有任何痕迹。 只记消息的 key（可打印的 UTF-8，超过 256 字节截断），从不记 value，见 README「可观测」。",
+              "pattern": "\\$\\{"
+            },
+            "Metric": {
+              "type": [
+                "boolean",
+                "string"
+              ],
+              "description": "是否导出消费耗时指标（kafka_consume_duration_seconds）。默认开启。",
+              "pattern": "\\$\\{"
+            },
+            "Producer": {
+              "type": "object",
+              "description": "生产这一侧的几项设置。",
+              "properties": {
+                "Acks": {
+                  "type": "string",
+                  "description": "写成功要几个副本确认：all、leader、none。默认 all（franz-go 的默认值）。 all 时开着幂等写（franz-go 的默认）：重试不会写出重复的消息，同一分区里不乱序。 leader、none 时 franz-go 要求关掉幂等写，本模块替你关：此时重试可能写出重复的消息。"
+                },
+                "Compression": {
+                  "type": "string",
+                  "description": "批次的压缩算法：none、gzip、snappy、lz4、zstd。默认 snappy（franz-go 的默认值）。"
+                },
+                "Linger": {
+                  "type": "string",
+                  "description": "一个批次最多等多久再发，攒批用。默认 10ms（franz-go 的默认值）；配 0 是不等，有就发。（时长，写成 30s / 1500ms / 1h30m 这种形式；写裸数字会启动失败）"
+                }
+              },
+              "additionalProperties": false
+            },
+            "SASL": {
+              "type": "object",
+              "description": "认证。默认不认证。",
+              "properties": {
+                "Mechanism": {
+                  "type": "string",
+                  "description": "认证机制：PLAIN、SCRAM-SHA-256、SCRAM-SHA-512。默认空，不认证。 PLAIN 把密码原样发给 broker，不配 TLS 时它在网络上是明文。"
+                },
+                "Password": {
+                  "type": "string",
+                  "description": "密码。Mechanism 非空时必填。 建议写成 \"${KAFKA_PASSWORD}\"：凭证不该进版本库，漏配时启动就失败。 本模块不会把它写进任何日志和错误。"
+                },
+                "Username": {
+                  "type": "string",
+                  "description": "用户名。Mechanism 非空时必填。"
+                }
+              },
+              "additionalProperties": false
+            },
+            "TLS": {
+              "type": "object",
+              "description": "连 broker 时走不走 TLS。默认不走。字段和规则各模块共用，见 xtls.Config。",
+              "properties": {
+                "CAFile": {
+                  "type": "string",
+                  "description": "校验服务端证书用的 CA 证书（PEM，可以放好几张）。默认空，用系统的根证书。 填了就**只**认这个文件里的 CA，系统根证书不再参与校验。自签的证书填这里。"
+                },
+                "CertFile": {
+                  "type": "string",
+                  "description": "客户端证书（PEM），服务端要求双向认证时和 KeyFile 成对填。默认空。"
+                },
+                "Enable": {
+                  "type": [
+                    "boolean",
+                    "string"
+                  ],
+                  "description": "是否走 TLS。默认 false。下面几项只在开着时生效，没开却写了它们，启动失败—— 那多半是忘了开，照明文连过去比报错更糟。",
+                  "pattern": "\\$\\{"
+                },
+                "KeyFile": {
+                  "type": "string",
+                  "description": "客户端私钥（PEM），和 CertFile 成对填。默认空。"
+                },
+                "ServerName": {
+                  "type": "string",
+                  "description": "校验服务端证书时比对的名字。默认空，取连接地址的主机部分； 按 IP 连、而证书上写的是域名时填它。"
+                }
+              },
+              "additionalProperties": false
+            },
+            "Trace": {
+              "type": [
+                "boolean",
+                "string"
+              ],
+              "description": "是否给生产、消费各开一个 Span。默认开启。 关掉的只是 Span：链路上下文（traceparent 等）照样写进消息头、照样从消息头里接上， 下游开着链路的服务看到的仍是同一条链路。",
+              "pattern": "\\$\\{"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "Clients": {
+              "type": "object",
+              "description": "按名字组织的多个实例，实例名就是 key",
+              "additionalProperties": {
+                "type": "object",
+                "properties": {
+                  "Brokers": {
+                    "type": "array",
+                    "description": "种子 broker 的地址，host:port。必填，没有默认值。 只是种子：连上任意一个之后，franz-go 从元数据里拿到整个集群的 broker。",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "ClientID": {
+                    "type": "string",
+                    "description": "发给 broker 的 client.id，broker 端的日志、配额、监控按它区分客户端。 默认空：经框架建的用 XApp.Name，XApp.Name 也没配就是 franz-go 的默认值 kgo （v1.21.7 实测）；直接调 New 的不读 XApp，空就是 kgo。"
+                  },
+                  "Consumer": {
+                    "type": "object",
+                    "description": "消费这一侧的设置，对这个集群上的每个 Consume 生效。",
+                    "properties": {
+                      "ResetOffset": {
+                        "type": "string",
+                        "description": "一个消费组第一次消费某个分区（还没提交过 offset）、或者提交过的 offset 已经被清理掉时， 从哪里开始：latest（只消费之后新来的）、earliest（从最早还留着的那条开始）。默认 latest。 franz-go 的默认是 earliest（v1.21.7 实测）：新上线的消费组会把 topic 里留着的全部历史消息 处理一遍。本模块默认 latest，代价是新组上线、或者 topic 刚建好的那一刻之前写进去的消息， 这个组不会处理——要它们就配 earliest。"
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  "DialTimeout": {
+                    "type": "string",
+                    "description": "建一条连接（TCP，加上 TLS 握手）的超时。默认 1s；franz-go 自己的默认是 10s。 启动时的连通性探测每次尝试的预算是 2 × DialTimeout：建连加一个往返，见 README「行为与实测」。（时长，写成 30s / 1500ms / 1h30m 这种形式；写裸数字会启动失败）"
+                  },
+                  "Log": {
+                    "type": [
+                      "boolean",
+                      "string"
+                    ],
+                    "description": "是否记逐条消息的日志：生产失败（WARN）、每次处理失败（WARN）、处理成功（DEBUG）。默认开启。 关掉之后，消息进了死信、被跳过、处理函数 panic、死信写不进去这几种照样记—— 它们意味着一条消息没按正常的路走完，不记就没有任何痕迹。 只记消息的 key（可打印的 UTF-8，超过 256 字节截断），从不记 value，见 README「可观测」。",
+                    "pattern": "\\$\\{"
+                  },
+                  "Metric": {
+                    "type": [
+                      "boolean",
+                      "string"
+                    ],
+                    "description": "是否导出消费耗时指标（kafka_consume_duration_seconds）。默认开启。",
+                    "pattern": "\\$\\{"
+                  },
+                  "Producer": {
+                    "type": "object",
+                    "description": "生产这一侧的几项设置。",
+                    "properties": {
+                      "Acks": {
+                        "type": "string",
+                        "description": "写成功要几个副本确认：all、leader、none。默认 all（franz-go 的默认值）。 all 时开着幂等写（franz-go 的默认）：重试不会写出重复的消息，同一分区里不乱序。 leader、none 时 franz-go 要求关掉幂等写，本模块替你关：此时重试可能写出重复的消息。"
+                      },
+                      "Compression": {
+                        "type": "string",
+                        "description": "批次的压缩算法：none、gzip、snappy、lz4、zstd。默认 snappy（franz-go 的默认值）。"
+                      },
+                      "Linger": {
+                        "type": "string",
+                        "description": "一个批次最多等多久再发，攒批用。默认 10ms（franz-go 的默认值）；配 0 是不等，有就发。（时长，写成 30s / 1500ms / 1h30m 这种形式；写裸数字会启动失败）"
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  "SASL": {
+                    "type": "object",
+                    "description": "认证。默认不认证。",
+                    "properties": {
+                      "Mechanism": {
+                        "type": "string",
+                        "description": "认证机制：PLAIN、SCRAM-SHA-256、SCRAM-SHA-512。默认空，不认证。 PLAIN 把密码原样发给 broker，不配 TLS 时它在网络上是明文。"
+                      },
+                      "Password": {
+                        "type": "string",
+                        "description": "密码。Mechanism 非空时必填。 建议写成 \"${KAFKA_PASSWORD}\"：凭证不该进版本库，漏配时启动就失败。 本模块不会把它写进任何日志和错误。"
+                      },
+                      "Username": {
+                        "type": "string",
+                        "description": "用户名。Mechanism 非空时必填。"
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  "TLS": {
+                    "type": "object",
+                    "description": "连 broker 时走不走 TLS。默认不走。字段和规则各模块共用，见 xtls.Config。",
+                    "properties": {
+                      "CAFile": {
+                        "type": "string",
+                        "description": "校验服务端证书用的 CA 证书（PEM，可以放好几张）。默认空，用系统的根证书。 填了就**只**认这个文件里的 CA，系统根证书不再参与校验。自签的证书填这里。"
+                      },
+                      "CertFile": {
+                        "type": "string",
+                        "description": "客户端证书（PEM），服务端要求双向认证时和 KeyFile 成对填。默认空。"
+                      },
+                      "Enable": {
+                        "type": [
+                          "boolean",
+                          "string"
+                        ],
+                        "description": "是否走 TLS。默认 false。下面几项只在开着时生效，没开却写了它们，启动失败—— 那多半是忘了开，照明文连过去比报错更糟。",
+                        "pattern": "\\$\\{"
+                      },
+                      "KeyFile": {
+                        "type": "string",
+                        "description": "客户端私钥（PEM），和 CertFile 成对填。默认空。"
+                      },
+                      "ServerName": {
+                        "type": "string",
+                        "description": "校验服务端证书时比对的名字。默认空，取连接地址的主机部分； 按 IP 连、而证书上写的是域名时填它。"
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  "Trace": {
+                    "type": [
+                      "boolean",
+                      "string"
+                    ],
+                    "description": "是否给生产、消费各开一个 Span。默认开启。 关掉的只是 Span：链路上下文（traceparent 等）照样写进消息头、照样从消息头里接上， 下游开着链路的服务看到的仍是同一条链路。",
+                    "pattern": "\\$\\{"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "minProperties": 1
+            }
+          },
+          "required": [
+            "Clients"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "XLog": {
       "type": [
         "object",

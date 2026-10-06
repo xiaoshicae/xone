@@ -355,10 +355,11 @@ XGorm（PostgreSQL / MySQL / ClickHouse）、XRedis、XHttp 连出去时的 TLS 
 | `XGorm` | 数据库 | [xgorm/README.md](../xgorm/README.md#配置) |
 | `XGorm`（`Driver: clickhouse`） | ClickHouse 驱动 | [xgorm/clickhouse/README.md](../xgorm/clickhouse/README.md#配置) |
 | `XRedis` | Redis | [xredis/README.md](../xredis/README.md#配置) |
+| `XKafka` | Kafka | [xkafka/README.md](../xkafka/README.md#配置) |
 | `XCache` | 本地缓存 | [xcache/README.md](../xcache/README.md#配置) |
 | `XHttp` | 出站 HTTP | [xhttp/README.md](../xhttp/README.md#配置) |
 | `XGin` | Web 服务 | [xgin/README.md](../xgin/README.md#配置) |
 | `XGinSwagger` | 接口文档 | [xginswagger/README.md](../xginswagger/README.md#配置) |
 | `XEcho` | Web 服务（Echo） | [xecho/README.md](../xecho/README.md#配置) |
 | `XFlow` | 流程编排 | [xflow/README.md](../xflow/README.md#配置) |
-| `TLS`（XGorm / XRedis / XHttp 块里的） | 客户端 TLS | [xtls/README.md](../xtls/README.md#配置) |
+| `TLS`（XGorm / XRedis / XHttp / XKafka 块里的） | 客户端 TLS | [xtls/README.md](../xtls/README.md#配置) |

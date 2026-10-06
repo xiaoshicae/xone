@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 跑 e2e/ 下的真实 Web 服务测试：真的 PostgreSQL、MySQL、Redis、ClickHouse，真的进程和信号。
+# 跑 e2e/ 下的真实 Web 服务测试：真的 PostgreSQL、MySQL、Redis、ClickHouse、Kafka，真的进程和信号。
 #
 #   scripts/e2e.sh                 # 全部（压测除外）
 #   scripts/e2e.sh -run Smoke      # 后面的参数原样交给 go test
@@ -18,6 +18,9 @@
 # ClickHouse 是可选的：在跑就用；本机的话跑在 Docker 容器 xone-ch 里（XONE_E2E_CH_CONTAINER），
 # 停着就 docker start。没有 Docker、没有这个容器或起不来时不算失败——CH 的用例各自跳过
 # 并说明原因，其余照跑。事先设了 XONE_E2E_CH=0 就不碰 CH。
+# Kafka 同样可选：在跑就用；本机的话跑在 Docker 容器 xone-kafka 里（XONE_E2E_KAFKA_CONTAINER），
+# 停着就 docker start，没有这个容器就按 e2e/compose.yml 里的那组参数 docker run 一个（KRaft 单节点，数据在 tmpfs）。
+# 没有 Docker 或起不来时不算失败——Kafka 的用例各自跳过。事先设了 XONE_E2E_KAFKA=0 就不碰 Kafka。
 # 连接参数都能用环境变量盖掉，默认值和 e2e/harness 里的一致。
 #
 # 不在 scripts/test.sh 里：那里没有数据库，e2e 的每个测试在 XONE_E2E 不为 1 时都会跳过。
@@ -66,6 +69,10 @@ export XONE_E2E_MYSQL_ADDR XONE_E2E_MYSQL_USER XONE_E2E_MYSQL_PASSWORD XONE_E2E_
 : "${XONE_E2E_CH_DB:=xone_e2e}"
 : "${XONE_E2E_CH_CONTAINER:=xone-ch}"
 export XONE_E2E_CH_ADDR XONE_E2E_CH_HTTP_ADDR XONE_E2E_CH_USER XONE_E2E_CH_PASSWORD XONE_E2E_CH_DB
+: "${XONE_E2E_KAFKA_ADDR:=127.0.0.1:9092}"
+: "${XONE_E2E_KAFKA_CONTAINER:=xone-kafka}"
+: "${XONE_E2E_KAFKA_IMAGE:=mirror.gcr.io/apache/kafka:3.9.1}"
+export XONE_E2E_KAFKA_ADDR
 
 # 地址是 host:port；取 host 时去掉 IPv6 的方括号
 host_of() { h=${1%:*}; h=${h#[}; echo "${h%]}"; }
@@ -182,6 +189,60 @@ else
 fi
 if [ "${XONE_E2E_CH:-}" != 0 ] && ! ch_auth; then
   ch_skip "用 $XONE_E2E_CH_USER 连不上 $XONE_E2E_CH_HTTP_ADDR 上的库 $XONE_E2E_CH_DB，密码用 XONE_E2E_CH_PASSWORD 告诉本脚本"
+fi
+
+# ---- Kafka ----
+# 就绪不能只看端口：docker 的端口转发在 broker 起来之前就在听了。容器里有 Kafka 自带的脚本，
+# 用它向 broker 要一次 ApiVersions；不是本机容器管着的（CI 的服务容器、别的机器）退回只看端口，
+# 真正的就绪由 harness.RequireKafka 再查一次。
+# 冷启动实测约 7s（含 JVM），首次 docker run 还要拉镜像（约 200MB）
+kafka_container_up() {
+  docker exec "$XONE_E2E_KAFKA_CONTAINER" /opt/kafka/bin/kafka-broker-api-versions.sh \
+    --bootstrap-server "127.0.0.1:${XONE_E2E_KAFKA_ADDR##*:}" >/dev/null 2>&1
+}
+kafka_skip() {
+  echo "⚠ Kafka 不可用（$1），Kafka 的用例会跳过；要跑它们：docker compose -f e2e/compose.yml up -d --wait kafka"
+  export XONE_E2E_KAFKA=0
+}
+# kafka_run 按 e2e/compose.yml 的那组参数起一个容器：KRaft 单节点；消费组的首次分配不等 3s
+# （GROUP_INITIAL_REBALANCE_DELAY_MS 默认 3000，每个用例都要入组，省下来的是整轮 e2e 的时间）
+kafka_run() {
+  port=${XONE_E2E_KAFKA_ADDR##*:}
+  docker run -d --name "$XONE_E2E_KAFKA_CONTAINER" -p "127.0.0.1:$port:$port" --tmpfs /tmp/kraft-combined-logs \
+    -e KAFKA_NODE_ID=1 -e KAFKA_PROCESS_ROLES=broker,controller \
+    -e KAFKA_LISTENERS="PLAINTEXT://:$port,CONTROLLER://:9093" \
+    -e KAFKA_ADVERTISED_LISTENERS="PLAINTEXT://127.0.0.1:$port" \
+    -e KAFKA_CONTROLLER_LISTENER_NAMES=CONTROLLER \
+    -e KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT \
+    -e KAFKA_CONTROLLER_QUORUM_VOTERS=1@localhost:9093 \
+    -e KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1 -e KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR=1 \
+    -e KAFKA_TRANSACTION_STATE_LOG_MIN_ISR=1 -e KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS=0 \
+    "$XONE_E2E_KAFKA_IMAGE" >/dev/null
+}
+if [ "${XONE_E2E_KAFKA:-}" = 0 ]; then
+  echo "⚠ XONE_E2E_KAFKA=0，Kafka 的用例会跳过"
+elif [ "${XONE_E2E_EXTERNAL:-}" = 1 ] || ! is_local "$XONE_E2E_KAFKA_ADDR"; then
+  echo "== 等 Kafka 在 $XONE_E2E_KAFKA_ADDR 就绪"
+  if wait_for 300 tcp_up "$XONE_E2E_KAFKA_ADDR"; then echo "✓ Kafka 已就绪"; else kafka_skip "$XONE_E2E_KAFKA_ADDR 上 60 秒内没连上"; fi
+elif ! has docker || ! docker info >/dev/null 2>&1; then
+  if tcp_up "$XONE_E2E_KAFKA_ADDR"; then echo "✓ Kafka 已在 $XONE_E2E_KAFKA_ADDR 运行"; else kafka_skip "没有 docker，或者 docker 守护进程没在跑"; fi
+elif kafka_container_up; then
+  echo "✓ Kafka 已在 $XONE_E2E_KAFKA_ADDR 运行（容器 $XONE_E2E_KAFKA_CONTAINER）"
+else
+  kafka_start=$(date +%s)
+  if docker inspect "$XONE_E2E_KAFKA_CONTAINER" >/dev/null 2>&1; then
+    echo "== 启动 Kafka（docker start $XONE_E2E_KAFKA_CONTAINER）"
+    docker start "$XONE_E2E_KAFKA_CONTAINER" >/dev/null 2>&1 || true
+  else
+    echo "== 创建 Kafka 容器（docker run $XONE_E2E_KAFKA_IMAGE，名字 $XONE_E2E_KAFKA_CONTAINER）"
+    kafka_run || true
+  fi
+  # 每次探测本身要起一个 JVM（约 2s），所以次数给少一些：总共约 60 秒
+  if wait_for 30 kafka_container_up; then
+    echo "✓ Kafka 已启动（$(($(date +%s) - kafka_start))s）"
+  else
+    kafka_skip "启动之后 60 秒仍没有就绪，看 docker logs $XONE_E2E_KAFKA_CONTAINER"
+  fi
 fi
 
 # 和 scripts/test.sh 一样 GOWORK=off：测的是 e2e/go.mod 自己解出来的依赖

@@ -26,7 +26,7 @@ echo "✓ 核心不依赖任何集成模块"
 
 # ---- 3. xhook 与基础包必须零第三方依赖 ----
 # xhook 是每个集成都要认识的包（另一个是 xconfig），一旦它有依赖，所有集成都被迫背上。
-# xtls 同理：它是 xgorm / xredis / xhttp 配置结构体里的一个字段类型。
+# xtls 同理：它是 xgorm / xredis / xhttp / xkafka 配置结构体里的一个字段类型。
 # internal/web 是各 Web 集成共用的那一半：混进一个三方包，每个 Web 集成都得背上
 # go list 的输出先落进变量：直接接管道的话，包挪走了、go list 报错，grep -c 数出 0，检查静默通过
 for pkg in ./xhook ./xerror ./xutil ./xtls ./internal/web; do
@@ -38,11 +38,11 @@ echo "✓ xhook / xerror / xutil / xtls / internal/web 零第三方依赖"
 
 # xlog 会换掉 slog.Default()，只跟着 xgin / xecho / xcron 来（它们是「进程的主体」：Web 服务、定时任务进程，
 # 要的就是 JSON 日志和 trace_id）。数据类集成、xtrace、xmetric 都不许把它带进来：
-# 否则只用 xgorm 的程序又被接管了日志。xtrace / xmetric 往 internal/logext 注入，不 import xlog。
+# 否则只用 xgorm 的程序又被接管了日志。xtrace / xmetric / xkafka 往 internal/logext 注入，不 import xlog。
 # 查每个模块的全部包（./...），不只是模块根上那一个：核心里的 xflow、xonetest、internal/... 带进 xlog，
 # 使用者 import 它们同样被接管日志。xlog 自己的 Deps 里没有它自己，不用单独排掉
 xlog=github.com/xiaoshicae/xone/xlog
-for m in . xtrace xmetric xgorm xredis xhttp xcache; do
+for m in . xtrace xmetric xgorm xredis xhttp xcache xkafka; do
   out=$(cd "$m" && GOWORK=off go list -f "{{.ImportPath}}{{range .Deps}}{{if eq . \"$xlog\"}} <-xlog{{end}}{{end}}" ./...) \
     || fail "$m: go list 失败（模块挪走了？同步这里的列表）"
   [ -n "$out" ] || fail "$m: go list 一个包都没列出来"

@@ -304,13 +304,9 @@ func TestShutdown_CloseOrderIsReverseStartOrder_XLogLast(t *testing.T) {
 	}
 
 	// 每个停止钩子配对的启动钩子，在启动顺序里的位置必须严格递减
-	pos := map[string]int{}
-	for i, h := range starts {
-		pos[pkgOf(h)] = i
-	}
 	prev := len(starts)
 	for _, s := range stops {
-		i, ok := pos[pkgOf(s)]
+		i, ok := startIndex(starts, s)
 		if !ok {
 			t.Errorf("停止钩子 %s 所在的包没有启动过", s)
 			continue

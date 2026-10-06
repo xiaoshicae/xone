@@ -278,7 +278,7 @@ func TestScope_ReopeningKeepsExistingFields(t *testing.T) {
 	AddKV(ctx2, "b", 2)
 
 	n := 0
-	scopeFrom(ctx).each(func(k string, v any) { n++ })
+	scopeFrom(ctx).Each(func(k string, v any) { n++ })
 	if n != 2 {
 		t.Errorf("重复开启应幂等，两个字段都在，got=%d", n)
 	}
@@ -347,7 +347,7 @@ func TestCtxWithKV_PassedValueWinsOnSameKey_WorksWithoutScope(t *testing.T) {
 		t.Errorf("父 ctx 没有作用域时也该带上字段，got=%v", got[1])
 	}
 	var kept any
-	scopeFrom(parent).each(func(_ string, v any) { kept = v })
+	scopeFrom(parent).Each(func(_ string, v any) { kept = v })
 	if kept != "old" {
 		t.Errorf("父 ctx 的值不该被改，got=%v", kept)
 	}

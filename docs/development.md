@@ -24,7 +24,7 @@ xone/
 ├── xhook/               两个生命周期钩子，零依赖。集成要认识的两个包之一
 ├── xconfig/             配置解码：Unmarshal、Has、UnmarshalClients、DecodeStrict。另一个
 ├── xonetest/            给使用者的测试辅助：换一份配置、跑一遍钩子
-├── xtls/                客户端 TLS 块，xgorm / xredis / xhttp 共用，零依赖
+├── xtls/                客户端 TLS 块，xgorm / xredis / xhttp / xkafka 共用，零依赖
 ├── xerror/  xutil/      零第三方依赖
 ├── xapp/                应用身份（名字、版本），只认领配置不初始化
 ├── xlog/                日志，基于 log/slog，零第三方依赖
@@ -32,9 +32,9 @@ xone/
 ├── internal/
 │   ├── config/          配置加载：定位、profile / import、合并、占位符、严格解码
 │   ├── hook/            钩子登记、配对与按档位执行
-│   ├── xclient/         xgorm / xredis / xcache 共用的具名实例管理和启动期探测
+│   ├── xclient/         xgorm / xredis / xcache / xkafka 共用的具名实例管理和启动期探测
 │   ├── web/             xgin / xecho 共用的那一半：监听、TLS、优雅关闭、信任的代理、脱敏，零第三方依赖
-│   ├── logext/          xlog 的扩展点（trace_id 提取、错误日志计数），xtrace / xmetric 往这里注入
+│   ├── logext/          xlog 的扩展点（trace_id 提取、错误日志计数、ctx 里的日志字段），xtrace / xmetric / xkafka 往这里注入
 │   ├── testkit/         仓库自己的单元测试共用的小工具，只依赖标准库
 │   ├── coreonly/        只用核心、不 import 任何集成的程序也能跑通（测试）
 │   └── schemagen/       生成 config_schema.json、核对各模块 README 的「配置」一节（独立的工具 module）
@@ -45,6 +45,7 @@ xone/
 ├── xredis/              Redis，基于 go-redis（独立 module）
 ├── xcache/              本地缓存，基于 ristretto（独立 module）
 ├── xhttp/               出站 HTTP，基于 resty（独立 module）
+├── xkafka/              Kafka 生产与消费，基于 franz-go（独立 module）
 ├── xcron/               进程内的定时任务，cronexpr 只用来解析（独立 module）
 ├── xgin/                Web 服务，基于 Gin（独立 module）
 │   └── middleware/      访问日志、链路、指标、panic 恢复，外加 LogScope / Propagate
@@ -61,7 +62,7 @@ xone/
 │   ├── baseline/        裸 gin 的对照服务，压测时比出框架的开销
 │   ├── covapp/          一次性任务形状的最小程序，测配置加载时机（提前读、WithConfigPath）
 │   ├── harness/         起进程、读日志 / Span / 指标 / /proc、TCP 故障代理、下游桩、压测器
-│   └── compose.yml      e2e 要的 PG / MySQL / Redis / ClickHouse
+│   └── compose.yml      e2e 要的 PG / MySQL / Redis / ClickHouse / Kafka
 ├── config_schema.json   配置的 JSON Schema，由结构体生成，给 IDE 用
 ├── .github/workflows/   ci.yml：check.sh + test.sh，外加用 Go 1.23 单独编译核心；e2e.yml：e2e + 全量变异；
 │                        release.yml：发布按钮（打 tag、跑 e2e、只推 tag；验证装得上是单独的 verify job）
@@ -70,7 +71,7 @@ xone/
     ├── test.sh          跑全仓库测试（go test ./... 不跨模块边界）
     ├── mutate.py        变异测试
     ├── mutations/       变异表，一个 module 一个文件（core.py 是根模块）
-    ├── e2e.sh           拉起 PG / MySQL / Redis / ClickHouse，跑 e2e/
+    ├── e2e.sh           拉起 PG / MySQL / Redis / ClickHouse / Kafka，跑 e2e/
     └── release.sh       发版：--bump 钉版本号，--tag 打 tag，推送之前 --smoke、推送之后 --verify 验证装得上、跑得起来
 ```
 
@@ -93,7 +94,7 @@ xone/
 | `scripts/check.sh` | 架构约束 + 依赖边界 + 文档 + gofmt / vet | 每次（ci.yml） |
 | `scripts/test.sh [go test 参数]` | 逐模块 `GOWORK=off go test -race ./...`，几个模块同时跑（默认 CPU 核数个，`XONE_TEST_JOBS` 可改），输出按模块顺序打出；一个模块红了也跑完其余的，最后一起报。本地改代码时不加 `-count=1`，没改过的模块直接用缓存 | 每次（`-count=1`） |
 | `scripts/mutate.py [-j N] [--only X] [-k X] [--dry-run]` | 变异测试，并行跑，不动工作区 | 全量每晚、手动触发（e2e.yml）；`--dry-run` 在 check.sh 里 |
-| `scripts/e2e.sh [--load] [-run X]` | 真实 Web 服务测试，要 PG / MySQL / Redis（ClickHouse 可选）；不给 `-parallel` 时用 16（测试大半时间在等；go test 默认是 GOMAXPROCS，4 核机器上 103s，16 是 60s） | 改了 `go.mod` / `go.sum` 的 PR、每晚、手动触发（e2e.yml，不含压测） |
+| `scripts/e2e.sh [--load] [-run X]` | 真实 Web 服务测试，要 PG / MySQL / Redis（ClickHouse、Kafka 可选）；不给 `-parallel` 时用 16（测试大半时间在等；go test 默认是 GOMAXPROCS，4 核机器上 103s，16 是 60s） | 改了 `go.mod` / `go.sum` 的 PR、每晚、手动触发（e2e.yml，不含压测） |
 | `scripts/release.sh vX.Y.Z (--bump \| --tag [--e2e-passed] \| --smoke \| --verify)` | 发布：钉版本号 / 打 tag / 推送前冒烟 / 推送后验证 | 否（打 tag 由 release 按钮做） |
 
 ### check.sh
@@ -175,17 +176,21 @@ go test -run=NONE -bench=. -benchtime=100000x ./xlog/ ./xflow/ ./xgin/middleware
 
 ## e2e：真实 Web 服务测试
 
-`e2e/` 把 `e2e/service` 编成二进制、当成一个真的进程起起来，连真的 PostgreSQL、MySQL、Redis 和 ClickHouse，
+`e2e/` 把 `e2e/service` 编成二进制、当成一个真的进程起起来，连真的 PostgreSQL、MySQL、Redis、ClickHouse 和 Kafka，
 发请求、发信号，再读它的日志、Span、`/metrics` 和 `/proc`。
 
 - 服务的 XGorm 是多实例：`default` 连 PostgreSQL，`mysql` 连 MySQL；`ch` 连 ClickHouse，写在 profile
   `e2e/service/application-ch.yml` 里，只有 `TestClickHouse_*` 起的进程激活它（`harness.Options.ClickHouse`）；
+- XKafka 同理写在 `e2e/service/application-kafka.yml` 里，只有 `TestKafka_*` 起的进程激活它（`harness.Options.Kafka`），
+  每个用例自己建 topic、用自己的消费组；
 - 故障经 harness 里的 TCP 代理注入（断开、拒绝新连接、加延迟、模拟主机宕机），不去停真的服务；
 - 用例之间各用各的端口、表名和 key 前缀；
 - PG / MySQL / Redis 没在跑时脚本先按本机的装法拉起来（`pg_ctlcluster` / `service mysql` / `redis-server`），
   连接参数用 `XONE_E2E_PG_ADDR`、`XONE_E2E_MYSQL_ADDR`、`XONE_E2E_REDIS_ADDR` 等覆盖；服务归别处管（CI 的服务容器、
   docker compose、另一台机器）时设 `XONE_E2E_EXTERNAL=1`（地址不在本机、或本机没有对应的启动命令时也一样），脚本只等它就绪（最多 60 秒，只看 TCP）；
 - ClickHouse 跑在 Docker 容器 `xone-ch` 里（`XONE_E2E_CH_*` 覆盖），起不来时脚本设 `XONE_E2E_CH=0`，`TestClickHouse_*` 各自跳过；
+- Kafka 跑在 Docker 容器 `xone-kafka` 里（`mirror.gcr.io/apache/kafka:3.9.1`，KRaft 单节点，`XONE_E2E_KAFKA_*` 覆盖），
+  没有这个容器时脚本按 `e2e/compose.yml` 的参数建一个；起不来时设 `XONE_E2E_KAFKA=0`，`TestKafka_*` 各自跳过；
 - 后面的参数原样交给 `go test`。
 
 本机没装这些服务的话，用 `e2e/compose.yml` 一次起齐，账号密码和脚本的默认值一致：

@@ -49,9 +49,9 @@ mutate("旧粒度的文件按它自己那一档的周期算过期", "xlog/rotate
 mutate("打开时就清理一次过期文件", "xlog/rotate.go", ".", "TestRotateWriter",
        swap('\tw.purge(w.currentName)\n\treturn w, nil', '\treturn w, nil'))
 # CtxWithKV 要派生一份副本：直接往父作用域里写，兄弟之间就串了、访问日志也被污染
-mutate("CtxWithKV 不写回父 ctx", "xlog/ctx.go", ".", "TestCtxWithKV",
-       swap('return context.WithValue(ctx, ctxScopeKey{}, parent.copyWith(kvs))', 'parent.addAll(kvs)\n\treturn context.WithValue(ctx, ctxScopeKey{}, parent)'))
-mutate("CtxWithKV 带着父 ctx 已有的字段", "xlog/ctx.go", ".", "TestCtxWithKV",
+mutate("CtxWithKV 不写回父 ctx", "internal/logext/scope.go", ".", "TestCtxWithKV",
+       swap('return context.WithValue(ctx, ctxScopeKey{}, parent.copyWith(kvs))', 'parent.AddAll(kvs)\n\treturn context.WithValue(ctx, ctxScopeKey{}, parent)'))
+mutate("CtxWithKV 带着父 ctx 已有的字段", "internal/logext/scope.go", ".", "TestCtxWithKV",
        swap('\tmaps.Copy(c.kv, s.kv)\n', ''))
 mutate("片段也有 profile 变体", "internal/config/source.go", ".", "TestLoad",
        swap('nested, err := fileSet(target, d, false, profiles, seen, depth+1)',

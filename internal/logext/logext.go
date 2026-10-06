@@ -1,8 +1,8 @@
-// Package logext 放 xlog 的两个扩展点：链路标识提取器和日志观察者。
+// Package logext 放 xlog 的三个扩展点：链路标识提取器、日志观察者、ctx 里的日志字段作用域（scope.go）。
 //
-// 它们原来就在 xlog 里。挪到这里，注入的一方（xtrace、xmetric）就不必 import xlog：
-// 只用 xgorm、xredis 这类集成的程序不会因为它们顺带装上 xlog、被换掉 slog.Default。
-// xlog 读这里的值，公开的 xlog.SetTraceExtractor / xlog.AddObserver / xlog.TraceIDs 转发到这里。
+// 它们原来就在 xlog 里。挪到这里，注入的一方（xtrace、xmetric、xkafka）就不必 import xlog：
+// 只用 xgorm、xredis、xkafka 这类集成的程序不会因为它们顺带装上 xlog、被换掉 slog.Default。
+// xlog 读这里的值，公开的 xlog.SetTraceExtractor / xlog.AddObserver / xlog.TraceIDs / xlog.CtxWithKV 转发到这里。
 package logext
 
 import (

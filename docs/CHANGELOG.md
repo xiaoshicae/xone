@@ -8,6 +8,8 @@
 
 ## [未发布]
 
+## [v1.24.0] - 2026-10-06
+
 ### 新增
 
 - 新模块 xkafka（franz-go v1.21.7）：`xkafka.C()` 是生产用的原生 `*kgo.Client`，链路上下文自动写进消息头，退出时先 `Flush` 再关；`xkafka.Consume(topic, group, fn)` 登记消费者，每个分区一个协程、分区内按顺序，处理完才提交（至少一次），失败按退避重试、用完写进 `<topic>.dlq`（`xutil.Permanent` 不重试），panic 被接住，再均衡和退出时等在途的消息处理完、提交之后才交出分区；新消费组默认从 latest 开始（franz-go 默认 earliest）。

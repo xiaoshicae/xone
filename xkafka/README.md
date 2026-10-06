@@ -56,6 +56,8 @@ func main() {
 **只消费的进程**：
 
 ```go
+import _ "github.com/xiaoshicae/xone/xlog" // xkafka 不带 xlog：要 JSON 日志和 topic / offset 这些字段，匿名 import 它
+
 func main() {
 	xkafka.Consume("orders", "billing", handle)
 	xone.MustRun(xone.UntilSignal())
@@ -65,6 +67,30 @@ func main() {
 消费者在 StageServer 那一档起来——客户端（xgorm、xredis……）和你的业务钩子都已就绪，处理函数里直接 `xgorm.C()`；
 停的时候它最先停，在途的消息处理完、提交之后才轮到关客户端。不用自己写 `Start`、`WaitGroup`、`WithoutCancel`，
 [docs/guide.md「非 Web 服务」](../docs/guide.md#非-web-服务consumer--job)那三条规矩它都替你做了。
+
+**生产用 `C()`，消费用 `Consume`。** 两者读同一份 `XKafka` 配置：`C()` 是这个集群上不带消费组的那个共享客户端；
+消费组只能在建客户端时定，所以每个 `Consume` 用同一份配置另建一个自己的（`WithClient` 选集群，不写是 `default`）。
+没有 `C().Consume`：`C()` 交出的是原生 `*kgo.Client`，挂不上方法，而且它要到 StageClient 才建好，`Consume` 却什么时候都能登记。
+
+| 消费者用到的配置 | 作用 |
+|---|---|
+| `Brokers` / `SASL` / `TLS` / `DialTimeout` / `ClientID` | 怎么连，和生产完全一样 |
+| `Consumer.ResetOffset` | 新消费组从 latest 还是 earliest 开始 |
+| `Trace` / `Metric` / `Log` | 每条消息的 Span、处理耗时指标、逐条日志 |
+| `Producer.*` | 写死信时用（死信由这个消费者自己的客户端写） |
+
+topic、group、重试、死信写在代码里：它们决定消息会不会丢，跟着代码评审。topic、group 随环境变的，
+自己的配置块里读出来再传进来，`${VAR}` 和拼错报错照样有效：
+
+```go
+xhook.BeforeStart(func(ctx context.Context) error {
+	c := struct{ Topic, Group string }{}
+	if err := xconfig.Unmarshal("Orders", &c); err != nil {
+		return err
+	}
+	return xkafka.Consume(c.Topic, c.Group, handle)
+})
+```
 
 ## 配置
 

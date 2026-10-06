@@ -13,6 +13,7 @@ replace (
 	github.com/xiaoshicae/xone/xgorm => ../xgorm
 	github.com/xiaoshicae/xone/xgorm/clickhouse => ../xgorm/clickhouse
 	github.com/xiaoshicae/xone/xhttp => ../xhttp
+	github.com/xiaoshicae/xone/xkafka => ../xkafka
 	github.com/xiaoshicae/xone/xmetric => ../xmetric
 	github.com/xiaoshicae/xone/xredis => ../xredis
 	github.com/xiaoshicae/xone/xtrace => ../xtrace
@@ -27,6 +28,8 @@ require (
 	github.com/prometheus/common v0.70.1
 	github.com/redis/go-redis/v9 v9.22.0
 	github.com/swaggo/swag v1.16.6
+	github.com/twmb/franz-go v1.21.7
+	github.com/twmb/franz-go/pkg/kmsg v1.13.1
 	github.com/xiaoshicae/xone v1.23.0
 	github.com/xiaoshicae/xone/xcache v1.23.0
 	github.com/xiaoshicae/xone/xcron v1.23.0
@@ -35,6 +38,7 @@ require (
 	github.com/xiaoshicae/xone/xgorm v1.23.0
 	github.com/xiaoshicae/xone/xgorm/clickhouse v1.23.0
 	github.com/xiaoshicae/xone/xhttp v1.23.0
+	github.com/xiaoshicae/xone/xkafka v1.23.0
 	github.com/xiaoshicae/xone/xmetric v1.23.0
 	github.com/xiaoshicae/xone/xredis v1.23.0
 	github.com/xiaoshicae/xone/xtrace v1.23.0
@@ -52,7 +56,7 @@ require (
 	github.com/go-faster/city v1.0.1 // indirect
 	github.com/go-faster/errors v0.7.1 // indirect
 	github.com/hashicorp/go-version v1.9.0 // indirect
-	github.com/klauspost/compress v1.19.1 // indirect
+	github.com/klauspost/compress v1.19.2 // indirect
 	github.com/paulmach/orb v0.13.0 // indirect
 	github.com/pierrec/lz4/v4 v4.1.27 // indirect
 	github.com/segmentio/asm v1.2.1 // indirect

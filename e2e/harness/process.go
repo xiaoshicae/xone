@@ -45,6 +45,14 @@ type Options struct {
 	ClickHouse bool
 	CHAddr     string
 
+	// Kafka 给服务配上 XKafka：激活 service/application-kafka.yml 那份 profile（在 ch 之后、e2e 之前）。
+	// 只对 Start 有效。KafkaAddr 是 broker 地址，默认直连；给了 KafkaAddr 就等于 Kafka: true。
+	// KafkaTopic 非空时服务消费它（Service.KafkaTopic），消费组是 KafkaGroup（空的话是 e2e_<随机>，见 Process.KafkaGroup）
+	Kafka      bool
+	KafkaAddr  string
+	KafkaTopic string
+	KafkaGroup string
+
 	// Downstream /proxy 调的下游 base URL，比如 Stub.URL 或 "http://" + proxy.Addr()
 	Downstream string
 
@@ -89,6 +97,8 @@ type Process struct {
 	KeyPrefix string
 	// CH 这个进程有没有 ClickHouse 实例（Options.ClickHouse）
 	CH bool
+	// KafkaGroup 这个进程消费用的消费组（Options.Kafka 时）
+	KafkaGroup string
 	// Dir 这个进程的临时目录，测试结束时删掉
 	Dir string
 	// SpanFile Options.Spans 开着时 Span 写在这里
@@ -149,8 +159,14 @@ func Start(t testing.TB, o Options) *Process {
 	if o.ClickHouse {
 		RequireCH(t)
 	}
+	if o.KafkaAddr != "" {
+		o.Kafka = true
+	}
+	if o.Kafka {
+		RequireKafka(t)
+	}
 	var profiles []string
-	if o.ClickHouse || o.Overlay != "" {
+	if o.ClickHouse || o.Kafka || o.Overlay != "" {
 		// profile 文件名由 base 推出来，所以 base 也挪进临时目录
 		base, err := os.ReadFile(cfg)
 		if err != nil {
@@ -166,6 +182,14 @@ func Start(t testing.TB, o Options) *Process {
 		}
 		writeFile(t, filepath.Join(dir, "application-ch.yml"), ch)
 		profiles = append(profiles, "ch")
+	}
+	if o.Kafka {
+		k, err := os.ReadFile(filepath.Join(ModuleDir(), "service", "application-kafka.yml"))
+		if err != nil {
+			t.Fatalf("read kafka profile: %v", err)
+		}
+		writeFile(t, filepath.Join(dir, "application-kafka.yml"), k)
+		profiles = append(profiles, "kafka")
 	}
 	if o.Overlay != "" {
 		writeFile(t, filepath.Join(dir, "application-e2e.yml"), []byte(o.Overlay))
@@ -254,6 +278,12 @@ func launch(t testing.TB, name, bin string, args []string, dir string, o Options
 	}
 	if o.ClickHouse {
 		vars["E2E_CH_DSN"] = CHDSN(or(o.CHAddr, CHAddr()))
+	}
+	if o.Kafka || o.KafkaAddr != "" {
+		p.KafkaGroup = or(o.KafkaGroup, "e2e_"+id)
+		vars["E2E_KAFKA_ADDR"] = or(o.KafkaAddr, KafkaAddr())
+		vars["E2E_KAFKA_TOPIC"] = o.KafkaTopic
+		vars["E2E_KAFKA_GROUP"] = p.KafkaGroup
 	}
 	if o.Downstream != "" {
 		vars["E2E_DOWNSTREAM_URL"] = o.Downstream

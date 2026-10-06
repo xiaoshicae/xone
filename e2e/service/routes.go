@@ -35,6 +35,7 @@ func routes(e *gin.Engine) {
 	e.GET("/dep", dep)
 	mysqlRoutes(e)
 	clickhouseRoutes(e)
+	kafkaRoutes(e)
 }
 
 // ping 就绪探测：harness 等它返回 200 才算服务起来了

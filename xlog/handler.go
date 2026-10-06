@@ -149,7 +149,7 @@ func ctxAttrs(ctx context.Context) []slog.Attr {
 	s := scopeFrom(ctx)
 	n := 0
 	if s != nil {
-		n = s.len()
+		n = s.Len()
 	}
 
 	// 先把链路标识取出来，再决定要不要分配这个切片。
@@ -169,7 +169,7 @@ func ctxAttrs(ctx context.Context) []slog.Attr {
 		}
 	}
 	if s != nil {
-		s.each(func(k string, v any) { attrs = append(attrs, slog.Any(k, v)) })
+		s.Each(func(k string, v any) { attrs = append(attrs, slog.Any(k, v)) })
 	}
 	return attrs
 }

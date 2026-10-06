@@ -1,6 +1,6 @@
 # xtls
 
-客户端 TLS 块：XGorm / XRedis / XHttp 连出去时的 TLS 写成同一个 `TLS:` 块（核心模块，`xtls.Config`），字段、默认值、校验规则只有这一份。
+客户端 TLS 块：XGorm / XRedis / XHttp / XKafka 连出去时的 TLS 写成同一个 `TLS:` 块（核心模块，`xtls.Config`），字段、默认值、校验规则只有这一份。
 
 - 证书一律校验，没有跳过校验的开关；最低 TLS 1.2
 - 开着 TLS 块就不会退回明文
@@ -22,7 +22,7 @@ XGorm:
     ServerName: db.internal           # 按 IP 连、证书上是域名时填
 ```
 
-XRedis、XHttp 块里写法完全一样。
+XRedis、XHttp、XKafka 块里写法完全一样。
 
 ## 配置
 

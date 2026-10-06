@@ -1,6 +1,6 @@
 // Package xtls 是各客户端集成共用的那一块 TLS 配置。
 //
-// xgorm、xredis、xhttp 的配置里都有一个同样形状的 TLS 块：
+// xgorm、xredis、xhttp、xkafka 的配置里都有一个同样形状的 TLS 块：
 //
 //	TLS:
 //	  Enable: true

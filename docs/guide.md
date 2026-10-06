@@ -78,9 +78,9 @@ func warmup(ctx context.Context) error {
 |---|---|---|
 | `StageLog` | 最先起、最后关，其余组件的启停日志才写得出去 | xlog、xapp、xflow（只读配置） |
 | `StageTelemetry` | 要早于客户端，客户端的 Span 才挂得上、指标才收得到 | xtrace、xmetric |
-| `StageClient` | 被业务依赖的客户端 | xgorm、xredis、xcache、xhttp |
+| `StageClient` | 被业务依赖的客户端 | xgorm、xredis、xcache、xhttp、xkafka（生产客户端） |
 | `StageBusiness` | 你自己的业务资源：预热、定时任务、订阅。**不写 `At` 就是它** | 你的钩子 |
-| `StageServer` | 对外服务：最后起、最先关 | xgin、xecho、xginswagger（读配置）、xcron（定时任务的调度器） |
+| `StageServer` | 对外服务：最后起、最先关 | xgin、xecho、xginswagger（读配置）、xcron（定时任务的调度器）、xkafka（消费者） |
 
 只有必须早于或晚于别人时才写 `xhook.At(xhook.StageClient)` 之类。**同一档内的顺序是 Go 初始化包的顺序**：
 同一份代码每次都一样，但由 import 关系和包路径的字典序决定，不是 import 语句的书写顺序——有先后要求的放进不同档位。
@@ -139,7 +139,18 @@ xone.MustRun(xone.UntilSignal())
 
 ## 非 Web 服务：consumer / job
 
-xgin 没有特殊地位，它只是一个 Runnable。消费者服务要做的只是写一个 `Start`：
+**消费 Kafka** 用 [xkafka](../xkafka/README.md)：`xkafka.Consume(topic, group, fn)` 登记，Web 服务里照常 `xone.MustRun(xgin.New()…)`，
+只消费的进程 `xone.MustRun(xone.UntilSignal())`。下面三条规矩它都替你做了：等在途的消息、处理用的 ctx 不随退出取消、
+处理完才提交；另有每个分区一个协程、重试和死信、再均衡时先提交。
+
+```go
+xkafka.Consume("orders", "billing", func(ctx context.Context, r *kgo.Record) error {
+	return charge(ctx, r.Value) // 返回错误就重试，用完进 orders.dlq
+})
+xone.MustRun(xone.UntilSignal())
+```
+
+别的消息队列（或者自己管 Kafka 客户端）就自己写。xgin 没有特殊地位，它只是一个 Runnable。消费者服务要做的只是写一个 `Start`：
 
 ```go
 func (c *Consumer) Start(ctx context.Context) error {
@@ -185,7 +196,7 @@ func main() { xone.MustRun(&Consumer{q: client, workers: 4, timeout: 5 * time.Se
 
 ## 多实例
 
-`xgorm` / `xredis` / `xcache` 可以在配置的 `Clients` 下按名字写好几个实例：
+`xgorm` / `xredis` / `xcache` / `xkafka` 可以在配置的 `Clients` 下按名字写好几个实例：
 
 ```go
 xgorm.C()                  // default 那个

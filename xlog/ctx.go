@@ -2,72 +2,10 @@ package xlog
 
 import (
 	"context"
-	"maps"
-	"sync"
 	"sync/atomic"
+
+	"github.com/xiaoshicae/xone/internal/logext"
 )
-
-// ctxScopeKey KV 作用域在 context 中的 key。
-// 用私有类型而不是字符串，避免与其它包的 context key 撞上。
-type ctxScopeKey struct{}
-
-// scope 一次请求（或一段调用链）共享的字段集合
-//
-// 存进 context 的是**指针**，所以 AddKV 的写入对所有持有该 ctx 的地方立即可见，
-// 不需要把新 context 回传给调用方——业务函数在调用栈深处拿不到 *gin.Context，
-// 本来也没机会回传。这正是「返回新 context」那种写法解决不了的场景。
-//
-// 日志可能在任意 goroutine 写出，读写都要加锁。
-type scope struct {
-	mu sync.RWMutex
-	kv map[string]any
-}
-
-// scopeInitCap 首次写入时 map 的初始容量
-const scopeInitCap = 8
-
-func (s *scope) add(k string, v any) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.kv == nil {
-		s.kv = make(map[string]any, scopeInitCap)
-	}
-	s.kv[k] = v
-}
-
-func (s *scope) addAll(kvs map[string]any) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.kv == nil {
-		s.kv = make(map[string]any, max(len(kvs), scopeInitCap))
-	}
-	maps.Copy(s.kv, kvs)
-}
-
-// each 在读锁内遍历，避免为每一行日志复制一次 map
-func (s *scope) each(f func(k string, v any)) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	for k, v := range s.kv {
-		f(k, v)
-	}
-}
-
-// copyWith 复制一份字段，再叠上 kvs（同名以 kvs 为准）
-func (s *scope) copyWith(kvs map[string]any) *scope {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	c := &scope{kv: make(map[string]any, max(len(s.kv)+len(kvs), scopeInitCap))}
-	maps.Copy(c.kv, s.kv)
-	maps.Copy(c.kv, kvs)
-	return c
-}
-
-func (s *scope) len() int {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return len(s.kv)
-}
 
 // CtxWithScope 开启一个字段作用域。
 //
@@ -76,15 +14,7 @@ func (s *scope) len() int {
 //
 // 幂等：已经有作用域时原样返回，重复调用（比如中间件被注册了两次）不会
 // 清空已经写入的字段。
-func CtxWithScope(ctx context.Context) context.Context {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	if scopeFrom(ctx) != nil {
-		return ctx
-	}
-	return context.WithValue(ctx, ctxScopeKey{}, &scope{})
-}
+func CtxWithScope(ctx context.Context) context.Context { return logext.WithScope(ctx) }
 
 // CtxWithKV 派生一个带着 kvs 的新 context：父 context 已有的字段照样带着，
 // 再叠上 kvs（同名以 kvs 为准）。
@@ -102,14 +32,7 @@ func CtxWithScope(ctx context.Context) context.Context {
 // 不回流到父 context——入口处的访问日志因此看不到这些字段。
 // 派生之后父 context 再 AddKV 的字段，它也看不到：它拿的是派生那一刻的副本。
 func CtxWithKV(ctx context.Context, kvs map[string]any) context.Context {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	parent := scopeFrom(ctx)
-	if parent == nil {
-		parent = &scope{}
-	}
-	return context.WithValue(ctx, ctxScopeKey{}, parent.copyWith(kvs))
+	return logext.WithKV(ctx, kvs)
 }
 
 // AddKV 往当前作用域写一个字段。
@@ -121,7 +44,7 @@ func AddKV(ctx context.Context, k string, v any) {
 		droppedKV.Add(1)
 		return
 	}
-	s.add(k, v)
+	s.Add(k, v)
 }
 
 // AddKVs 往当前作用域批量写字段
@@ -134,7 +57,7 @@ func AddKVs(ctx context.Context, kvs map[string]any) {
 		droppedKV.Add(int64(len(kvs)))
 		return
 	}
-	s.addAll(kvs)
+	s.AddAll(kvs)
 }
 
 // droppedKV 在没有作用域的 context 上被丢弃的字段数。
@@ -144,10 +67,5 @@ var droppedKV atomic.Int64
 // DroppedKVCount 返回被丢弃的字段数，不为零说明有 AddKV 调用没有对应的作用域
 func DroppedKVCount() int64 { return droppedKV.Load() }
 
-func scopeFrom(ctx context.Context) *scope {
-	if ctx == nil {
-		return nil
-	}
-	s, _ := ctx.Value(ctxScopeKey{}).(*scope)
-	return s
-}
+// scopeFrom 作用域本身在 internal/logext 里，理由见那里
+func scopeFrom(ctx context.Context) *logext.Scope { return logext.ScopeFrom(ctx) }

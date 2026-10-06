@@ -25,7 +25,25 @@ import (
 // stopHookPkgs 登记了停止钩子的包（量自 e2e 服务一次正常退出的 stopping 日志）。
 // 启动期间被打断的用例据此推算「该关哪几个」；框架给别的包加了停止钩子时，
 // 关闭顺序那个用例会先报出来，到时候把它补进这里
-var stopHookPkgs = []string{"xlog", "xtrace", "xcache", "xgorm", "xredis", "xhttp", "xcron"}
+var stopHookPkgs = []string{"xlog", "xtrace", "xcache", "xgorm", "xredis", "xhttp", "xkafka", "xcron"}
+
+// stopPairs 一个包登记了不止一对钩子时，停止钩子配的是哪个启动钩子（docs/guide.md「停止钩子：配对与继承」：
+// 同一个包里、在它之前最近登记的那个）。xkafka 一对管生产客户端（StageClient），一对管消费者（StageServer）。
+// 只有一对的包按包名配
+var stopPairs = map[string]string{
+	"xkafka.closeXKafka":   "xkafka.initXKafka",
+	"xkafka.stopConsumers": "xkafka.startConsumers",
+}
+
+// startIndex 停止钩子 stop 配对的启动钩子在 starts 里的位置，没启动过时 ok 为 false
+func startIndex(starts []string, stop string) (int, bool) {
+	for i := len(starts) - 1; i >= 0; i-- {
+		if want, ok := stopPairs[stop]; ok && starts[i] == want || !ok && pkgOf(starts[i]) == pkgOf(stop) {
+			return i, true
+		}
+	}
+	return 0, false
+}
 
 // textHook xlog 装好之前，框架日志是 slog 默认格式写 stderr 的文本：
 //

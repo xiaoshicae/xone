@@ -51,6 +51,21 @@ type Config struct {
 
 	// CronHold e2e-tick 每次执行看着 ctx 等多久；ctx 被取消时再不看 ctx 地收尾 300ms
 	CronHold time.Duration `yaml:"CronHold"`
+
+	// KafkaTopic 非空时用 xkafka.Consume 消费它，消费组是 KafkaGroup（见 kafka.go）。空是不消费
+	KafkaTopic string `yaml:"KafkaTopic"`
+
+	// KafkaGroup 消费组，KafkaTopic 非空时必填
+	KafkaGroup string `yaml:"KafkaGroup"`
+
+	// KafkaRetry 交给 xkafka.WithRetry；-1 是不写这个 Option（用 xkafka 的默认值）
+	KafkaRetry int `yaml:"KafkaRetry"`
+
+	// KafkaTimeout 交给 xkafka.WithTimeout；0 是不写这个 Option
+	KafkaTimeout time.Duration `yaml:"KafkaTimeout"`
+
+	// NoHTTP 不起 xgin，xone.MustRun(xone.UntilSignal())：只消费的进程
+	NoHTTP bool `yaml:"NoHTTP"`
 }
 
 // DefaultConfig 默认值
@@ -60,6 +75,7 @@ func DefaultConfig() Config {
 		KeyPrefix:   "e2e:",
 		UserTTL:     time.Minute,
 		StopTimeout: 15 * time.Second,
+		KafkaRetry:  -1,
 	}
 }
 
@@ -76,6 +92,9 @@ func (c Config) Validate() error {
 	}
 	if c.StopTimeout <= 0 {
 		return fmt.Errorf("StopTimeout must be > 0, got=%v", c.StopTimeout)
+	}
+	if c.KafkaTopic != "" && c.KafkaGroup == "" {
+		return fmt.Errorf("KafkaGroup is required when KafkaTopic is set")
 	}
 	if c.StartStall < 0 || c.Drain < 0 {
 		return fmt.Errorf("StartStall and Drain must be >= 0, got StartStall=%v Drain=%v", c.StartStall, c.Drain)

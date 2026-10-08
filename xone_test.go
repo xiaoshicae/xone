@@ -103,6 +103,42 @@ func (s *server) Stop(context.Context) error {
 	return nil
 }
 
+// signalOnStart 包一层 r：Start 被调到之后再过 after，给自己发 sig。
+//
+// 不能在调 Run 之前起一个协程按固定时间发：负载重时（test.sh 并行跑十几个模块、带 -race）
+// 那一刻 Run 可能还没接管信号，或者已经出错返回、把信号还给了默认处置——SIGTERM
+// 按默认处置就是把整个测试进程杀掉，报出来的是一个毫不相干的用例 signal: terminated。
+// 从 Start 里发，信号一定落在 Run 接管着的那一段里；Run 提前失败的话根本不发
+func signalOnStart(r Runnable, sig syscall.Signal, after time.Duration) Runnable {
+	k := signaler{sig: sig, after: after}
+	if s, ok := r.(stopper); ok {
+		return &signalingServer{signalingRunnable{r, k}, s}
+	}
+	return &signalingRunnable{r, k} // 不凭空多出一个 Stop：只写 Start 的 Runnable 照旧只有 Start
+}
+
+type signaler struct {
+	sig   syscall.Signal
+	after time.Duration
+}
+
+type signalingRunnable struct {
+	r Runnable
+	k signaler
+}
+
+func (s *signalingRunnable) Start(ctx context.Context) error {
+	go func() { time.Sleep(s.k.after); syscall.Kill(syscall.Getpid(), s.k.sig) }()
+	return s.r.Start(ctx)
+}
+
+type signalingServer struct {
+	signalingRunnable
+	s stopper
+}
+
+func (s *signalingServer) Stop(ctx context.Context) error { return s.s.Stop(ctx) }
+
 func emptyConf(t *testing.T) string {
 	t.Helper()
 	p := filepath.Join(t.TempDir(), "application.yml")
@@ -132,10 +168,9 @@ func TestRun_ZeroStopBudgetFailsFast(t *testing.T) {
 
 func TestRun_ClosesInReverseOrder(t *testing.T) {
 	r := &recorder{}
-	go func() { time.Sleep(120 * time.Millisecond); syscall.Kill(syscall.Getpid(), syscall.SIGTERM) }()
 
 	comps(t, comp("a", hook.StageClient, r, nil), comp("b", hook.StageClient, r, nil))
-	err := Run(newServer(r), WithConfigPath(emptyConf(t)))
+	err := Run(signalOnStart(newServer(r), syscall.SIGTERM, 120*time.Millisecond), WithConfigPath(emptyConf(t)))
 	if err != nil {
 		t.Fatalf("正常退出不该有错误: %v", err)
 	}
@@ -149,7 +184,6 @@ func TestRun_ClosesInReverseOrder(t *testing.T) {
 func TestRun_StageDecidesOrderNotRegistration(t *testing.T) {
 	// 这是整套设计的核心主张：init() 的执行顺序（也就是登记顺序）不影响结果
 	r := &recorder{}
-	go func() { time.Sleep(120 * time.Millisecond); syscall.Kill(syscall.Getpid(), syscall.SIGTERM) }()
 
 	// 故意按「反的」顺序登记
 	comps(t,
@@ -157,7 +191,7 @@ func TestRun_StageDecidesOrderNotRegistration(t *testing.T) {
 		comp("trace", hook.StageTelemetry, r, nil),
 		comp("log", hook.StageLog, r, nil),
 	)
-	err := Run(newServer(r), WithConfigPath(emptyConf(t)))
+	err := Run(signalOnStart(newServer(r), syscall.SIGTERM, 120*time.Millisecond), WithConfigPath(emptyConf(t)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,13 +206,12 @@ func TestRun_StageDecidesOrderNotRegistration(t *testing.T) {
 
 func TestRun_KeepsRegistrationOrderWithinStage(t *testing.T) {
 	r := &recorder{}
-	go func() { time.Sleep(120 * time.Millisecond); syscall.Kill(syscall.Getpid(), syscall.SIGTERM) }()
 
 	comps(t,
 		comp("first", hook.StageClient, r, nil),
 		comp("second", hook.StageClient, r, nil),
 	)
-	_ = Run(newServer(r), WithConfigPath(emptyConf(t)))
+	_ = Run(signalOnStart(newServer(r), syscall.SIGTERM, 120*time.Millisecond), WithConfigPath(emptyConf(t)))
 	if !strings.HasPrefix(r.String(), "init:first → init:second") {
 		t.Errorf("同一档内应保持登记顺序（稳定排序），got=%s", r.String())
 	}
@@ -221,13 +254,12 @@ func TestRun_ServiceStartFails(t *testing.T) {
 func TestRun_CloseErrorsAggregatedNotSwallowed(t *testing.T) {
 	r := &recorder{}
 	closeErr := errors.New("关不掉")
-	go func() { time.Sleep(120 * time.Millisecond); syscall.Kill(syscall.Getpid(), syscall.SIGTERM) }()
 
 	comps(t, pair{
 		start: hook.Entry{Name: "stuck.init", Pkg: "stuck", Run: func(context.Context) error { return nil }},
 		stop:  hook.Entry{Name: "stuck.close", Pkg: "stuck", Run: func(context.Context) error { return closeErr }},
 	})
-	err := Run(newServer(r), WithConfigPath(emptyConf(t)))
+	err := Run(signalOnStart(newServer(r), syscall.SIGTERM, 120*time.Millisecond), WithConfigPath(emptyConf(t)))
 
 	if !errors.Is(err, closeErr) {
 		t.Fatalf("关闭错误应被返回，got=%v", err)
@@ -380,14 +412,13 @@ func TestRun_StartsWithDefaultsWhenNoConfigFile(t *testing.T) {
 	os.Args = []string{"svc"}
 	config.Reset()
 	t.Setenv(config.EnvKey, "")
-	go func() { time.Sleep(120 * time.Millisecond); syscall.Kill(syscall.Getpid(), syscall.SIGTERM) }()
 
 	cfg := demoConf{Name: "default"}
 	reads := pair{start: hook.Entry{Name: "demo.init", Pkg: "demo", Run: func(context.Context) error {
 		return xconfig.Unmarshal("Demo", &cfg)
 	}}}
 	comps(t, comp("a", hook.StageClient, r, nil), reads)
-	if err := Run(newServer(r), WithLogger(quietLogger())); err != nil {
+	if err := Run(signalOnStart(newServer(r), syscall.SIGTERM, 120*time.Millisecond), WithLogger(quietLogger())); err != nil {
 		t.Fatalf("没有配置文件应该只告警、用默认值起，got=%v", err)
 	}
 	if !strings.Contains(r.String(), "init:a") {
@@ -445,9 +476,8 @@ func TestRun_WaitsForServiceExitBeforeClosing(t *testing.T) {
 		stop: func(context.Context) error { close(stop); return nil },
 	}
 
-	go func() { time.Sleep(50 * time.Millisecond); syscallSelfInterrupt(t) }()
 	comps(t, probe)
-	if err := Run(r, WithLogger(quietLogger())); err != nil {
+	if err := Run(signalOnStart(r, syscall.SIGINT, 50*time.Millisecond), WithLogger(quietLogger())); err != nil {
 		t.Fatalf("Run 失败：%v", err)
 	}
 
@@ -470,8 +500,7 @@ func TestRun_ServiceExitErrorIsKept(t *testing.T) {
 		stop:  func(context.Context) error { close(stop); return nil },
 	}
 
-	go func() { time.Sleep(50 * time.Millisecond); syscallSelfInterrupt(t) }()
-	err := Run(r, WithLogger(quietLogger()))
+	err := Run(signalOnStart(r, syscall.SIGINT, 50*time.Millisecond), WithLogger(quietLogger()))
 	if !errors.Is(err, wantErr) {
 		t.Errorf("服务退出时的错误应当被带出来，got=%v", err)
 	}
@@ -498,10 +527,9 @@ func (s *startOnly) Start(ctx context.Context) error {
 func TestRun_StartOnlyRunnableWorks(t *testing.T) {
 	// 靠 ctx 就停得下来的 Runnable 不该被迫写一个空的 Stop
 	r := &recorder{}
-	go func() { time.Sleep(120 * time.Millisecond); syscall.Kill(syscall.Getpid(), syscall.SIGTERM) }()
 
 	comps(t, comp("a", hook.StageClient, r, nil))
-	err := Run(&startOnly{r: r}, WithConfigPath(emptyConf(t)), WithLogger(quietLogger()))
+	err := Run(signalOnStart(&startOnly{r: r}, syscall.SIGTERM, 120*time.Millisecond), WithConfigPath(emptyConf(t)), WithLogger(quietLogger()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -540,8 +568,7 @@ func TestUntilSignal_BlocksUntilSignalThenClosesInReverse(t *testing.T) {
 	r := &recorder{}
 	comps(t, comp("a", hook.StageClient, r, nil))
 	start := time.Now()
-	go func() { time.Sleep(120 * time.Millisecond); syscall.Kill(syscall.Getpid(), syscall.SIGTERM) }()
-	if err := Run(UntilSignal(), WithConfigPath(emptyConf(t)), WithLogger(quietLogger())); err != nil {
+	if err := Run(signalOnStart(UntilSignal(), syscall.SIGTERM, 120*time.Millisecond), WithConfigPath(emptyConf(t)), WithLogger(quietLogger())); err != nil {
 		t.Fatal(err)
 	}
 	if took := time.Since(start); took < 100*time.Millisecond {
@@ -937,10 +964,9 @@ func TestShutdown_TotalTimeWithinStopBudget(t *testing.T) {
 
 	const signalAt = 50 * time.Millisecond
 	budget := 800 * time.Millisecond
-	go func() { time.Sleep(signalAt); syscallSelfInterrupt(t) }()
 	start := time.Now()
 	comps(t, stuckComp("关不掉的"), flushComp(r))
-	err := Run(srv, WithConfigPath(emptyConf(t)), WithLogger(quietLogger()), WithStopTimeout(budget))
+	err := Run(signalOnStart(srv, syscall.SIGINT, signalAt), WithConfigPath(emptyConf(t)), WithLogger(quietLogger()), WithStopTimeout(budget))
 	elapsed := time.Since(start)
 
 	if got := r.String(); got != "flush:日志" {
@@ -1133,10 +1159,9 @@ func TestRun_ListensForBothExitSignals(t *testing.T) {
 	for _, sig := range []syscall.Signal{syscall.SIGINT, syscall.SIGTERM} {
 		t.Run(sig.String(), func(t *testing.T) {
 			r := &recorder{}
-			go func() { time.Sleep(50 * time.Millisecond); syscall.Kill(syscall.Getpid(), sig) }()
 
 			comps(t, comp("a", hook.StageClient, r, nil))
-			if err := Run(newServer(r), WithConfigPath(emptyConf(t)), WithLogger(quietLogger())); err != nil {
+			if err := Run(signalOnStart(newServer(r), sig, 50*time.Millisecond), WithConfigPath(emptyConf(t)), WithLogger(quietLogger())); err != nil {
 				t.Fatalf("按信号退出不是故障，不该报错：%v", err)
 			}
 			if got := r.String(); !strings.Contains(got, "stop:server") || !strings.Contains(got, "close:a") {
@@ -1232,10 +1257,9 @@ func TestRun_CanRunAgainAfterReturn(t *testing.T) {
 	// 表现是「第二次怎么都停不下来」。同一个进程里反复 Run 的测试全靠这点
 	for i := 1; i <= 2; i++ {
 		r := &recorder{}
-		go func() { time.Sleep(50 * time.Millisecond); syscallSelfInterrupt(t) }()
 
 		comps(t, comp("a", hook.StageClient, r, nil))
-		if err := Run(newServer(r), WithConfigPath(emptyConf(t)), WithLogger(quietLogger())); err != nil {
+		if err := Run(signalOnStart(newServer(r), syscall.SIGINT, 50*time.Millisecond), WithConfigPath(emptyConf(t)), WithLogger(quietLogger())); err != nil {
 			t.Fatalf("第 %d 次 Run 失败：%v", i, err)
 		}
 		if !strings.Contains(r.String(), "stop:server") {
@@ -1289,9 +1313,8 @@ func TestRun_StopCtxDoesNotInheritCancellation(t *testing.T) {
 		}},
 	}
 
-	go func() { time.Sleep(50 * time.Millisecond); syscallSelfInterrupt(t) }()
 	comps(t, probe)
-	if err := Run(srv, WithConfigPath(emptyConf(t)), WithLogger(quietLogger())); err != nil {
+	if err := Run(signalOnStart(srv, syscall.SIGINT, 50*time.Millisecond), WithConfigPath(emptyConf(t)), WithLogger(quietLogger())); err != nil {
 		t.Fatalf("按信号退出不该报错：%v", err)
 	}
 
@@ -1335,9 +1358,8 @@ func TestRun_ServiceStopPanicIsIsolated(t *testing.T) {
 		stop:  func(context.Context) error { panic("Stop 炸了") },
 	}
 
-	go func() { time.Sleep(50 * time.Millisecond); syscallSelfInterrupt(t) }()
 	comps(t, comp("a", hook.StageClient, r, nil))
-	err := Run(srv, WithConfigPath(emptyConf(t)), WithLogger(quietLogger()))
+	err := Run(signalOnStart(srv, syscall.SIGINT, 50*time.Millisecond), WithConfigPath(emptyConf(t)), WithLogger(quietLogger()))
 
 	if err == nil || !strings.Contains(err.Error(), "panicked") {
 		t.Fatalf("Stop 的 panic 该被转成错误，got=%v", err)
@@ -1360,9 +1382,8 @@ func TestRun_StopHookPanicDoesNotAbortOthers(t *testing.T) {
 	// 档位更低 = 更后关，所以它排在 boom 后面
 	last := comp("最后关的", hook.StageLog, r, nil)
 
-	go func() { time.Sleep(50 * time.Millisecond); syscallSelfInterrupt(t) }()
 	comps(t, boom, last)
-	err := Run(newServer(r), WithConfigPath(emptyConf(t)), WithLogger(quietLogger()))
+	err := Run(signalOnStart(newServer(r), syscall.SIGINT, 50*time.Millisecond), WithConfigPath(emptyConf(t)), WithLogger(quietLogger()))
 
 	if err == nil || !strings.Contains(err.Error(), "panicked") {
 		t.Fatalf("停止钩子的 panic 该被转成错误，got=%v", err)
@@ -1382,9 +1403,8 @@ func TestRun_ServiceStopErrorIsAggregated(t *testing.T) {
 		stop:  func(context.Context) error { return stopErr },
 	}
 
-	go func() { time.Sleep(50 * time.Millisecond); syscallSelfInterrupt(t) }()
 	comps(t, comp("a", hook.StageClient, r, nil))
-	err := Run(srv, WithConfigPath(emptyConf(t)), WithLogger(quietLogger()))
+	err := Run(signalOnStart(srv, syscall.SIGINT, 50*time.Millisecond), WithConfigPath(emptyConf(t)), WithLogger(quietLogger()))
 
 	if !errors.Is(err, stopErr) {
 		t.Fatalf("Stop 的错误该被带出来，got=%v", err)
@@ -1408,10 +1428,9 @@ func TestRun_ClosesOthersWhenServiceWontExit(t *testing.T) {
 	}
 
 	var logbuf bytes.Buffer
-	go func() { time.Sleep(50 * time.Millisecond); syscallSelfInterrupt(t) }()
 	start := time.Now()
 	comps(t, comp("a", hook.StageClient, r, nil))
-	_ = Run(srv, WithConfigPath(emptyConf(t)),
+	_ = Run(signalOnStart(srv, syscall.SIGINT, 50*time.Millisecond), WithConfigPath(emptyConf(t)),
 		WithLogger(slog.New(slog.NewTextHandler(&logbuf, nil))),
 		WithStopTimeout(300*time.Millisecond))
 	elapsed := time.Since(start)
@@ -1440,11 +1459,10 @@ func TestRun_StopIgnoringCtxDoesNotHangExit(t *testing.T) {
 	}
 
 	var logbuf bytes.Buffer
-	go func() { time.Sleep(50 * time.Millisecond); syscallSelfInterrupt(t) }()
 	comps(t, comp("a", hook.StageClient, r, nil))
 	done := make(chan error, 1)
 	go func() {
-		done <- Run(srv, WithConfigPath(emptyConf(t)),
+		done <- Run(signalOnStart(srv, syscall.SIGINT, 50*time.Millisecond), WithConfigPath(emptyConf(t)),
 			WithLogger(slog.New(slog.NewTextHandler(&logbuf, nil))),
 			WithStopTimeout(300*time.Millisecond))
 	}()
@@ -1476,9 +1494,8 @@ func TestRun_DeadlineAwareStopErrorIsKept(t *testing.T) {
 			return boom
 		},
 	}
-	go func() { time.Sleep(50 * time.Millisecond); syscallSelfInterrupt(t) }()
 	comps(t, comp("a", hook.StageClient, &recorder{}, nil))
-	err := Run(srv, WithConfigPath(emptyConf(t)), WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))),
+	err := Run(signalOnStart(srv, syscall.SIGINT, 50*time.Millisecond), WithConfigPath(emptyConf(t)), WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))),
 		WithStopTimeout(300*time.Millisecond))
 	if !errors.Is(err, boom) {
 		t.Errorf("Stop 带回来的错误要如实报出，got=%v", err)

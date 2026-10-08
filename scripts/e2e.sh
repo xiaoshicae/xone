@@ -108,7 +108,7 @@ ensure() {
       exit 1
     }
   else
-    echo "== 启动 $what（$*）"
+    echo "== 启动 ${what}（$*）"
     "$@" >/dev/null
     wait_for 50 tcp_up "$addr" || { echo "✗ $what 没起来"; exit 1; }
   fi
@@ -121,7 +121,7 @@ ensure PostgreSQL "$XONE_E2E_PG_ADDR" pg_ctlcluster $XONE_E2E_PG_CLUSTER start
 if has psql && ! PGPASSWORD=$XONE_E2E_PG_PASSWORD psql -h "$(host_of "$XONE_E2E_PG_ADDR")" -p "${XONE_E2E_PG_ADDR##*:}" \
   -U "$XONE_E2E_PG_USER" -d "$XONE_E2E_PG_DB" -tAc 'SELECT 1' >/dev/null 2>&1; then
   cat <<TIP
-✗ 用 $XONE_E2E_PG_USER 连不上 $XONE_E2E_PG_ADDR 上的库 $XONE_E2E_PG_DB。第一次跑的话先建账号和库：
+✗ 用 $XONE_E2E_PG_USER 连不上 $XONE_E2E_PG_ADDR 上的库 ${XONE_E2E_PG_DB}。第一次跑的话先建账号和库：
 
   su postgres -c "psql -c \"CREATE ROLE $XONE_E2E_PG_USER LOGIN PASSWORD '<密码>'\""
   su postgres -c "createdb -O $XONE_E2E_PG_USER $XONE_E2E_PG_DB"
@@ -137,7 +137,7 @@ ensure MySQL "$XONE_E2E_MYSQL_ADDR" service mysql start
 if has mysql && ! MYSQL_PWD=$XONE_E2E_MYSQL_PASSWORD mysql -h "$(host_of "$XONE_E2E_MYSQL_ADDR")" -P "${XONE_E2E_MYSQL_ADDR##*:}" \
   -u "$XONE_E2E_MYSQL_USER" -D "$XONE_E2E_MYSQL_DB" -Nse 'SELECT 1' >/dev/null 2>&1; then
   cat <<TIP
-✗ 用 $XONE_E2E_MYSQL_USER 连不上 $XONE_E2E_MYSQL_ADDR 上的库 $XONE_E2E_MYSQL_DB。第一次跑的话先建账号和库：
+✗ 用 $XONE_E2E_MYSQL_USER 连不上 $XONE_E2E_MYSQL_ADDR 上的库 ${XONE_E2E_MYSQL_DB}。第一次跑的话先建账号和库：
 
   mysql -uroot -e "CREATE DATABASE $XONE_E2E_MYSQL_DB; CREATE USER '$XONE_E2E_MYSQL_USER'@'127.0.0.1' IDENTIFIED BY '<密码>';
     GRANT ALL ON $XONE_E2E_MYSQL_DB.* TO '$XONE_E2E_MYSQL_USER'@'127.0.0.1'"
@@ -165,7 +165,7 @@ ch_auth() {
     curl -sf -K - "http://$XONE_E2E_CH_HTTP_ADDR/?database=$XONE_E2E_CH_DB" --data-binary 'SELECT 1' >/dev/null 2>&1
 }
 ch_skip() {
-  echo "⚠ ClickHouse 不可用（$1），CH 的用例会跳过；要跑它们：docker start $XONE_E2E_CH_CONTAINER，或者 docker compose -f e2e/compose.yml up -d --wait"
+  echo "⚠ ClickHouse 不可用（$1），CH 的用例会跳过；要跑它们：docker start ${XONE_E2E_CH_CONTAINER}，或者 docker compose -f e2e/compose.yml up -d --wait"
   export XONE_E2E_CH=0
 }
 if [ "${XONE_E2E_CH:-}" = 0 ]; then
@@ -180,7 +180,7 @@ elif ! has docker; then
 elif ! docker inspect "$XONE_E2E_CH_CONTAINER" >/dev/null 2>&1; then
   ch_skip "没有名为 $XONE_E2E_CH_CONTAINER 的容器"
 else
-  echo "== 启动 ClickHouse（docker start $XONE_E2E_CH_CONTAINER）"
+  echo "== 启动 ClickHouse（docker start ${XONE_E2E_CH_CONTAINER}）"
   if docker start "$XONE_E2E_CH_CONTAINER" >/dev/null 2>&1; then
     # ClickHouse 冷启动比 PG 慢，给到 30 秒
     wait_for 150 ch_ping || true
@@ -188,7 +188,7 @@ else
   if ch_ping; then echo "✓ ClickHouse 已启动"; else ch_skip "docker start 之后 30 秒仍没有就绪，看 docker logs $XONE_E2E_CH_CONTAINER"; fi
 fi
 if [ "${XONE_E2E_CH:-}" != 0 ] && ! ch_auth; then
-  ch_skip "用 $XONE_E2E_CH_USER 连不上 $XONE_E2E_CH_HTTP_ADDR 上的库 $XONE_E2E_CH_DB，密码用 XONE_E2E_CH_PASSWORD 告诉本脚本"
+  ch_skip "用 $XONE_E2E_CH_USER 连不上 $XONE_E2E_CH_HTTP_ADDR 上的库 ${XONE_E2E_CH_DB}，密码用 XONE_E2E_CH_PASSWORD 告诉本脚本"
 fi
 
 # ---- Kafka ----
@@ -227,14 +227,14 @@ elif [ "${XONE_E2E_EXTERNAL:-}" = 1 ] || ! is_local "$XONE_E2E_KAFKA_ADDR"; then
 elif ! has docker || ! docker info >/dev/null 2>&1; then
   if tcp_up "$XONE_E2E_KAFKA_ADDR"; then echo "✓ Kafka 已在 $XONE_E2E_KAFKA_ADDR 运行"; else kafka_skip "没有 docker，或者 docker 守护进程没在跑"; fi
 elif kafka_container_up; then
-  echo "✓ Kafka 已在 $XONE_E2E_KAFKA_ADDR 运行（容器 $XONE_E2E_KAFKA_CONTAINER）"
+  echo "✓ Kafka 已在 $XONE_E2E_KAFKA_ADDR 运行（容器 ${XONE_E2E_KAFKA_CONTAINER}）"
 else
   kafka_start=$(date +%s)
   if docker inspect "$XONE_E2E_KAFKA_CONTAINER" >/dev/null 2>&1; then
-    echo "== 启动 Kafka（docker start $XONE_E2E_KAFKA_CONTAINER）"
+    echo "== 启动 Kafka（docker start ${XONE_E2E_KAFKA_CONTAINER}）"
     docker start "$XONE_E2E_KAFKA_CONTAINER" >/dev/null 2>&1 || true
   else
-    echo "== 创建 Kafka 容器（docker run $XONE_E2E_KAFKA_IMAGE，名字 $XONE_E2E_KAFKA_CONTAINER）"
+    echo "== 创建 Kafka 容器（docker run ${XONE_E2E_KAFKA_IMAGE}，名字 ${XONE_E2E_KAFKA_CONTAINER}）"
     kafka_run || true
   fi
   # 每次探测本身要起一个 JVM（约 2s），所以次数给少一些：总共约 60 秒

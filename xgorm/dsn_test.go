@@ -257,6 +257,8 @@ func TestSecondsMillis(t *testing.T) {
 		want string
 	}{
 		{0, ""}, {time.Second, "1000"}, {1500 * time.Millisecond, "1500"},
+		// statement_timeout 等的 0 同样是不限制：不满 1ms 的向上取整
+		{500 * time.Microsecond, "1"}, {1500 * time.Microsecond, "2"},
 	} {
 		if got := millis(c.d); got != c.want {
 			t.Errorf("millis(%v)=%q want %q", c.d, got, c.want)

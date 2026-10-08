@@ -657,6 +657,11 @@ mutate("请求头里的凭证被遮掉", "internal/web/redact.go", ".", "TestRed
 # 开了 LogQuery 也得逐字段遮：?access_token= 原样进日志就是凭证落盘
 mutate("遮掉的表单值写成标记而不是转义串", "internal/web/redact.go", ".", "TestRedactBody_Form",
        swap('return strings.ReplaceAll(values.Encode(), url.QueryEscape(Redacted), Redacted)', 'return values.Encode()'))
+# 表单 / query 的值、纯文本 body 里带着 URL / DSN 凭证：JSON 那一支会遮，换个编码不该就原样进日志
+mutate("表单其余值里的 URL / DSN 凭证被遮掉", "internal/web/redact.go", ".", "TestRedactBody_CredentialsInFormValue",
+       swap('\t\t\tvs[i] = redactCredentials(v)\n', '\t\t\tvs[i] = v\n'))
+mutate("纯文本 body 里的 URL / DSN 凭证被遮掉", "internal/web/redact.go", ".", "TestRedactBody_CredentialsInFormValue",
+       swap('return newlines.Replace(redactCredentials(s))', 'return newlines.Replace(s)'))
 mutate("请求体只缓存前缀", "internal/web/accesslog.go", ".", "TestSnapshotBody",
        swap('io.ReadAll(io.LimitReader(req.Body, maxRequestBody))','io.ReadAll(req.Body)',1))
 mutate("预读时的错误接回下游", "internal/web/accesslog.go", ".", "TestSnapshotBody",
@@ -671,7 +676,7 @@ mutate("字段名按 Unicode 折叠比对", "internal/web/redact.go", ".", "Test
 # 预检和字段名比对共用 sensitive，折叠本身由上一条盯着；这一条打在调用点上：
 # 预检换成只转小写的朴素写法，{"ſecret":…} 就走快路径原样进日志
 mutate("敏感词预检按 Unicode 折叠", "internal/web/redact.go", ".", "TestRedactBody_Unicode",
-       swap('sensitive(s, words()) {\n\t\treturn Redacted\n\t}\n\treturn newlines', 'func(ws []string) bool { return slices.ContainsFunc(ws, func(w string) bool { return strings.Contains(strings.ToLower(s), w) }) }(words()) {\n\t\treturn Redacted\n\t}\n\treturn newlines'),
+       swap('sensitive(s, words()) {\n\t\treturn Redacted\n\t}\n\t// 没有敏感字段名，但可能带着 URL / DSN 凭证（postgres://u:p@h），同 RedactText\n\treturn newlines', 'func(ws []string) bool { return slices.ContainsFunc(ws, func(w string) bool { return strings.Contains(strings.ToLower(s), w) }) }(words()) {\n\t\treturn Redacted\n\t}\n\t// 没有敏感字段名，但可能带着 URL / DSN 凭证（postgres://u:p@h），同 RedactText\n\treturn newlines'),
        swap('|| sensitive(body, ws)', '|| slices.ContainsFunc(ws, func(w string) bool { return strings.Contains(strings.ToLower(body), w) })'))
 # path 特意不带查询串，Referer 却带着上一个页面的完整 URL
 mutate("URL 类请求头去掉查询串", "internal/web/redact.go", ".", "TestRedactHeaders_URL",
@@ -686,7 +691,7 @@ mutate("请求头名字里带敏感词也遮", "internal/web/redact.go", ".", "T
        swap(' || sensitive(k, ws)', ''), swap('\tset := headers()\n\tws := words()\n', '\tset := headers()\n\tws := words()\n\t_ = ws\n'))
 # 预检认不出 api-key 的话，这种 body 走快路径原样进日志，根本到不了逐字段脱敏
 mutate("敏感词预检忽略分隔符", "internal/web/redact.go", ".", "TestRedactBody",
-       swap('sensitive(s, words()) {\n\t\treturn Redacted\n\t}\n\treturn newlines', 'func(ws []string) bool { return slices.ContainsFunc(ws, func(w string) bool { return strings.Contains(strings.Map(foldRune, s), w) }) }(words()) {\n\t\treturn Redacted\n\t}\n\treturn newlines'),
+       swap('sensitive(s, words()) {\n\t\treturn Redacted\n\t}\n\t// 没有敏感字段名，但可能带着 URL / DSN 凭证（postgres://u:p@h），同 RedactText\n\treturn newlines', 'func(ws []string) bool { return slices.ContainsFunc(ws, func(w string) bool { return strings.Contains(strings.Map(foldRune, s), w) }) }(words()) {\n\t\treturn Redacted\n\t}\n\t// 没有敏感字段名，但可能带着 URL / DSN 凭证（postgres://u:p@h），同 RedactText\n\treturn newlines'),
        swap('|| sensitive(body, ws)', '|| slices.ContainsFunc(ws, func(w string) bool { return strings.Contains(strings.Map(foldRune, body), w) })'))
 mutate("脱敏后大整数不丢精度", "internal/web/redact.go", ".", "TestRedactBody", swap('\tdec.UseNumber()\n', ''))
 mutate("脱敏后不转义 HTML 字符", "internal/web/redact.go", ".", "TestRedactBody",

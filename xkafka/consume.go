@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"maps"
 	"slices"
 	"strings"
 	"sync"
@@ -410,11 +409,4 @@ func (c *consumer) kill(partitions []int32) {
 	for _, w := range ws {
 		<-w.done
 	}
-}
-
-// liveNames 只给测试看：还活着的分区协程
-func (c *consumer) liveNames() []string {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return slices.Sorted(maps.Values(c.live))
 }

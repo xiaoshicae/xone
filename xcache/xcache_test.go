@@ -478,8 +478,14 @@ func TestClose_NoCrashWithConcurrentReadWrite(t *testing.T) {
 	// 我们拦不住，所以关闭这一步本身必须对并发读写是安全的。
 	// 实测直接调 Close 时 100 轮里有 750 个协程 panic，并且 -race 报数据竞争。
 	// 每轮都炸好几个，20 轮足够：变异「关闭时改调 ristretto 的 Close」连跑 5 次每次都被抓到。
-	// 实测空闲的 4 核机器、-race：100 轮约 1.1s，20 轮约 0.2s
+	// 写协程有了 opsPerWorker 的上限之后，-race 单跑这一条约 2.4s（含编译）；
+	// 变异「关闭时改调 ristretto 的 Close」照样每次都被抓到（连跑 3 次）
 	const rounds, workers = 20, 8
+	// 每个写协程最多写这么多次。ristretto 的 Clear 要等 setBuf 某一刻为空才退出
+	// （v2.4.2 cache.go 的 drain 循环），8 个协程不停地写、而它们又只在 Close 返回之后才被叫停的话，
+	// 空闲的多核机器上写得比它清得快，Close 永远不返回（实测单跑 3 次卡死 3 次，机器忙时反而能过）。
+	// 写够这么多次就自己停：Close 一定等得到头，关闭期间和关完之后照样有并发的写
+	const opsPerWorker = 5000
 	small := DefaultClientConfig()
 	small.NumCounters, small.MaxCost = 1000, 100 // 默认的 100 万个计数器每轮要分配 4MB，太慢
 	var panics atomic.Int64
@@ -499,7 +505,7 @@ func TestClose_NoCrashWithConcurrentReadWrite(t *testing.T) {
 						panics.Add(1)
 					}
 				}()
-				for n := 0; ; n++ {
+				for n := 0; n < opsPerWorker; n++ {
 					select {
 					case <-stop:
 						return

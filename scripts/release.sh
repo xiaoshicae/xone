@@ -61,7 +61,7 @@ MOD=github.com/xiaoshicae/xone
 # 谁先谁后根本无所谓；手写的表倒是新加一个模块就得记得改
 #
 # 钉版本号（PINNED）要连不发布的 example / e2e / internal/schemagen 一起：它们 require 的子模块
-# 钉成 $VERSION 之后又 require 核心的 $VERSION，自己的 go.mod 还写着 v0.0.0 的话，
+# 钉成 $VERSION 之后又 require 核心的 ${VERSION}，自己的 go.mod 还写着 v0.0.0 的话，
 # go 会说 go.mod 要更新，check.sh 的 vet 当场就红。tag 只打 $MODS
 PINNED=$(git ls-files '*/go.mod' | xargs -n1 dirname)
 MODS=$(echo "$PINNED" | grep -vxE 'example|e2e|internal/schemagen')
@@ -134,8 +134,8 @@ GO_EOF
 } > main.go
 
 if [ "$MODE" = "--smoke" ]; then
-  echo "== require 各模块的 $VERSION，replace 到 $ROOT =="
-  # 不走 go get：这个版本还没推，proxy 上没有。require 照样写 $VERSION，
+  echo "== require 各模块的 ${VERSION}，replace 到 $ROOT =="
+  # 不走 go get：这个版本还没推，proxy 上没有。require 照样写 ${VERSION}，
   # 使用者 go.mod 里会出现的就是这几行，只是内容从本地目录来
   for p in "$MOD" $PKGS; do
     echo "  $p@$VERSION => $ROOT${p#"$MOD"}"
@@ -245,7 +245,7 @@ if [ "$MODE" = "--bump" ]; then
     exit 1
   fi
 
-  echo "== 1. 把各模块 go.mod 里仓库内的 require 钉成 $VERSION（replace 留着） =="
+  echo "== 1. 把各模块 go.mod 里仓库内的 require 钉成 ${VERSION}（replace 留着） =="
   # 用 go mod edit 而不是 sed：require 块的缩进、子模块路径后缀这些细节
   # 手写正则很容易弄错，而弄错的后果是发出去一个装不上的版本。
   # 原来是 v0.0.0、上一个版本，还是 go 工具自己补的伪版本，都一样改写
@@ -258,7 +258,7 @@ if [ "$MODE" = "--bump" ]; then
   [ -z "$left" ] || { echo "✗ 还有没钉好的仓库内依赖："; echo "$left"; exit 1; }
   echo "  ✓ $(echo $PINNED | wc -w) 个子模块的 go.mod 都钉到了 $VERSION"
 
-  echo "== 2. CHANGELOG：「未发布」改成 $VERSION，上面再开一个空的「未发布」 =="
+  echo "== 2. CHANGELOG：「未发布」改成 ${VERSION}，上面再开一个空的「未发布」 =="
   if grep -q "^## \[$VERSION\]" docs/CHANGELOG.md; then
     echo "  CHANGELOG 里已经有 $VERSION 这一节，不动"
   else
@@ -288,7 +288,7 @@ PY
 
   git switch -c release/$VERSION && git commit -am "release: $VERSION" && git push -u origin release/$VERSION
 
-开 PR 合进 main（这时 main 上的 go.mod 已经 require $VERSION，靠 replace 照常开发），
+开 PR 合进 main（这时 main 上的 go.mod 已经 require ${VERSION}，靠 replace 照常开发），
 合进去之后在 GitHub 上点 Actions → release → Run workflow，或者本地：
 
   scripts/release.sh $VERSION --tag
@@ -309,7 +309,7 @@ if [ -n "$taken" ]; then
   cat <<TIP
 ✗ 这些 tag 已经存在：${taken# }
 
-  - 这个版本已经推出去了（git ls-remote --tags origin 里有 $VERSION）：换一个版本号；
+  - 这个版本已经推出去了（git ls-remote --tags origin 里有 ${VERSION}）：换一个版本号；
   - 是本地上一次 --tag / --smoke 失败留下的、还没推送：删掉再重跑 --tag——
 
       git tag -d \$(git tag --points-at $VERSION)
@@ -319,7 +319,7 @@ TIP
   exit 1
 fi
 left=$(unpinned)
-[ -z "$left" ] || { echo "✗ 这个提交的 go.mod 还没钉到 $VERSION，先合并 scripts/release.sh $VERSION --bump 的那个 PR："; echo "$left"; exit 1; }
+[ -z "$left" ] || { echo "✗ 这个提交的 go.mod 还没钉到 ${VERSION}，先合并 scripts/release.sh $VERSION --bump 的那个 PR："; echo "$left"; exit 1; }
 grep -q "^## \[$VERSION\]" docs/CHANGELOG.md || { echo "✗ docs/CHANGELOG.md 里没有 ## [$VERSION] 这一节"; exit 1; }
 # --bump 把「未发布」改成了这一节；它是空的，就是 --bump 之前「未发布」里什么都没写
 has_entries "## [$VERSION]" || { echo "✗ docs/CHANGELOG.md 的 ## [$VERSION] 一节是空的（没有 - 开头的条目）：先把这一版使用者看得见的变化写进去"; exit 1; }

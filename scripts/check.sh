@@ -93,7 +93,7 @@ tt=$(api ./xonetest)
 # 服务端那一侧（xgin、xecho 的 TLS 块，带 ClientCAFile / MinVersion）形状不同，在 internal/web 里，不往这里加
 tl=$(api ./xtls)
 [ "$tl" -le 3 ] || fail "xtls 公开 API $tl 个，超过上限 3"
-echo "✓ 公开 API：根包 $a（上限 15）、xhook $r（上限 6）、xconfig $x（上限 6）、xonetest $tt（上限 3）、xtls $tl（上限 3）"
+echo "✓ 公开 API：根包 ${a}（上限 15）、xhook ${r}（上限 6）、xconfig ${x}（上限 6）、xonetest ${tt}（上限 3）、xtls ${tl}（上限 3）"
 
 # ---- 6. 集成包必须导出纯构造器 New，且不得引用根包 ----
 # New 保证「零装配」永远只是默认路径，不是唯一路径：
@@ -107,7 +107,7 @@ for d in $integrations; do
   # 只读配置、不造任何东西的包（如 xapp、xflow）没有构造器可言，这条对它是空的
   grep -rq 'xhook\.BeforeStop(' "$d"/*.go || continue
   # xcron 例外：它登记的是进程里唯一的那个调度器，没有「一个实例」可造；
-  # 绕开框架的路径是 Once（不经钩子就能跑），测试直接调包内的调度器
+  # 测试直接调包内的调度器
   [ "$d" != xcron ] || continue
   # New[T any]( 也算：泛型构造器同样是「绕开框架直接造一个」的入口
   grep -rqE '^func New[(\[]' "$d"/*.go || fail "$d 登记了组件，却没有纯构造器 New"
@@ -153,32 +153,7 @@ echo "✓ 配置字段都写进文档了（按节，双向）"
 # 进他们的告警、他们的日志检索、他们的 issue。中文的日志字段名还会变成
 # JSON 的 key，让日志平台的索引和看板直接对不上。
 # internal/schemagen 是构建工具，输出给的是改这份代码的人，不适用。
-zh=$(GOFILES=$(files '*.go') python3 - <<'PY_EOF'
-import os, re
-zh = re.compile(r'[\u4e00-\u9fff]')
-# 整个文件一次扫完，从左往右认记号：注释、"..."（带转义）、`...`（原始字符串，
-# 可以跨行）、'...'（rune，认出来只为了 '"' 这样的不被当成字符串开头）。
-# 一个记号认完才从它后面接着找，所以注释里的引号、字符串里的 // 都不会被误认。
-# 从前是逐行 split('//') 再找 "..."：带 http:// 的字符串从 // 处被截断、
-# 反引号的字符串根本不看，里面写中文照样放过
-token = re.compile(r'//[^\n]*|/\*.*?\*/|"(?:[^"\\\n]|\\.)*"|`[^`]*`|\'(?:[^\'\\\n]|\\.)*\'', re.S)
-for f in os.environ['GOFILES'].split():
-    if f.endswith('_test.go'):
-        continue
-    # 构建工具不受这条约束：它的输出给的是改这份代码的人，
-    # 不会落进使用者的日志里，而这条规矩的全部理由就是后者
-    if f.startswith('internal/schemagen/'):
-        continue
-    src = open(f, encoding='utf-8').read()
-    seen = set()
-    for m in token.finditer(src):
-        if m.group()[0] in '"`' and zh.search(m.group()):
-            line = src.count('\n', 0, m.start()) + 1
-            if line not in seen:
-                seen.add(line)
-                print(f"{f}:{line}")
-PY_EOF
-)
+zh=$(GOFILES=$(files '*.go') python3 scripts/check_zh.py)
 [ -z "$zh" ] || fail "这些地方的运行期字符串还是中文（错误和日志要用英文）：
 $zh"
 echo "✓ 运行期字符串都是英文"
@@ -249,7 +224,9 @@ echo "✓ release.sh 认得出钩子日志（xlog JSON 带额外字段、字段�
 
 # ---- 12.1 测试函数名用英文 ----
 # 测试名会出现在 go test -run、CI 的失败列表和变异表的过滤里，写英文才好搜、好复制
-zhtest=$(files '*_test.go' | xargs grep -nP '^func (Test|Benchmark|Fuzz|Example)\w*[^\x00-\x7F]' || true)
+# 用 perl 而不是 grep -P：macOS 的 BSD grep 没有 -P，报错又被 || true 吞掉，这条检查在那里永远通过
+zhtest=$(files '*_test.go' | xargs perl -ne 'print "$ARGV:$.:$_" if /^func (Test|Benchmark|Fuzz|Example)\w*[^\x00-\x7F]/; close ARGV if eof') \
+  || fail "扫描测试函数名失败"
 [ -z "$zhtest" ] || fail "测试函数名要用英文（描述场景，如 TestNew_FailsFastOnTypo）：
 $zhtest"
 echo "✓ 测试函数名都是英文"

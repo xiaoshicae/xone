@@ -142,7 +142,7 @@ func (l slogLogger) Log(level kgo.LogLevel, msg string, keyvals ...any) {
 		lv = slog.LevelError
 	}
 	// franz-go 的 keyvals 是 key、value 交替，key 是英文的 snake_case（broker、err、group……），
-	// 原样作为字段。放进 detail 一个组里，免得和日志平台上已有的字段（error、name）撞名
+	// 原样作为字段。franz-go 的消息放进 detail，键值放进 fields 一个组里，免得和日志平台上已有的字段（msg、error、name）撞名
 	attrs := make([]any, 0, len(keyvals)/2)
 	for i := 0; i+1 < len(keyvals); i += 2 {
 		attrs = append(attrs, slog.Any(fmt.Sprint(keyvals[i]), keyvals[i+1]))

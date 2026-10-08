@@ -285,10 +285,11 @@ func ceilSeconds(d time.Duration) time.Duration {
 	return time.Duration(math.Ceil(d.Seconds())) * time.Second
 }
 
-// millis 转成毫秒整数，PG 的几个超时 GUC 用毫秒
+// millis 转成毫秒整数，PG 的几个超时 GUC 用毫秒。
+// 向上取整，理由同 seconds：这几个 GUC 的 0 是「不限制」，500µs 向下取整就成了 0，超时静默消失
 func millis(d time.Duration) string {
 	if d <= 0 {
 		return ""
 	}
-	return strconv.FormatInt(d.Milliseconds(), 10)
+	return strconv.FormatInt(int64((d+time.Millisecond-1)/time.Millisecond), 10)
 }

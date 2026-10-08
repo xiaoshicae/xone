@@ -180,8 +180,8 @@ admin := xgin.New().WithConfig(c).WithRoutes(adminRoutes)
 | | 规则 |
 |---|---|
 | 默认敏感词 | `password` `passwd` `secret` `token` `authorization` `apikey` `accesskey` `privatekey` `credential` `cookie` `session` `signature` |
-| body（JSON / 表单） | 键含敏感词就遮这个值，任意嵌套层级都算；JSON 的字符串值再按 `errors` 字段的规矩过一遍（含敏感词整个遮，DSN 只遮密码）；其余的值原样写回 |
-| 其它 body（纯文本、XML、没带 Content-Type…） | 本身是合法 JSON 对象 / 数组 / 字符串的按 JSON 遮（`ShouldBindJSON` 不看 Content-Type）；别的定位不了字段，出现敏感词就整个遮掉 |
+| body（JSON / 表单） | 键含敏感词就遮这个值，任意嵌套层级都算；JSON 的字符串值再按 `errors` 字段的规矩过一遍（含敏感词整个遮，DSN 只遮密码）；表单的其余值只遮 URL / DSN 里的密码（`https://u:pw@host`）；其余的值原样写回 |
+| 其它 body（纯文本、XML、没带 Content-Type…） | 本身是合法 JSON 对象 / 数组 / 字符串的按 JSON 遮（`ShouldBindJSON` 不看 Content-Type）；别的定位不了字段，出现敏感词就整个遮掉，没有敏感词的只遮 URL / DSN 里的密码 |
 | 请求头 / 响应头 | 名字在名单里（`Authorization` `Proxy-Authorization` `Cookie` `Set-Cookie` `X-Api-Key` `X-Auth-Token`，加上 `AddSensitiveHeaders` 追加的）**或者**名字含敏感词就遮；其余的值只遮 `postgres://app:pw@db`、`app:pw@tcp(db:3306)` 里的密码，不按敏感词整段遮：`Vary: Cookie`、`Access-Control-Allow-Headers: Authorization` 原样记 |
 | 值是 URL 的头 | `Referer`、`X-Original-URL`、`X-Original-URI`、`X-Rewrite-URL`、`X-Forwarded-URI`，响应头 `Location`、`Content-Location`、`Refresh`：去掉 `?` 和 `#` 之后的部分，再去掉 `://` 后面的 userinfo（`https://tok@host` 记成 `https://host`） |
 

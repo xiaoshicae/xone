@@ -664,3 +664,21 @@ func TestRedactBody_JSONStringValueDSNMasked(t *testing.T) {
 		})
 	}
 }
+
+func TestRedactBody_CredentialsInFormValueAndPlainTextRedacted(t *testing.T) {
+	// 回归用例。同一个带密码的 URL，在 JSON 字符串里会被遮，
+	// 在表单值、query、纯文本里却原样进日志——只是换了个编码
+	cases := []struct{ body, ct, want string }{
+		// 表单输出是重新编码过的，: 和 @ 是 %3A、%40
+		{"next=https%3A%2F%2Fbob%3A" + secret + "%40example.com%2Fx", "application/x-www-form-urlencoded", "bob%3A" + Redacted + "%40"},
+		{"dsn postgres://bob:" + secret + "@db:5432/app", "text/plain", "bob:" + Redacted + "@"},
+		{"bob:" + secret + "@tcp(db:3306)/app", "", "bob:" + Redacted + "@"},
+	}
+	for _, c := range cases {
+		got := RedactBody([]byte(c.body), c.ct)
+		mustNotLeak(t, got)
+		if !strings.Contains(got, c.want) {
+			t.Errorf("Content-Type=%q 用户名该留着、密码换成标记，got=%s", c.ct, got)
+		}
+	}
+}

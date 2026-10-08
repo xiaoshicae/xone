@@ -76,6 +76,9 @@ mutate("方言的 Ready 在建连探测里执行", "xgorm/xgorm.go", "./xgorm", 
 # 在 pgx 自己放弃之前把一次合法的慢握手判成超时
 mutate("PG 的探测预算盖住 connect_timeout", "xgorm/dsn.go", "./xgorm", "TestProbeTimeout",
        swap('\treturn cmp.Or(connect, ceilSeconds(dial)) + dial\n', '\treturn dial + 0*cmp.Or(connect, ceilSeconds(dial))\n'))
+# statement_timeout 等的 0 是不限制：不满 1ms 的向下取整成 0，超时就静默消失了
+mutate("PG 的毫秒超时向上取整", "xgorm/dsn.go", "./xgorm", "TestSecondsMillis",
+       swap('int64((d+time.Millisecond-1)/time.Millisecond)', 'd.Milliseconds()'))
 # 配置里的超时只是默认值。DSN 里写了更长的，驱动就等那么久，预算还按配置算的话
 # 会在驱动放弃之前把一次慢但合法的建连判超时。打在读出预算的调用点上（方言填的 ProbeTimeout）和各方言算预算的那一行
 mutate("探测预算按 DSN 里写的超时放宽", "xgorm/xgorm.go", "./xgorm", "TestProbeTimeout",

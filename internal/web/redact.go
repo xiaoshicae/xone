@@ -285,7 +285,8 @@ func redactOpaque(body []byte) string {
 	if sensitive(s, words()) {
 		return Redacted
 	}
-	return newlines.Replace(s)
+	// 没有敏感字段名，但可能带着 URL / DSN 凭证（postgres://u:p@h），同 RedactText
+	return newlines.Replace(redactCredentials(s))
 }
 
 // redactJSON 解析 JSON 并遮掉敏感字段，字符串值另外过一遍 RedactText（值里夹着的整串 DSN）
@@ -380,9 +381,15 @@ func redactForm(body string) string {
 		// 解析不了就整个遮掉，理由同 JSON：定位不了就不能放行
 		return Redacted
 	}
-	for k := range values {
+	for k, vs := range values {
 		if sensitive(k, ws) {
 			values[k] = []string{Redacted}
+			continue
+		}
+		// 值里的 URL / DSN 凭证照样遮，同 JSON 那一支对字符串值调的 RedactText：
+		// ?next=https://u:p@host 或者表单里带一个 DSN，不该因为换了编码就原样进日志
+		for i, v := range vs {
+			vs[i] = redactCredentials(v)
 		}
 	}
 	// Encode 会把遮掉的值也转义成 %2A%2A%2AREDACTED%2A%2A%2A，日志里一眼认不出；

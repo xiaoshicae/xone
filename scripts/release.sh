@@ -276,7 +276,9 @@ PY
 
   echo "== 3. README 里的安装命令换成 $VERSION =="
   # 所有模块共用一个版本号：README 写死这一版，照抄的人各模块版本才一致
-  sed -i -E "s#(github\.com/xiaoshicae/xone(/[a-z/]+)?)@v[0-9]+\.[0-9]+\.[0-9]+#\1@$VERSION#g" README.md
+  # perl 而不是 sed -i -E：macOS 的 BSD sed 要求 -i 后面跟备份后缀，-E 被当成了后缀，
+  # 扩展正则没开，\1 报 not defined in the RE，--bump 在 Mac 上停在这一步
+  perl -pi -e "s#(github\.com/xiaoshicae/xone(/[a-z/]+)?)\@v[0-9]+\.[0-9]+\.[0-9]+#\${1}\@$VERSION#g" README.md
   grep -q "xone@$VERSION" README.md || { echo "✗ README 里没找到安装命令"; exit 1; }
   echo "  ✓ README 的 go get 写的是 $VERSION"
 

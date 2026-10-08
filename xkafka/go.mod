@@ -8,9 +8,9 @@ require (
 	github.com/twmb/franz-go v1.21.7
 	github.com/twmb/franz-go/pkg/kfake v0.0.0-20260915001422-21ef8a4103bb
 	github.com/twmb/franz-go/pkg/kmsg v1.13.1
-	github.com/xiaoshicae/xone v1.24.0
-	github.com/xiaoshicae/xone/xmetric v1.24.0
-	github.com/xiaoshicae/xone/xtrace v1.24.0
+	github.com/xiaoshicae/xone v1.24.1
+	github.com/xiaoshicae/xone/xmetric v1.24.1
+	github.com/xiaoshicae/xone/xtrace v1.24.1
 	go.opentelemetry.io/otel v1.46.0
 	go.opentelemetry.io/otel/sdk v1.46.0
 	go.opentelemetry.io/otel/trace v1.46.0

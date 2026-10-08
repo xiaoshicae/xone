@@ -8,6 +8,8 @@
 
 ## [未发布]
 
+## [v1.24.1] - 2026-10-08
+
 ### 修复
 
 - 安全：xgin / xecho 访问日志里，表单 body 与 `query`（`LogQuery: true`）的值、以及纯文本等定位不了字段的 body 里，URL / DSN 带的密码现在会被遮掉（`?next=https://u:pw@host` 记成 `https://u:***REDACTED***@host`），和 JSON 字符串值的规矩一致；原来只在 JSON 里遮，换成表单或纯文本就原样进日志。

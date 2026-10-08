@@ -4,8 +4,8 @@ go 1.25.0
 
 require (
 	github.com/hashicorp/cronexpr v1.1.3
-	github.com/xiaoshicae/xone v1.24.0
-	github.com/xiaoshicae/xone/xtrace v1.24.0
+	github.com/xiaoshicae/xone v1.24.1
+	github.com/xiaoshicae/xone/xtrace v1.24.1
 	go.opentelemetry.io/otel v1.46.0
 	go.opentelemetry.io/otel/sdk v1.46.0
 	go.opentelemetry.io/otel/trace v1.46.0

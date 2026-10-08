@@ -30,18 +30,18 @@ require (
 	github.com/swaggo/swag v1.16.6
 	github.com/twmb/franz-go v1.21.7
 	github.com/twmb/franz-go/pkg/kmsg v1.13.1
-	github.com/xiaoshicae/xone v1.24.0
-	github.com/xiaoshicae/xone/xcache v1.24.0
-	github.com/xiaoshicae/xone/xcron v1.24.0
-	github.com/xiaoshicae/xone/xgin v1.24.0
-	github.com/xiaoshicae/xone/xginswagger v1.24.0
-	github.com/xiaoshicae/xone/xgorm v1.24.0
-	github.com/xiaoshicae/xone/xgorm/clickhouse v1.24.0
-	github.com/xiaoshicae/xone/xhttp v1.24.0
-	github.com/xiaoshicae/xone/xkafka v1.24.0
-	github.com/xiaoshicae/xone/xmetric v1.24.0
-	github.com/xiaoshicae/xone/xredis v1.24.0
-	github.com/xiaoshicae/xone/xtrace v1.24.0
+	github.com/xiaoshicae/xone v1.24.1
+	github.com/xiaoshicae/xone/xcache v1.24.1
+	github.com/xiaoshicae/xone/xcron v1.24.1
+	github.com/xiaoshicae/xone/xgin v1.24.1
+	github.com/xiaoshicae/xone/xginswagger v1.24.1
+	github.com/xiaoshicae/xone/xgorm v1.24.1
+	github.com/xiaoshicae/xone/xgorm/clickhouse v1.24.1
+	github.com/xiaoshicae/xone/xhttp v1.24.1
+	github.com/xiaoshicae/xone/xkafka v1.24.1
+	github.com/xiaoshicae/xone/xmetric v1.24.1
+	github.com/xiaoshicae/xone/xredis v1.24.1
+	github.com/xiaoshicae/xone/xtrace v1.24.1
 	go.opentelemetry.io/otel v1.46.0
 	go.opentelemetry.io/otel/sdk v1.46.0
 	gorm.io/driver/clickhouse v0.7.0

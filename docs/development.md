@@ -29,6 +29,7 @@ xone/
 ├── xapp/                应用身份（名字、版本），只认领配置不初始化
 ├── xlog/                日志，基于 log/slog，零第三方依赖
 ├── xflow/               流程编排 + 自动回滚，零第三方依赖
+├── xagent/              最小 ReAct 循环（实验性），零第三方依赖；llm/ 模型接口，tool/ 工具接口，agenterr/ 错误原因
 ├── internal/
 │   ├── config/          配置加载：定位、profile / import、合并、占位符、严格解码
 │   ├── hook/            钩子登记、配对与按档位执行

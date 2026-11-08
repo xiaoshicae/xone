@@ -8,6 +8,10 @@
 
 ## [未发布]
 
+### 新增
+
+- xagent（实验性，核心模块，零第三方依赖）：最小的 ReAct 循环。`xagent/llm` 定义模型接口 `Model.Generate`（返回 `*Response`）、消息类型（`user` / `assistant` / `tool` 三种角色，assistant 消息带 `StopReason` 和 `Usage`）和工具声明 `ToolDef`，`xagent/tool` 在声明之上定义可执行的工具 `Tool`，`xagent.New(model, tools, ...).Run(ctx, messages)` 循环调用模型和工具，直到模型不再调用工具。错误是 `*xerror.Error`，原因用 `errors.Is` 对照 `xagent/agenterr` 里的哨兵（`ErrMaxSteps`、`ErrRateLimited`、`ErrContextTooLong` 等）。暂无 provider 适配。见 [xagent/README.md](../xagent/README.md)。
+
 ## [v1.24.1] - 2026-10-08
 
 ### 修复

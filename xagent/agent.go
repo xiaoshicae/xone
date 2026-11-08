@@ -1,6 +1,10 @@
 // Package xagent 一个最小的 ReAct 循环：调用模型 → 执行工具 → 把结果塞回对话，直到模型不再调用工具。
 //
-// 模型接口在 xagent/llm，工具接口在 xagent/tool，两者互不 import，只在这里汇合。
+// 分层与依赖（单向）：
+//
+//	xagent/llm   模型接口、消息类型、工具声明 ToolDef
+//	xagent/tool  可执行的工具：在 ToolDef 之上加 Call       （依赖 llm）
+//	xagent       循环                                       （依赖 llm、tool）
 package xagent
 
 import (
@@ -19,7 +23,6 @@ const DefaultMaxSteps = 10
 type Agent struct {
 	model    llm.Model
 	tools    *tool.Set
-	defs     []llm.ToolDef // tool.Spec 转成 llm.ToolDef，New 时转一次
 	system   string
 	maxSteps int
 }
@@ -53,9 +56,6 @@ func New(model llm.Model, tools []tool.Tool, opts ...Option) (*Agent, error) {
 	if a.maxSteps <= 0 {
 		return nil, xerror.Newf("xagent", "new", "max steps must be positive, got %d", a.maxSteps)
 	}
-	for _, s := range set.Specs() {
-		a.defs = append(a.defs, llm.ToolDef{Name: s.Name, Description: s.Description, InputSchema: s.InputSchema})
-	}
 	return a, nil
 }
 
@@ -66,6 +66,8 @@ type Result struct {
 	Messages []llm.Message
 	// Steps 本次调用了几次模型。
 	Steps int
+	// Usage 本次所有模型调用的用量之和。每一次的明细在对应 assistant 消息的 Usage 上。
+	Usage llm.Usage
 }
 
 // Text 最后一条 assistant 消息的文本，通常就是最终回答。
@@ -93,10 +95,12 @@ func (a *Agent) Run(ctx context.Context, messages []llm.Message) (*Result, error
 		// ① 调用模型
 		reply, err := a.generate(ctx, res.Messages)
 		res.Steps++
+		res.Usage.InputTokens += reply.Usage.InputTokens
+		res.Usage.OutputTokens += reply.Usage.OutputTokens
 		if err != nil {
 			return res, xerror.Newf("xagent", "execute", "step %d: %w", res.Steps, err)
 		}
-		// 先把模型的回复记进历史，再执行工具：下一轮请求里，工具结果必须跟在发起调用的那条消息后面
+		// 先把模型的回复记进历史，再执行工具：工具结果必须跟在发起调用的那条消息后面
 		res.Messages = append(res.Messages, reply)
 
 		calls := reply.ToolCalls()
@@ -107,41 +111,39 @@ func (a *Agent) Run(ctx context.Context, messages []llm.Message) (*Result, error
 		// ② 执行工具
 		results := a.callTools(ctx, calls)
 
-		// ③ 把结果塞回对话
-		res.Messages = append(res.Messages, resultMessage(results))
+		// ③ 把结果塞回对话：每个结果一条 tool 消息
+		res.Messages = append(res.Messages, results...)
 	}
 	return res, xerror.Newf("xagent", "execute", "exceeded max steps %d", a.maxSteps)
 }
 
-// generate 第①步：调用一次模型。
+// generate 第①步：调用一次模型。出错时仍返回模型给出的消息，用量照样计入。
 func (a *Agent) generate(ctx context.Context, messages []llm.Message) (llm.Message, error) {
-	resp, err := a.model.Generate(ctx, &llm.Request{System: a.system, Messages: messages, Tools: a.defs})
+	reply, err := a.model.Generate(ctx, &llm.Request{System: a.system, Messages: messages, Tools: a.tools.Defs()})
 	if err != nil {
-		return llm.Message{}, fmt.Errorf("generate: %w", err)
-	}
-	if resp == nil {
-		return llm.Message{}, fmt.Errorf("generate: model returned a nil response")
+		return reply, fmt.Errorf("generate: %w", err)
 	}
 	// 被截断的回复不进历史：里面的工具调用参数可能只写了一半，
 	// 而且一旦带着没有结果的工具调用进了历史，这段对话就再也发不出去了
-	if resp.StopReason == llm.StopMaxTokens {
-		return llm.Message{}, fmt.Errorf("generate: output truncated by max tokens")
+	if reply.StopReason == llm.StopMaxTokens {
+		return reply, fmt.Errorf("generate: output truncated by max tokens")
 	}
-	return resp.Message, nil
+	reply.Role = llm.RoleAssistant // 模型产出的一定是 assistant 消息，适配层漏填也不影响历史
+	return reply, nil
 }
 
-// callTools 第②步：按顺序执行每个工具调用。
+// callTools 第②步：按顺序执行每个工具调用，每个调用产出一条 tool 消息。
 //
 // 保证每个调用都有一个结果，顺序与 calls 一致：模型要求每个工具调用都有对应的结果，
 // 缺一个，下一轮请求就会被 provider 拒绝。所以任何失败都变成一条错误结果，不提前返回。
-func (a *Agent) callTools(ctx context.Context, calls []llm.ToolCall) []llm.ToolResult {
-	results := make([]llm.ToolResult, len(calls))
+func (a *Agent) callTools(ctx context.Context, calls []llm.ToolCall) []llm.Message {
+	results := make([]llm.Message, len(calls))
 	for i, c := range calls {
 		content, err := a.callTool(ctx, c)
-		results[i] = llm.ToolResult{CallID: c.ID, Content: content}
 		if err != nil {
-			results[i].Content = err.Error()
-			results[i].IsError = true
+			results[i] = llm.ToolResult(c, err.Error(), true)
+		} else {
+			results[i] = llm.ToolResult(c, content, false)
 		}
 	}
 	return results
@@ -164,13 +166,4 @@ func (a *Agent) callTool(ctx context.Context, c llm.ToolCall) (content string, e
 		}
 	}()
 	return t.Call(ctx, c.Input)
-}
-
-// resultMessage 第③步：把全部工具结果装进同一条 user 消息。
-func resultMessage(results []llm.ToolResult) llm.Message {
-	parts := make([]llm.Part, len(results))
-	for i := range results {
-		parts[i] = llm.Part{ToolResult: &results[i]}
-	}
-	return llm.Message{Role: llm.RoleUser, Parts: parts}
 }

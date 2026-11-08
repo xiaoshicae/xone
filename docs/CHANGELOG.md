@@ -10,7 +10,7 @@
 
 ### 新增
 
-- xagent（实验性，核心模块，零第三方依赖）：最小的 ReAct 循环。`xagent/llm` 定义模型接口 `Model.Generate` 和消息类型，`xagent/tool` 定义工具接口 `Tool`，`xagent.New(model, tools, ...).Run(ctx, messages)` 循环调用模型和工具，直到模型不再调用工具。暂无 provider 适配。见 [xagent/README.md](../xagent/README.md)。
+- xagent（实验性，核心模块，零第三方依赖）：最小的 ReAct 循环。`xagent/llm` 定义模型接口 `Model.Generate`、消息类型（`user` / `assistant` / `tool` 三种角色，assistant 消息带 `StopReason` 和 `Usage`）和工具声明 `ToolDef`，`xagent/tool` 在声明之上定义可执行的工具 `Tool`，`xagent.New(model, tools, ...).Run(ctx, messages)` 循环调用模型和工具，直到模型不再调用工具。暂无 provider 适配。见 [xagent/README.md](../xagent/README.md)。
 
 ## [v1.24.1] - 2026-10-08
 

@@ -19,4 +19,8 @@ func TestMessage_ToolCallsAndTextKeepOrder(t *testing.T) {
 	if UserText("hi").Role != RoleUser {
 		t.Fatal("UserText should be a user message")
 	}
+	r := ToolResult(calls[1], "oops", true)
+	if r.Role != RoleTool || r.ToolCallID != "2" || r.ToolName != "b" || r.Text() != "oops" || !r.IsError {
+		t.Fatalf("ToolResult = %+v", r)
+	}
 }

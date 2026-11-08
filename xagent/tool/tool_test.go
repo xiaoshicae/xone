@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+
+	"github.com/xiaoshicae/xone/xagent/llm"
 )
 
 type named string
 
-func (n named) Spec() Spec { return Spec{Name: string(n)} }
+func (n named) Def() llm.ToolDef { return llm.ToolDef{Name: string(n)} }
 func (n named) Call(context.Context, json.RawMessage) (string, error) {
 	return string(n), nil
 }
@@ -18,8 +20,8 @@ func TestNewSet_KeepsOrderAndFindsByName(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if specs := s.Specs(); len(specs) != 2 || specs[0].Name != "b" || specs[1].Name != "a" {
-		t.Fatalf("specs not in input order: %+v", specs)
+	if defs := s.Defs(); len(defs) != 2 || defs[0].Name != "b" || defs[1].Name != "a" {
+		t.Fatalf("defs not in input order: %+v", defs)
 	}
 	if got, ok := s.Get("a"); !ok || got != named("a") {
 		t.Fatalf("Get(a) = %v, %v", got, ok)

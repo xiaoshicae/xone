@@ -14,31 +14,28 @@ import (
 
 // scriptedModel 按顺序返回预设的回复，并记下每次收到的请求。
 type scriptedModel struct {
-	replies []*llm.Response
+	replies []llm.Message
 	reqs    []*llm.Request
 }
 
-func (m *scriptedModel) Generate(_ context.Context, req *llm.Request) (*llm.Response, error) {
+func (m *scriptedModel) Generate(_ context.Context, req *llm.Request) (llm.Message, error) {
 	m.reqs = append(m.reqs, req)
 	if len(m.reqs) > len(m.replies) {
-		return nil, errors.New("script exhausted")
+		return llm.Message{}, errors.New("script exhausted")
 	}
 	return m.replies[len(m.reqs)-1], nil
 }
 
-func say(text string) *llm.Response {
-	return &llm.Response{
-		Message:    llm.Message{Role: llm.RoleAssistant, Parts: []llm.Part{{Text: text}}},
-		StopReason: llm.StopEndTurn,
-	}
+func say(text string) llm.Message {
+	return llm.Message{Role: llm.RoleAssistant, Parts: []llm.Part{{Text: text}}, StopReason: llm.StopEndTurn}
 }
 
-func callTools(calls ...llm.ToolCall) *llm.Response {
-	msg := llm.Message{Role: llm.RoleAssistant}
+func callTools(calls ...llm.ToolCall) llm.Message {
+	msg := llm.Message{Role: llm.RoleAssistant, StopReason: llm.StopToolUse}
 	for i := range calls {
 		msg.Parts = append(msg.Parts, llm.Part{ToolCall: &calls[i]})
 	}
-	return &llm.Response{Message: msg, StopReason: llm.StopToolUse}
+	return msg
 }
 
 // funcTool 用一个函数实现 tool.Tool。
@@ -47,7 +44,7 @@ type funcTool struct {
 	fn   func(ctx context.Context, input json.RawMessage) (string, error)
 }
 
-func (t funcTool) Spec() tool.Spec { return tool.Spec{Name: t.name, Description: t.name} }
+func (t funcTool) Def() llm.ToolDef { return llm.ToolDef{Name: t.name, Description: t.name} }
 func (t funcTool) Call(ctx context.Context, in json.RawMessage) (string, error) {
 	return t.fn(ctx, in)
 }
@@ -67,24 +64,17 @@ func mustNew(t *testing.T, m llm.Model, tools []tool.Tool, opts ...Option) *Agen
 	return a
 }
 
-// toolResults 取出一条消息里的全部工具结果。
-func toolResults(t *testing.T, m llm.Message) []llm.ToolResult {
-	t.Helper()
-	if m.Role != llm.RoleUser {
-		t.Fatalf("tool results must be in a user message, got role %q", m.Role)
+// lastToolResults 取出对话末尾连续的 tool 消息。
+func lastToolResults(msgs []llm.Message) []llm.Message {
+	i := len(msgs)
+	for i > 0 && msgs[i-1].Role == llm.RoleTool {
+		i--
 	}
-	var out []llm.ToolResult
-	for _, p := range m.Parts {
-		if p.ToolResult == nil {
-			t.Fatalf("unexpected non-result part in tool result message: %+v", p)
-		}
-		out = append(out, *p.ToolResult)
-	}
-	return out
+	return msgs[i:]
 }
 
 func TestRun_ReturnsAnswerWhenModelCallsNoTool(t *testing.T) {
-	m := &scriptedModel{replies: []*llm.Response{say("hello")}}
+	m := &scriptedModel{replies: []llm.Message{say("hello")}}
 	a := mustNew(t, m, nil, WithSystem("be brief"))
 
 	res, err := a.Run(context.Background(), []llm.Message{llm.UserText("hi")})
@@ -99,8 +89,8 @@ func TestRun_ReturnsAnswerWhenModelCallsNoTool(t *testing.T) {
 	}
 }
 
-func TestRun_FeedsAllToolResultsBackInOneMessageInOrder(t *testing.T) {
-	m := &scriptedModel{replies: []*llm.Response{
+func TestRun_FeedsEachToolResultBackAsToolMessageInOrder(t *testing.T) {
+	m := &scriptedModel{replies: []llm.Message{
 		callTools(
 			llm.ToolCall{ID: "c1", Name: "a", Input: json.RawMessage(`1`)},
 			llm.ToolCall{ID: "c2", Name: "b", Input: json.RawMessage(`2`)},
@@ -117,20 +107,22 @@ func TestRun_FeedsAllToolResultsBackInOneMessageInOrder(t *testing.T) {
 		t.Fatalf("got steps=%d text=%q", res.Steps, res.Text())
 	}
 
-	// 第二次请求：用户输入、发起调用的 assistant 消息、一条装着两个结果的 user 消息
+	// 第二次请求：用户输入、发起调用的 assistant 消息、两条 tool 消息
 	second := m.reqs[1].Messages
-	if len(second) != 3 || second[1].Role != llm.RoleAssistant {
+	if len(second) != 4 || second[1].Role != llm.RoleAssistant {
 		t.Fatalf("unexpected history on second request: %+v", second)
 	}
-	got := toolResults(t, second[2])
-	want := []llm.ToolResult{{CallID: "c1", Content: "a:1"}, {CallID: "c2", Content: "b:2"}}
-	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
-		t.Fatalf("tool results = %+v, want %+v", got, want)
+	want := []struct{ id, name, text string }{{"c1", "a", "a:1"}, {"c2", "b", "b:2"}}
+	for i, w := range want {
+		got := second[2+i]
+		if got.Role != llm.RoleTool || got.ToolCallID != w.id || got.ToolName != w.name || got.Text() != w.text || got.IsError {
+			t.Errorf("result #%d = %+v, want %+v", i, got, w)
+		}
 	}
 }
 
 func TestRun_SendsToolDefinitionsToModel(t *testing.T) {
-	m := &scriptedModel{replies: []*llm.Response{say("ok")}}
+	m := &scriptedModel{replies: []llm.Message{say("ok")}}
 	a := mustNew(t, m, []tool.Tool{echo("a"), echo("b")})
 
 	if _, err := a.Run(context.Background(), nil); err != nil {
@@ -142,6 +134,27 @@ func TestRun_SendsToolDefinitionsToModel(t *testing.T) {
 	}
 }
 
+func TestRun_SumsUsageAcrossSteps(t *testing.T) {
+	first := callTools(llm.ToolCall{ID: "c", Name: "a"})
+	first.Usage = llm.Usage{InputTokens: 10, OutputTokens: 3}
+	second := say("done")
+	second.Usage = llm.Usage{InputTokens: 20, OutputTokens: 5}
+	m := &scriptedModel{replies: []llm.Message{first, second}}
+	a := mustNew(t, m, []tool.Tool{echo("a")})
+
+	res, err := a.Run(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := (llm.Usage{InputTokens: 30, OutputTokens: 8}); res.Usage != want {
+		t.Fatalf("usage = %+v, want %+v", res.Usage, want)
+	}
+	// 每一步的明细留在对应的 assistant 消息上
+	if res.Messages[0].Usage != first.Usage {
+		t.Fatalf("per-step usage lost: %+v", res.Messages[0].Usage)
+	}
+}
+
 func TestRun_ToolFailuresBecomeErrorResultsAndLoopContinues(t *testing.T) {
 	failing := funcTool{name: "fail", fn: func(context.Context, json.RawMessage) (string, error) {
 		return "", errors.New("bad input")
@@ -149,7 +162,7 @@ func TestRun_ToolFailuresBecomeErrorResultsAndLoopContinues(t *testing.T) {
 	panicking := funcTool{name: "boom", fn: func(context.Context, json.RawMessage) (string, error) {
 		panic("kaboom")
 	}}
-	m := &scriptedModel{replies: []*llm.Response{
+	m := &scriptedModel{replies: []llm.Message{
 		callTools(
 			llm.ToolCall{ID: "c1", Name: "fail"},
 			llm.ToolCall{ID: "c2", Name: "boom"},
@@ -167,24 +180,21 @@ func TestRun_ToolFailuresBecomeErrorResultsAndLoopContinues(t *testing.T) {
 	if res.Text() != "recovered" {
 		t.Fatalf("loop did not continue after tool failures: %q", res.Text())
 	}
-	got := toolResults(t, res.Messages[1])
+	got := res.Messages[1:5]
 	wantErr := map[string]string{"c1": "bad input", "c2": "panicked: kaboom", "c3": `unknown tool "missing"`}
-	if len(got) != 4 {
-		t.Fatalf("want 4 results, got %+v", got)
-	}
 	for _, r := range got[:3] {
-		if !r.IsError || !strings.Contains(r.Content, wantErr[r.CallID]) {
-			t.Errorf("result %s = %+v, want error containing %q", r.CallID, r, wantErr[r.CallID])
+		if r.Role != llm.RoleTool || !r.IsError || !strings.Contains(r.Text(), wantErr[r.ToolCallID]) {
+			t.Errorf("result %s = %+v, want error containing %q", r.ToolCallID, r, wantErr[r.ToolCallID])
 		}
 	}
-	if got[3].IsError || got[3].Content != "ok:" {
+	if got[3].IsError || got[3].Text() != "ok:" {
 		t.Errorf("healthy tool result = %+v", got[3])
 	}
 }
 
 func TestRun_StopsAtMaxStepsWithValidHistory(t *testing.T) {
 	loop := callTools(llm.ToolCall{ID: "c", Name: "a"})
-	m := &scriptedModel{replies: []*llm.Response{loop, loop, loop, loop}}
+	m := &scriptedModel{replies: []llm.Message{loop, loop, loop, loop}}
 	a := mustNew(t, m, []tool.Tool{echo("a")}, WithMaxSteps(2))
 
 	res, err := a.Run(context.Background(), nil)
@@ -198,7 +208,7 @@ func TestRun_StopsAtMaxStepsWithValidHistory(t *testing.T) {
 		t.Fatalf("model called %d times, steps=%d, want 2", len(m.reqs), res.Steps)
 	}
 	// 最后一条是工具结果：历史可以直接拿去继续
-	if len(res.Messages) != 4 || len(toolResults(t, res.Messages[3])) != 1 {
+	if len(res.Messages) != 4 || len(lastToolResults(res.Messages)) != 1 {
 		t.Fatalf("history should end with tool results: %+v", res.Messages)
 	}
 }
@@ -214,7 +224,7 @@ func TestRun_CanceledDuringToolsStillAnswersEveryCall(t *testing.T) {
 		called = true
 		return "", nil
 	}}
-	m := &scriptedModel{replies: []*llm.Response{
+	m := &scriptedModel{replies: []llm.Message{
 		callTools(llm.ToolCall{ID: "c1", Name: "cancel"}, llm.ToolCall{ID: "c2", Name: "never"}),
 		say("unreachable"),
 	}}
@@ -230,8 +240,8 @@ func TestRun_CanceledDuringToolsStillAnswersEveryCall(t *testing.T) {
 	if len(m.reqs) != 1 {
 		t.Fatalf("model should not be called after cancellation, called %d times", len(m.reqs))
 	}
-	got := toolResults(t, res.Messages[len(res.Messages)-1])
-	if len(got) != 2 || got[0].IsError || !got[1].IsError || got[1].CallID != "c2" {
+	got := lastToolResults(res.Messages)
+	if len(got) != 2 || got[0].IsError || !got[1].IsError || got[1].ToolCallID != "c2" {
 		t.Fatalf("every call needs a result even when canceled: %+v", got)
 	}
 }
@@ -239,7 +249,8 @@ func TestRun_CanceledDuringToolsStillAnswersEveryCall(t *testing.T) {
 func TestRun_TruncatedReplyIsAnErrorAndNotKept(t *testing.T) {
 	truncated := callTools(llm.ToolCall{ID: "c", Name: "a", Input: json.RawMessage(`{"q":`)})
 	truncated.StopReason = llm.StopMaxTokens
-	m := &scriptedModel{replies: []*llm.Response{truncated}}
+	truncated.Usage = llm.Usage{InputTokens: 7, OutputTokens: 100}
+	m := &scriptedModel{replies: []llm.Message{truncated}}
 	a := mustNew(t, m, []tool.Tool{echo("a")})
 
 	res, err := a.Run(context.Background(), []llm.Message{llm.UserText("hi")})
@@ -248,6 +259,25 @@ func TestRun_TruncatedReplyIsAnErrorAndNotKept(t *testing.T) {
 	}
 	if len(res.Messages) != 1 {
 		t.Fatalf("truncated reply must not enter history: %+v", res.Messages)
+	}
+	// 回复没进历史，但 token 已经花掉了，照样计入
+	if res.Usage.OutputTokens != 100 {
+		t.Fatalf("usage of truncated reply should still count: %+v", res.Usage)
+	}
+}
+
+func TestRun_RecordsReplyAsAssistantEvenIfModelOmitsRole(t *testing.T) {
+	reply := say("hi")
+	reply.Role = "" // 适配层漏填了角色
+	m := &scriptedModel{replies: []llm.Message{reply}}
+	a := mustNew(t, m, nil)
+
+	res, err := a.Run(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Messages[0].Role != llm.RoleAssistant || res.Text() != "hi" {
+		t.Fatalf("reply should be recorded as assistant: %+v", res.Messages[0])
 	}
 }
 
@@ -264,7 +294,7 @@ func TestRun_ModelErrorIsWrapped(t *testing.T) {
 func TestRun_DoesNotModifyCallerMessages(t *testing.T) {
 	in := make([]llm.Message, 1, 10) // 留足容量：一旦直接 append，就会写进这个底层数组
 	in[0] = llm.UserText("hi")
-	m := &scriptedModel{replies: []*llm.Response{say("a"), say("b")}}
+	m := &scriptedModel{replies: []llm.Message{say("a"), say("b")}}
 	a := mustNew(t, m, nil)
 
 	if _, err := a.Run(context.Background(), in); err != nil {

@@ -42,9 +42,10 @@ fmt.Println(res.Text())
 
 | 包 | 接口 | 职责 |
 |---|---|---|
-| `xagent/llm` | `Model.Generate(ctx, *Request) (Message, error)` | 调用一次模型：给一段对话，拿回模型的下一条消息。还定义了 `Message` / `Part` / `ToolCall` 和工具声明 `ToolDef` |
+| `xagent/llm` | `Model.Generate(ctx, *Request) (*Response, error)` | 调用一次模型：给一段对话，拿回模型的回复（`Response.Message`）。还定义了 `Message` / `Part` / `ToolCall` 和工具声明 `ToolDef` |
 | `xagent/tool` | `Tool.Def() llm.ToolDef`、`Tool.Call(ctx, input) (string, error)` | 一个可执行的工具：声明直接用 `llm.ToolDef`，再加上执行。`Set` 按名字查找 |
 | `xagent` | `New(model, tools, opts...)`、`Agent.Run(ctx, messages)` | 循环本身 |
+| `xagent/agenterr` | 哨兵错误 `ErrMaxSteps`、`ErrRateLimited` …… | 各层共用的错误原因，用 `errors.Is` 判断；只依赖标准库，provider 适配层也用它 |
 
 ## 行为
 
@@ -65,12 +66,25 @@ fmt.Println(res.Text())
 
 ## 排错
 
-`Run` / `New` 返回的错误都是 `*xerror.Error`，模块名 `xagent`。
+`Run` / `New` 返回的错误都是 `*xerror.Error`，模块名 `xagent`。具体原因用 `errors.Is` 判断，不要匹配错误文本：
 
-| 错误 | 原因 |
+| 原因 | 来自 | 怎么处理 |
+|---|---|---|
+| `agenterr.ErrMaxSteps` | 循环 | 调大 `WithMaxSteps`，或检查工具结果是否让模型陷入了重试 |
+| `agenterr.ErrTruncated` | 循环 | 调大 provider 侧的 max tokens |
+| `agenterr.ErrRateLimited` | 模型适配层 | 退避后重试 |
+| `agenterr.ErrUnavailable` | 模型适配层 | 重试 |
+| `agenterr.ErrContextTooLong` | 模型适配层 | 缩短对话历史后再试，直接重试不会好转 |
+| `agenterr.ErrAuth` | 模型适配层 | 检查 API key，直接重试不会好转 |
+| `context.Canceled` / `context.DeadlineExceeded` | 调用方的 ctx | 取消和超时不另外定义哨兵 |
+
+实现 `llm.Model` 时，把 provider 的错误尽量用 `%w` 归到上面四类模型错误里，归不进去的保持原样。
+
+| 错误文本 | 原因 |
 |---|---|
 | `xone xagent new failed, err=[model is nil]` | `New` 的第一个参数是 nil |
 | `xone xagent new failed, err=[duplicate tool name "x"]` | 两个工具的 `Def().Name` 相同 |
-| `xone xagent execute failed, err=[exceeded max steps N]` | 模型连续 N 次都在调用工具；调大 `WithMaxSteps`，或检查工具结果是否让模型陷入了重试 |
+| `xone xagent execute failed, err=[max steps exceeded (N)]` | 模型连续 N 次都在调用工具；调大 `WithMaxSteps`，或检查工具结果是否让模型陷入了重试 |
 | `xone xagent execute failed, err=[step N: generate: output truncated by max tokens]` | 模型输出超过了长度上限；调大 provider 侧的 max tokens |
 | `xone xagent execute failed, err=[canceled after N steps: context canceled]` | 调用方的 ctx 被取消或超时 |
+| `xone xagent execute failed, err=[step N: generate: model returned a nil response]` | `llm.Model` 的实现没报错却返回了 nil，是实现的问题 |

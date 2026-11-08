@@ -3,9 +3,12 @@ package xagent
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
+	"github.com/xiaoshicae/xone/xagent/agenterr"
 	"github.com/xiaoshicae/xone/xagent/llm"
 	"github.com/xiaoshicae/xone/xagent/tool"
 	"github.com/xiaoshicae/xone/xerror"
@@ -67,7 +70,7 @@ func TestRun_StopsAtMaxStepsWithValidHistory(t *testing.T) {
 	a := mustNew(t, m, []tool.Tool{echo("a")}, WithMaxSteps(2))
 
 	res, err := a.Run(context.Background(), nil)
-	if err == nil || !strings.Contains(err.Error(), "exceeded max steps 2") {
+	if !errors.Is(err, agenterr.ErrMaxSteps) || !strings.Contains(err.Error(), "max steps exceeded (2)") {
 		t.Fatalf("want max steps error, got %v", err)
 	}
 	if !xerror.Is(err, "xagent") {
@@ -90,7 +93,7 @@ func TestRun_TruncatedReplyIsAnErrorAndNotKept(t *testing.T) {
 	a := mustNew(t, m, []tool.Tool{echo("a")})
 
 	res, err := a.Run(context.Background(), []llm.Message{llm.UserText("hi")})
-	if err == nil || !strings.Contains(err.Error(), "truncated") {
+	if !errors.Is(err, agenterr.ErrTruncated) {
 		t.Fatalf("want truncation error, got %v", err)
 	}
 	if len(res.Messages) != 1 {
@@ -114,6 +117,31 @@ func TestRun_RecordsReplyAsAssistantEvenIfModelOmitsRole(t *testing.T) {
 	}
 	if res.Messages[0].Role != llm.RoleAssistant || res.Text() != "hi" {
 		t.Fatalf("reply should be recorded as assistant: %+v", res.Messages[0])
+	}
+}
+
+func TestRun_ModelErrorCauseSurvivesWrapping(t *testing.T) {
+	// 适配层按约定用 %w 包装 agenterr 的原因；穿过循环和 xerror 之后，调用方仍能用 errors.Is 认出来
+	a := mustNew(t, failingModel{err: fmt.Errorf("provider said 429: %w", agenterr.ErrRateLimited)}, nil)
+
+	_, err := a.Run(context.Background(), nil)
+	if !errors.Is(err, agenterr.ErrRateLimited) || !xerror.Is(err, "xagent") {
+		t.Fatalf("want xagent error wrapping ErrRateLimited, got %v", err)
+	}
+	if errors.Is(err, agenterr.ErrContextTooLong) {
+		t.Fatalf("unrelated cause matched: %v", err)
+	}
+}
+
+func TestRun_NilResponseIsAnError(t *testing.T) {
+	a := mustNew(t, nilModel{}, nil)
+
+	res, err := a.Run(context.Background(), nil)
+	if err == nil || !strings.Contains(err.Error(), "nil response") {
+		t.Fatalf("want nil response error, got %v", err)
+	}
+	if res.Steps != 1 || len(res.Messages) != 0 {
+		t.Fatalf("nothing should enter history: %+v", res)
 	}
 }
 

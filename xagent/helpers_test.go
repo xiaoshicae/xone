@@ -16,13 +16,25 @@ type scriptedModel struct {
 	reqs    []*llm.Request
 }
 
-func (m *scriptedModel) Generate(_ context.Context, req *llm.Request) (llm.Message, error) {
+func (m *scriptedModel) Generate(_ context.Context, req *llm.Request) (*llm.Response, error) {
 	m.reqs = append(m.reqs, req)
 	if len(m.reqs) > len(m.replies) {
-		return llm.Message{}, errors.New("script exhausted")
+		return nil, errors.New("script exhausted")
 	}
-	return m.replies[len(m.reqs)-1], nil
+	return &llm.Response{Message: m.replies[len(m.reqs)-1]}, nil
 }
+
+// failingModel 每次调用都返回同一个错误。
+type failingModel struct{ err error }
+
+func (m failingModel) Generate(context.Context, *llm.Request) (*llm.Response, error) {
+	return nil, m.err
+}
+
+// nilModel 违反约定：不报错，却返回 nil。
+type nilModel struct{}
+
+func (nilModel) Generate(context.Context, *llm.Request) (*llm.Response, error) { return nil, nil }
 
 func say(text string) llm.Message {
 	return llm.Message{Role: llm.RoleAssistant, Parts: []llm.Part{{Text: text}}, StopReason: llm.StopEndTurn}
